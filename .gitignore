@@ -10,3 +10,4 @@ landing/download/
 # local-only ops (not tracked)
 deploy/
 takeover.sh
+configure_from_codex.sh
