@@ -1,98 +1,104 @@
 # Readit
 
-一个原生 macOS 应用（SwiftUI + PDFKit）：打开 PDF 就能看双语对照，原排版保留，并且可以像 MarginNote 一样摘录、批注、做脑图、在多个 PDF 之间建立关联。翻译用 Claude Haiku 5.5。
+A native macOS app (SwiftUI + PDFKit) for reading PDFs bilingually with the original layout preserved. Like MarginNote, it lets you excerpt, annotate, build mind maps, and link notes across multiple PDFs. Translation is powered by Claude Haiku 5.5.
 
-- 官网与下载：https://readit.novarock.io
-- 源码：https://github.com/mapix/readit （MIT 开源）
-- 构建：`./build_app.sh`（生成 `build/Readit.app`，安装到 `/Applications`，并打包 `dist/Readit-<version>.zip`）
-- 首次使用请在「设置」中填写模型网关地址与 API Key（支持 Anthropic / OpenAI Chat Completions / OpenAI Responses）。
+- Website & download: https://readit.novarock.io
+- Source: https://github.com/mapix/readit (MIT licensed)
+- Build: `./build_app.sh` (produces `build/Readit.app`, installs it into `/Applications`, and packages `dist/Readit-<version>.zip`)
+- On first launch, open **Settings** and enter your model gateway URL and API key (Anthropic / OpenAI Chat Completions / OpenAI Responses are supported).
 
-## 界面与窗口
+## Interface & Windows
 
-- **主窗口（文档库）**：
-  - 「学习」页按笔记本展示；点击一个笔记本，就能看到它里面的 PDF。
-  - 「文档」页展示所有 PDF，支持双击文件名或右键重命名。
-- **每个 PDF 一个独立窗口**：
-  - 点击 PDF 就在新窗口中打开，可以同时打开多个。
-  - 同一个 PDF 只会有一个窗口，再次点击会切回已打开的那个窗口。
-  - 退出时打开着的窗口会被记住，下次启动自动恢复。
-- **工具栏**：
-  - 阅读模式：普通的文字选择，不会弹出标注工具条。
-  - 标注模式：MarginNote 风格的摘录与批注。
-  - 原文 / 双语、AI 解读、闪卡、AI 助手、收为桌面小组件。
-- **主题**：
-  - 有三种：默认、护眼（暖黄纸色）、夜间（反色）。在文档库顶栏或窗口的 ⋯ 菜单中切换。
-  - PDF 页面跟随主题着色，文字保持矢量清晰，不会发虚。
-- **桌面小组件**（⌘⇧M）：
-  - 隐藏所有 Readit 窗口，只在桌面上留一个置顶、可拖动的播放器。
-  - 紧凑模式类似音乐播放器，显示进度、上一段/播放/下一段和麦克风提问。
-  - 展开讲稿后可以看到每一段内容，点击某段即可跳到那里播放。
-  - ⤢ 恢复真实的 PDF 窗口。
-- **数据**：导入的 PDF 会复制到 Readit 自己的数据目录里管理，原文件移动或删除都不影响。
+- **Main window (Library)**
+  - The **Study** tab groups PDFs by notebook; click a notebook to see its PDFs.
+  - The **Documents** tab lists all PDFs; double-click a name or right-click to rename.
+- **One window per PDF**
+  - Clicking a PDF opens it in its own window; several can be open at once.
+  - Each PDF has at most one window — clicking it again brings the existing window to the front.
+  - Open windows are remembered on quit and restored on next launch.
+- **Toolbar**
+  - Read mode: plain text selection, no annotation toolbar.
+  - Annotate mode: MarginNote-style excerpts and annotations.
+  - Original / Bilingual, AI Narration, Flashcards, AI Assistant, and Collapse to Desktop Widget.
+- **Themes**
+  - Three themes: Light, Sepia (warm paper), and Dark (inverted). Switch from the Library top bar or the ⋯ menu in a document window.
+  - PDF pages are tinted to match the theme while text stays crisp vector.
+- **Desktop widget** (⌘⇧M)
+  - Hides all Readit windows and leaves a floating, always-on-top, draggable player on the desktop.
+  - Compact mode looks like a music player: progress, previous / play / next segment, and a mic button for questions.
+  - Expand the transcript to see every segment; click one to jump to it.
+  - ⤢ restores the real PDF window.
+- **Data**: imported PDFs are copied into Readit's own data directory, so moving or deleting the original file has no effect.
 
-## 模型
+## Models
 
-- **翻译与 AI 功能**：在设置里分别为「翻译」和「AI 助手 / 解读 / 闪卡」选择模型。
-  - 模型列表来自网关的 `/v1/models`。
-  - 接口协议可选 Anthropic Messages、OpenAI Chat Completions 或 OpenAI Responses。
-- **语音**：TTS 模型和音色同样可以配置，默认 `gemini-3.8-flash-tts`，音色 Zephyr。
+- **Translation & AI features**: choose separate models for *Translation* and for *AI Assistant / Narration / Flashcards* in Settings.
+  - The model list is fetched from the gateway's `/v1/models`.
+  - Wire protocol: Anthropic Messages, OpenAI Chat Completions, or OpenAI Responses.
+- **Speech**: the TTS model and voice are configurable too; defaults are `gemini-3.8-flash-tts` with the Zephyr voice.
 
-## AI 功能
+## AI Features
 
-- **AI 助手**（⌘J）：
-  - 总结本页或全文、讲解关键概念。
-  - 选中文字后「问 AI」，也可以自由提问；回答中的页码可以点击跳转。
-  - 对话按文档持久保存。
-- **AI 生成文档脑图**（脑图右下角，或 ⋯ 菜单）：
-  - AI 通读全文后生成结构化脑图。
-  - 每个要点都锚定到原文：在 PDF 上留下高亮，双击节点即可跳回原文。
-- **学习闪卡**（⌘⇧K）：
-  - 结构化卡片，题型分为概念、理解、应用、数据，每张卡都标注出处页码。
-  - 可以翻面，标记「记住了 / 再看看」，进度会保存。
-- **AI 解读**（⌘⇧L）：
-  - **讲解方式**：用口语逐页讲解，图表也会讲到，并自动翻页。
-  - **缓冲**：提前合成后面 10 段语音，播放不卡顿。
-  - **跟读**：正在讲的段落或图表会出现一个淡淡的呼吸框，并平滑滚动到阅读区中央。
-  - **控制**：语速和音色可调；按住麦克风（或 ⌃空格）可以随时语音打断提问。
+- **AI Assistant** (⌘J)
+  - Summarize the current page or the whole document, explain key concepts.
+  - Select text and choose **Ask AI**, or ask anything; page numbers in answers are clickable.
+  - Conversations are saved per document.
+- **AI-generated mind map** (bottom-right of the mind map, or the ⋯ menu)
+  - The AI reads the whole document and produces a structured mind map.
+  - Every point is anchored to the source: it leaves a highlight in the PDF, and double-clicking a node jumps back to it.
+- **Flashcards** (⌘⇧K)
+  - Structured cards in four types — Concept, Understanding, Application, Data — each citing its source page.
+  - Flip cards and mark them *Got It* / *Review Again*; progress is saved.
+- **AI Narration** (⌘⇧L)
+  - **Style**: a conversational, page-by-page walkthrough that also covers figures and tables, turning pages automatically.
+  - **Buffering**: the next 10 segments are synthesized ahead of time for gap-free playback.
+  - **Follow along**: the paragraph or figure being narrated gets a soft "breathing" outline and is smoothly scrolled to the center.
+  - **Controls**: adjustable speed and voice; hold the mic button (or ⌃Space) to interrupt with a spoken question at any time.
 
-## 摘录与笔记（参照 MarginNote 3）
+## Excerpts & Notes (modeled on MarginNote 3)
 
-1. **选中文字**：松开鼠标后，选区上方弹出浮动工具条。
-   - 工具条上有 8 个颜色圆点，点哪个就用那个颜色摘录成卡片。
-   - 另有「复制」和「翻译」两个按钮。
-2. **摘录完成后**：卡片弹窗出现在高亮旁边，可以：
-   - 换颜色
-   - 加评论（可以加多条）
-   - 加标题（在脑图上显示成卡片标题）
-   - 链接其他卡片（可以选其他 PDF 里的卡片）
-   - 在脑图中定位、复制、删除
-3. **点击页面上已有的高亮**，会重新打开这张卡片的弹窗。
-4. **自动摘录**（工具栏上的荧光笔按钮）：开启后，一选中文字就直接用当前颜色生成卡片，不再弹工具条。
-5. **框选**（工具栏上的虚线框按钮）：在页面上拖出一个矩形，会把该区域截成图片卡片，适合摘录公式和图表。
-6. **卡片和脑图的关系**：新卡片会挂到脑图当前选中的节点下。
-   - 脑图节点会用卡片颜色的浅色作底，显示摘录原文、译文和评论。
-   - 双击节点跳回文档对应位置。
-   - 拖动节点可以调整层级。
-   - 快捷键：Tab 加子主题，Return 加同级主题，空格改标题，⌘方向键调整位置和层级。
-7. **大纲 / 卡片列表**（工具栏左侧按钮）：可以搜索；点击条目会同时定位到文档和脑图；也可以把卡片拖进脑图。
+1. **Select text**: when you release the mouse, a floating toolbar appears above the selection.
+   - Eight color dots — click one to excerpt the selection into a card in that color.
+   - Plus **Copy** and **Translate** buttons.
+2. **After excerpting**, a card popover appears next to the highlight, where you can:
+   - change the color
+   - add comments (multiple allowed)
+   - add a title (shown as the card title in the mind map)
+   - link to other cards (including cards in other PDFs)
+   - locate it in the mind map, copy, or delete
+3. **Click an existing highlight** on the page to reopen its card.
+4. **Auto-excerpt** (highlighter button in the toolbar): when on, any selection immediately becomes a card in the current color, with no toolbar.
+5. **Area capture** (dashed-rectangle button): drag a rectangle on the page to capture that region as an image card — handy for formulas and figures.
+6. **Cards and the mind map**: new cards are attached under the currently selected mind-map node.
+   - Nodes are tinted with a light version of the card color and show the excerpt, its translation, and comments.
+   - Double-click a node to jump to its location in the document.
+   - Drag nodes to change hierarchy.
+   - Shortcuts: Tab adds a child, Return adds a sibling, Space edits the title, ⌘ + arrow keys move nodes and change level.
+7. **Outline / card list** (left toolbar button): searchable; clicking an item locates it in both the document and the mind map; cards can be dragged into the mind map.
 
-## 双语对照
+## Bilingual View
 
-- **原样保留**：每页都按原 PDF 的矢量内容绘制，公式、图表、字体、排版都不变。
-- **段落对照**：每段原文正下方插入对应译文，单栏、双栏都适用。
-- **自动跳过**：公式、伪代码、表格、目录、作者信息不翻译。
-- **后台翻译**：从当前页开始翻译全书；翻好的页面原地替换，阅读位置不会跳动。
+- **Layout preserved**: every page is drawn from the original PDF's vector content — formulas, figures, fonts, and layout are untouched.
+- **Paragraph-by-paragraph**: each translated paragraph is inserted directly below its source paragraph; works for single- and two-column layouts.
+- **Smart skipping**: formulas, pseudocode, tables, tables of contents, and author blocks are not translated.
+- **Background translation**: translation starts at the current page and covers the whole book; finished pages are swapped in place without moving your reading position.
 
-## 设置
+## Settings
 
-在 BiReader 的 设置…（⌘,）里可以修改 API Key、Base URL、模型（默认 `claude-haiku-5-5`）和目标语言，还有「测试连接」按钮。当前已经写入你环境里的 Key 和代理地址。
+Open **Readit → Settings…** (⌘,) to set the API key, base URL, models (default `claude-haiku-5-5`), and target language. A **Test Connection** button verifies the setup.
 
-## 数据位置
+## Data Location
 
-数据保存在 `~/Library/Application Support/BiReader/`，包括文档库、脑图、卡片、翻译缓存和双语页面缓存。
+Data lives in `~/Library/Application Support/BiReader/`, including the library, mind maps, cards, translation cache, and bilingual page cache.
 
-## 重新构建
+## Building
+
+Requires macOS 14+ and Swift 5.9+.
 
 ```bash
-cd BiReader && ./build_app.sh   # 生成并安装 /Applications/Readit.app
+./build_app.sh   # builds and installs /Applications/Readit.app
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).

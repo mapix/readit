@@ -35,7 +35,7 @@ cat > "$APP/Contents/Info.plist" <<P
 </dict></plist>
 P
 codesign --force --deep -s - "$APP"
-# register with LaunchServices so Finder offers Readit in “打开方式”
+# register with LaunchServices so Finder offers Readit in "Open With"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP" >/dev/null 2>&1 || true
 rm -rf /Applications/BiReader.app /Applications/Readit.app
 cp -R "$APP" /Applications/
