@@ -1,0 +1,8 @@
+{
+  "addonid": "marginnote.extension.immersivetranslate",
+  "author": "local",
+  "title": "Immersive Translate",
+  "version": "1.0.0",
+  "marginnote_version_min": "3.7.0",
+  "cert_key": ""
+}

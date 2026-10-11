@@ -1,0 +1,314 @@
+import SwiftUI
+
+/// App interface language (UI chrome only). Separate from Settings.targetLang (translation target).
+enum UILang: String, CaseIterable, Identifiable {
+    case zh, en, ja
+    var id: String { rawValue }
+    /// shown in its own language
+    var name: String { switch self { case .zh: return "中文"; case .en: return "English"; case .ja: return "日本語" } }
+    static var current: UILang {
+        if let r = UserDefaults.standard.string(forKey: "uiLang"), let l = UILang(rawValue: r) { return l }
+        let p = (Locale.preferredLanguages.first ?? "en").lowercased()
+        if p.hasPrefix("zh") { return .zh }
+        if p.hasPrefix("ja") { return .ja }
+        return .en
+    }
+}
+
+/// Broadcasts UI language changes; root views use `.id(lang.lang)` to re-render.
+@MainActor
+final class LangCenter: ObservableObject {
+    static let shared = LangCenter()
+    @Published var lang: UILang = .current
+    func set(_ l: UILang) {
+        UserDefaults.standard.set(l.rawValue, forKey: "uiLang")
+        L10n.cache = l
+        lang = l
+    }
+}
+
+enum L10n {
+    nonisolated(unsafe) static var cache: UILang = .current
+}
+
+/// Localize a UI string keyed by its Chinese source text. Missing keys fall back to Chinese.
+func L(_ zh: String) -> String {
+    switch L10n.cache {
+    case .zh: return zh
+    case .en: return L10nTable.t[zh]?.0 ?? zh
+    case .ja: return L10nTable.t[zh]?.1 ?? zh
+    }
+}
+
+/// Localized format string (keys use %d / %@ placeholders).
+func LF(_ zh: String, _ args: CVarArg...) -> String { String(format: L(zh), arguments: args) }
+
+struct LangMenu: View {
+    @ObservedObject var lc = LangCenter.shared
+    var body: some View {
+        Menu {
+            ForEach(UILang.allCases) { l in
+                Button { lc.set(l) } label: { if lc.lang == l { Label(l.name, systemImage: "checkmark") } else { Text(l.name) } }
+            }
+        } label: {
+            HStack(spacing: 4) { Image(systemName: "globe"); Text(lc.lang.name).font(.system(size: 12)) }.foregroundStyle(MN.barText)
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .help(L("界面语言"))
+    }
+}
+
+enum L10nTable {
+    static let t: [String: (String, String)] = [
+        "AI 助手": ("AI Assistant", "AI アシスタント"),
+        "AI 助手 (⌘J)": ("AI Assistant (⌘J)", "AI アシスタント (⌘J)"),
+        "AI 助手 / 解读 / 闪卡": ("AI Assistant / Narration / Flashcards", "AI アシスタント / 解説 / フラッシュカード"),
+        "AI 生成文档脑图": ("Generate Mind Map with AI", "AI でマインドマップを生成"),
+        "AI 生成脑图": ("AI Mind Map", "AI マップ生成"),
+        "AI 解读": ("AI Narration", "AI 解説"),
+        "AI 解读会把页面截图发给模型，请选择支持图片输入的模型。": ("AI Narration sends page screenshots to the model; choose a model that supports image input.", "AI 解説はページのスクリーンショットをモデルに送信します。画像入力に対応したモデルを選んでください。"),
+        "AI 逐页语音解读（⌘⇧L）": ("AI page-by-page voice narration (⌘⇧L)", "AI によるページごとの音声解説（⌘⇧L）"),
+        "PDF 打开方式": ("Open PDFs With", "PDF を開くアプリ"),
+        "Readit 已是默认 PDF 阅读器": ("Readit is the default PDF reader", "Readit は既定の PDF リーダーです"),
+        "TTS 模型": ("TTS Model", "TTS モデル"),
+        "· 总结当前页或整份文档\n· 在 PDF 中选中文字，点「问 AI」针对它提问\n· 直接问任何关于文档的问题，回答会标注页码\n\n所有对话都会保存在本文档中。": ("· Summarize the current page or the whole document\n· Select text in the PDF and click \"Ask AI\" to ask about it\n· Ask anything about the document; answers cite page numbers\n\nAll conversations are saved with this document.", "· 現在のページまたは文書全体を要約\n· PDF でテキストを選択し「AI に質問」で質問\n· 文書について何でも質問でき、回答にはページ番号が付きます\n\nすべての会話はこの文書に保存されます。"),
+        "✅ 已保存": ("✅ Saved", "✅ 保存しました"),
+        "✅ 已将 Readit 设为默认 PDF 工具": ("✅ Readit is now the default PDF app", "✅ Readit を既定の PDF アプリに設定しました"),
+        "上一页": ("Previous Page", "前のページ"),
+        "上移": ("Move Up", "上へ移動"),
+        "下一页": ("Next Page", "次のページ"),
+        "下移": ("Move Down", "下へ移動"),
+        "主题": ("Theme", "テーマ"),
+        "也可以在访达中右键任意 PDF →「打开方式」选择 Readit。": ("You can also right-click any PDF in Finder → \"Open With\" → Readit.", "Finder で PDF を右クリック →「このアプリケーションで開く」から Readit を選ぶこともできます。"),
+        "仅文档": ("Document Only", "文書のみ"),
+        "仅脑图": ("Mind Map Only", "マップのみ"),
+        "从此笔记本移除": ("Remove from This Notebook", "このノートブックから削除"),
+        "保存": ("Save", "保存"),
+        "停止": ("Stop", "停止"),
+        "全文": ("Whole Document", "全文"),
+        "全文导读生成中…": ("Generating overview…", "全文ガイド生成中…"),
+        "全文翻译完成": ("Translation complete", "全文翻訳完了"),
+        "全部卡组": ("All Decks", "すべてのデッキ"),
+        "全部掌握了！": ("All mastered!", "すべて覚えました！"),
+        "再来一遍": ("Again", "もう一度"),
+        "再看看": ("Review Again", "もう一度見る"),
+        "删除": ("Delete", "削除"),
+        "删除主题": ("Delete Topic", "トピックを削除"),
+        "删除卡片": ("Delete Card", "カードを削除"),
+        "删除卡组": ("Delete Deck", "デッキを削除"),
+        "删除文档": ("Delete Document", "文書を削除"),
+        "删除笔记本": ("Delete Notebook", "ノートブックを削除"),
+        "删除评论": ("Delete Comment", "コメントを削除"),
+        "刷新可用模型": ("Refresh Models", "モデルを再読み込み"),
+        "加入笔记本": ("Add to Notebook", "ノートブックに追加"),
+        "加载中…": ("Loading…", "読み込み中…"),
+        "升级": ("Outdent", "階層を上げる"),
+        "卡片": ("Cards", "カード"),
+        "原文": ("Original", "原文"),
+        "双击重命名": ("Double-click to rename", "ダブルクリックで名前を変更"),
+        "双语": ("Bilingual", "対訳"),
+        "取消": ("Cancel", "キャンセル"),
+        "只看未掌握": ("Unmastered Only", "未習得のみ"),
+        "名称": ("Name", "名前"),
+        "在新窗口打开": ("Open in New Window", "新しいウインドウで開く"),
+        "在访达中显示": ("Show in Finder", "Finder に表示"),
+        "复习未掌握": ("Review Unmastered", "未習得を復習"),
+        "复制": ("Copy", "コピー"),
+        "外观": ("Appearance", "外観"),
+        "夜间": ("Dark", "ダーク"),
+        "大纲": ("Outline", "アウトライン"),
+        "大纲 / 卡片列表": ("Outline / Card List", "アウトライン / カード一覧"),
+        "学习": ("Study", "学習"),
+        "学习闪卡": ("Flashcards", "フラッシュカード"),
+        "学习闪卡（⌘⇧K）": ("Flashcards (⌘⇧K)", "フラッシュカード（⌘⇧K）"),
+        "定位到文档": ("Locate in Document", "文書で表示"),
+        "导入 PDF": ("Import PDF", "PDF を読み込む"),
+        "导入 PDF…": ("Import PDF…", "PDF を読み込む…"),
+        "导出 AI 解读为 MP4": ("Export AI Narration as MP4", "AI 解説を MP4 に書き出す"),
+        "导出双语 PDF…": ("Export Bilingual PDF…", "対訳 PDF を書き出す…"),
+        "导出脑图为 Markdown…": ("Export Mind Map as Markdown…", "マップを Markdown に書き出す…"),
+        "展开 PDF 窗口": ("Expand PDF Window", "PDF ウインドウを展開"),
+        "已打开": ("Open", "開いています"),
+        "已掌握": ("Mastered", "習得済み"),
+        "已设为默认": ("Already Default", "既定に設定済み"),
+        "开始 AI 解读后，这里会逐段显示讲稿。": ("Once AI Narration starts, the script appears here segment by segment.", "AI 解説を開始すると、ここに原稿が段落ごとに表示されます。"),
+        "当前摘录颜色": ("Current excerpt color", "現在の抜粋の色"),
+        "当前页 ±2 页": ("Current ±2 Pages", "現在 ±2 ページ"),
+        "总结全文": ("Summarize Document", "全文を要約"),
+        "我可以帮你读懂这份文档": ("I can help you understand this document", "この文書の理解をお手伝いします"),
+        "我的笔记本": ("My Notebook", "マイノートブック"),
+        "打乱": ("Shuffle", "シャッフル"),
+        "打开": ("Open", "開く"),
+        "打开一个文档后即可使用 AI 助手": ("Open a document to use the AI Assistant", "文書を開くと AI アシスタントを使えます"),
+        "护眼": ("Sepia", "セピア"),
+        "拖动或点击跳转 · 双击输入页码": ("Drag or click to jump · Double-click to enter a page", "ドラッグ/クリックで移動 · ダブルクリックでページ番号入力"),
+        "接口协议": ("API Protocol", "API プロトコル"),
+        "搜索": ("Search", "検索"),
+        "搜索所有文档的卡片…": ("Search cards in all documents…", "すべての文書のカードを検索…"),
+        "摘录选中内容为卡片": ("Excerpt Selection as Card", "選択範囲をカードに抜粋"),
+        "收起 AI 助手": ("Hide AI Assistant", "AI アシスタントを閉じる"),
+        "收起为桌面小组件（⌘⇧M）": ("Collapse to Desktop Widget (⌘⇧M)", "デスクトップウィジェットに縮小（⌘⇧M）"),
+        "收起讲稿": ("Hide Script", "原稿を隠す"),
+        "放大": ("Zoom In", "拡大"),
+        "放大 ⌘=": ("Zoom In ⌘=", "拡大 ⌘="),
+        "文档": ("Documents", "文書"),
+        "文档 + 脑图": ("Document + Mind Map", "文書 + マップ"),
+        "文档名称": ("Document Name", "文書名"),
+        "新主题": ("New Topic", "新しいトピック"),
+        "新建笔记本": ("New Notebook", "新規ノートブック"),
+        "新笔记本": ("New Notebook", "新しいノートブック"),
+        "无": ("None", "なし"),
+        "显示文档库": ("Show Library", "ライブラリを表示"),
+        "显示每段讲稿": ("Show Script per Segment", "段落ごとの原稿を表示"),
+        "显示答案（空格）": ("Show Answer (Space)", "答えを表示（スペース）"),
+        "本轮完成": ("Round Complete", "このラウンド完了"),
+        "本页关键概念": ("Key Concepts on Page", "このページの重要概念"),
+        "标注": ("Annotate", "注釈"),
+        "标题": ("Title", "タイトル"),
+        "框选摘录（拖拽选取区域）": ("Area Excerpt (drag to select a region)", "範囲抜粋（ドラッグで領域を選択）"),
+        "框选模式：在页面上拖拽选取区域（Esc 退出）": ("Area mode: drag on the page to select a region (Esc to exit)", "範囲モード：ページ上をドラッグして領域を選択（Esc で終了）"),
+        "模型": ("Model", "モデル"),
+        "左上": ("Top left", "左上"),
+        "顶部居中": ("Top centre", "上中央"),
+        "右上": ("Top right", "右上"),
+        "左侧居中": ("Middle left", "左中央"),
+        "右侧居中": ("Middle right", "右中央"),
+        "左下": ("Bottom left", "左下"),
+        "底部居中": ("Bottom centre", "下中央"),
+        "右下": ("Bottom right", "右下"),
+        "位置": ("Position", "位置"),
+        "此笔记本还没有文档": ("This notebook has no documents yet", "このノートブックにはまだ文書がありません"),
+        "没有可链接的卡片": ("No cards to link", "リンクできるカードがありません"),
+        "没有笔记本": ("No notebooks", "ノートブックがありません"),
+        "测试中…": ("Testing…", "テスト中…"),
+        "测试连接": ("Test Connection", "接続テスト"),
+        "添加 PDF…": ("Add PDF…", "PDF を追加…"),
+        "添加同级主题": ("Add Sibling Topic", "同階層のトピックを追加"),
+        "添加子主题": ("Add Subtopic", "サブトピックを追加"),
+        "添加子主题 (Tab)": ("Add Subtopic (Tab)", "サブトピックを追加 (Tab)"),
+        "添加文档到笔记本…": ("Add Document to Notebook…", "ノートブックに文書を追加…"),
+        "清空对话": ("Clear Chat", "会話を消去"),
+        "点击卡片翻面": ("Click the card to flip", "カードをクリックして裏返す"),
+        "点击适合宽度": ("Click to fit width", "クリックで幅に合わせる"),
+        "生成中…": ("Generating…", "生成中…"),
+        "生成新卡组": ("New Deck", "新しいデッキを生成"),
+        "生成闪卡": ("Generate", "カードを生成"),
+        "翻译目标语言": ("Translation Target Language", "翻訳先の言語"),
+        "确定": ("OK", "OK"),
+        "笔记本": ("Notebooks", "ノートブック"),
+        "编辑卡片标题": ("Edit Card Title", "カードのタイトルを編集"),
+        "编辑标题": ("Edit Title", "タイトルを編集"),
+        "缩小": ("Zoom Out", "縮小"),
+        "缩小 ⌘-": ("Zoom Out ⌘-", "縮小 ⌘-"),
+        "网关": ("Gateway", "ゲートウェイ"),
+        "翻译": ("Translate", "翻訳"),
+        "翻译中…": ("Translating…", "翻訳中…"),
+        "翻译全文（后台）": ("Translate Whole Document (Background)", "全文を翻訳（バックグラウンド）"),
+        "翻译选中文本": ("Translate Selection", "選択テキストを翻訳"),
+        "脑图": ("Mind Map", "マインドマップ"),
+        "自动摘录：关": ("Auto Excerpt: Off", "自動抜粋：オフ"),
+        "自动摘录：开（选中即摘录）": ("Auto Excerpt: On (excerpt on select)", "自動抜粋：オン（選択で抜粋）"),
+        "自动摘录：选中文字即生成卡片": ("Auto excerpt: selecting text creates a card", "自動抜粋：テキストを選択するとカードを作成"),
+        "范围": ("Scope", "範囲"),
+        "让 AI 阅读全文，自动生成结构化脑图（要点可点击跳回原文）": ("Let AI read the whole document and build a structured mind map (click points to jump back)", "AI が全文を読み、構造化マップを自動生成（要点をクリックで原文へ）"),
+        "记住了": ("Got It", "覚えた"),
+        "设为默认 PDF 工具": ("Set as Default PDF App", "既定の PDF アプリに設定"),
+        "设置…": ("Settings…", "設定…"),
+        "评论": ("Comment", "コメント"),
+        "语音（TTS）": ("Voice (TTS)", "音声（TTS）"),
+        "输入评论，回车保存": ("Type a comment, press Return to save", "コメントを入力し Return で保存"),
+        "还没有卡组。生成后可以像翻卡片一样自测，标记「记住了 / 再看看」，进度会保存。": ("No decks yet. Generate one to quiz yourself card by card, mark \"Got It / Review Again\", and your progress is saved.", "まだデッキがありません。生成するとカードをめくって自己テストでき、「覚えた / もう一度見る」を記録し、進捗は保存されます。"),
+        "适合宽度": ("Fit Width", "幅に合わせる"),
+        "选中文字 → 点颜色摘录 · 点击高亮打开卡片": ("Select → color to excerpt · Click highlight for card", "選択→色で抜粋 · ハイライトでカード"),
+        "通用": ("General", "一般"),
+        "重命名": ("Rename", "名前を変更"),
+        "重命名…": ("Rename…", "名前を変更…"),
+        "重命名当前文档…": ("Rename Current Document…", "現在の文書の名前を変更…"),
+        "重命名文档": ("Rename Document", "文書の名前を変更"),
+        "重新学习全部": ("Study All Again", "すべて学び直す"),
+        "重新翻译本页": ("Retranslate This Page", "このページを再翻訳"),
+        "重试本页": ("Retry Page", "このページを再試行"),
+        "针对选中内容提问（留空则直接解释）": ("Ask about the selection (leave empty to explain it)", "選択内容について質問（空欄なら解説）"),
+        "链接": ("Link", "リンク"),
+        "问 AI": ("Ask AI", "AI に質問"),
+        "问任何关于这份文档的问题…": ("Ask anything about this document…", "この文書について何でも質問…"),
+        "阅读": ("Read", "閲覧"),
+        "阅读模式：选中文字不弹出摘录工具条；标注模式：选中即可摘录/批注": ("Read mode: selecting text shows no excerpt toolbar; Annotate mode: select to excerpt/annotate", "閲覧モード：選択しても抜粋ツールバーを表示しない／注釈モード：選択して抜粋・注釈"),
+        "阅读模式：选中文字可复制，不会弹出标注": ("Read mode: selected text can be copied; no annotation popup", "閲覧モード：選択テキストはコピー可能、注釈は表示されません"),
+        "降级": ("Indent", "階層を下げる"),
+        "音色": ("Voice", "声"),
+        "颜色": ("Color", "色"),
+        "默认": ("Light", "標準"),
+        "［图片摘录］": ("[Image excerpt]", "［画像の抜粋］"),
+        "（空）": ("(Empty)", "（空）"),
+        "界面语言": ("Interface Language", "表示言語"),
+        "翻译：": ("Translate: ", "翻訳："),
+        "助手：": ("Assistant: ", "アシスタント："),
+        "当前默认：": ("Current default: ", "現在の既定："),
+        "本页翻译失败：": ("Page translation failed: ", "このページの翻訳に失敗："),
+        "黄": ("Yellow", "黄"), "绿": ("Green", "緑"), "蓝": ("Blue", "青"), "红": ("Red", "赤"),
+        "紫": ("Purple", "紫"), "橙": ("Orange", "オレンジ"), "青": ("Cyan", "シアン"), "灰": ("Gray", "灰"),
+        "本页摘要": ("Page Summary", "ページ要約"),
+        "全文导读": ("Document Overview", "全文ガイド"),
+        "解释选中内容": ("Explain Selection", "選択内容を解説"),
+        "展开": ("Expand", "展開"),
+        "正在聆听…松开即提问": ("Listening… release to ask", "聞き取り中…離すと質問"),
+        "思考中…": ("Thinking…", "考え中…"),
+        "正在阅读本页并组织讲解…": ("Reading this page and preparing narration…", "このページを読んで解説を準備中…"),
+        "正在生成语音…": ("Generating speech…", "音声を生成中…"),
+        "从当前页重新开始": ("Restart from Current Page", "現在のページからやり直す"),
+        "上一段": ("Previous Segment", "前の段落"),
+        "播放 / 暂停（空格）": ("Play / Pause (Space)", "再生 / 一時停止（スペース）"),
+        "下一段": ("Next Segment", "次の段落"),
+        "语速": ("Speed", "速度"),
+        "导出 MP4（第 1 页到最后一页完整一遍）": ("Export MP4 (full pass, first to last page)", "MP4 を書き出す（最初から最後のページまで）"),
+        "取消导出": ("Cancel Export", "書き出しをキャンセル"),
+        "在 Finder 中显示": ("Show in Finder", "Finder に表示"),
+        "导出 MP4": ("Export MP4", "MP4 を書き出す"),
+        "显示讲稿": ("Show Script", "原稿を表示"),
+        "最小化": ("Minimize", "最小化"),
+        "收到桌面小组件（隐藏窗口）": ("Collapse to Desktop Widget (hide window)", "デスクトップウィジェットへ（ウインドウを隠す）"),
+        "退出 AI 解读": ("Exit AI Narration", "AI 解説を終了"),
+        "录制": ("Rec", "録画"),
+        "录制中": ("Recording", "録画中"),
+        "开启录制": ("Start Recording", "録画を開始"),
+        "显示": ("Show", "表示"),
+        "按住提问（或按住 ⌃空格），松开发送；讲解会自动暂停，回答后继续": ("Hold to ask (or hold ⌃Space), release to send; narration pauses and resumes after the answer", "押している間に質問（または ⌃スペース長押し）、離すと送信。解説は一時停止し、回答後に再開します"),
+        "AI 解读 · 第 %d / %d 页": ("AI Narration · Page %d / %d", "AI 解説 · %d / %d ページ"),
+        // format strings
+        "%d 个文档 · %d 张卡片 · 点击文档在新窗口中打开（可同时打开多个）": ("%d documents · %d cards · Click a document to open it in a new window (several can be open)", "%d 件の文書 · %d 枚のカード · 文書をクリックすると新しいウインドウで開きます（複数可）"),
+        "%d 个文档 · %d 张卡片": ("%d documents · %d cards", "%d 件の文書 · %d 枚のカード"),
+        "正在翻译第 %d 页 · %d/%d 段 · 全文 %d/%d": ("Translating page %d · %d/%d paragraphs · %d/%d pages", "%d ページを翻訳中 · %d/%d 段落 · 全体 %d/%d"),
+        "准备翻译第 %d 页… · 全文 %d/%d": ("Preparing page %d… · %d/%d pages", "%d ページの翻訳準備中… · 全体 %d/%d"),
+        "后台翻译中 · 全文 %d/%d": ("Translating in background · %d/%d pages", "バックグラウンドで翻訳中 · 全体 %d/%d"),
+        "共 %d 个模型": ("%d models", "%d 個のモデル"),
+        "提前翻译 %d 页": ("Translate %d pages ahead", "%d ページ先まで翻訳"),
+        "摘录为%@色卡片": ("Excerpt as %@ card", "%@のカードとして抜粋"),
+        "总结本页 (p.%d)": ("Summarize Page (p.%d)", "このページを要約 (p.%d)"),
+        "数量 %d": ("Count %d", "枚数 %d"),
+        "%d 张": ("%d cards", "%d 枚"),
+        "已掌握 %d/%d": ("Mastered %d/%d", "習得済み %d/%d"),
+        "第 %d 页": ("Page %d", "%d ページ"),
+        "第 %d/%d 段": ("Segment %d/%d", "段落 %d/%d"),
+        "AI 解读 · 第 %d/%d 页 · 准备中…": ("AI Narration · Page %d/%d · Preparing…", "AI 解説 · %d/%d ページ · 準備中…"),
+        "AI 解读 · 第 %d/%d 页 · 已暂停": ("AI Narration · Page %d/%d · Paused", "AI 解説 · %d/%d ページ · 一時停止中"),
+        "AI 解读 · 第 %d/%d 页": ("AI Narration · Page %d/%d", "AI 解説 · %d/%d ページ"),
+        "第 %d / %d 页": ("Page %d / %d", "%d / %d ページ"),
+        "摘录（%@）": ("Excerpt (%@)", "抜粋（%@）"),
+        "已导出：": ("Exported: ", "書き出し完了："),
+        "导出失败：": ("Export failed: ", "書き出し失敗："),
+        "检查缓存": ("Checking cache", "キャッシュ確認"),
+        "补全讲稿": ("Filling scripts", "原稿を補完"),
+        "补全语音": ("Filling audio", "音声を補完"),
+        "合成视频": ("Rendering video", "動画を合成"),
+        "完成": ("Done", "完了"),
+        "失败": ("Failed", "失敗"),
+        "请先开始 AI 解读": ("Start AI narration first", "先に AI 解説を開始してください"),
+        "文档没有页面": ("Document has no pages", "文書にページがありません"),
+        "缺 %d 页": ("%d pages missing", "%d ページ不足"),
+        "缺 %d 段": ("%d segments missing", "%d 段落不足"),
+        "准备画面": ("Preparing frames", "画面を準備中"),
+        "没有可导出的讲解内容": ("Nothing to export", "書き出せる解説がありません"),
+        "录制中（已播放 %d 段）。导出时会从第一页到最后一页完整合成一遍": ("Recording (%d segments played). Export renders one complete pass from the first page to the last", "録画中（%d 段落再生済み）。書き出しは最初から最後のページまで通しで合成します"),
+    ]
+}

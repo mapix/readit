@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root { --pink:#ea4c89; --ink:#1d1d1f; --sub:#5f5f66; --line:rgba(0,0,0,.08); --bg:#e9e7e2; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; background:var(--bg); color:var(--ink);
+    font:14px/1.6 -apple-system,"PingFang SC","Helvetica Neue",sans-serif; -webkit-font-smoothing:antialiased; }
+  header { position:sticky; top:0; z-index:5; background:rgba(246,244,240,.94); backdrop-filter:blur(12px);
+    border-bottom:1px solid var(--line); padding:7px 12px; }
+  .row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .brand { font-weight:700; font-size:13.5px; display:flex; align-items:center; gap:6px; margin-right:auto; white-space:nowrap; }
+  .dot { width:18px; height:18px; border-radius:5px; background:var(--pink); color:#fff; font-size:11px; display:inline-flex; align-items:center; justify-content:center; }
+  .meta { color:var(--sub); font-size:12px; font-weight:400; }
+  button { border:1px solid var(--line); background:#fff; border-radius:7px; padding:3px 9px; font:inherit; font-size:12px; color:var(--ink); cursor:pointer; }
+  button.primary { background:var(--pink); color:#fff; border-color:var(--pink); }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
+  .seg button { border:0; border-radius:0; }
+  .seg button.on { background:var(--pink); color:#fff; }
+  .err { color:#c0392b; font-size:12px; }
+  main { padding:14px 0 120px; }
+  .page { position:relative; margin:0 auto 16px; background:#fff; box-shadow:0 1px 4px rgba(0,0,0,.12); }
+  .page .ph { color:#bbb; font-size:12px; position:absolute; top:12px; left:0; right:0; text-align:center; }
+  .page .no { position:absolute; right:-34px; top:4px; font-size:11px; color:#999; }
+  .seg-img { display:block; }
+  .tblk { position:relative; background:#fff; }
+  .tcol { position:absolute; top:0; }
+  .tr { color:#1d1d1f; border-left:2px solid rgba(234,76,137,.6); padding:1px 0 3px 7px; margin:0 0 4px; white-space:pre-wrap; word-break:break-word; }
+  .tr.wait { color:#c8c8c8; border-left-color:#eee; }
+  .tr.wait::after { content:"翻译中…"; animation:blink 1.2s infinite; }
+  .tr.hd { font-weight:600; border-left:0; padding-left:0; }
+  body.style-under .tr { border-left:0; padding-left:0; text-decoration:underline dashed rgba(234,76,137,.55); text-underline-offset:4px; }
+  body.style-mask .tr { filter:blur(4px); transition:filter .2s; } body.style-mask .tr:hover { filter:none; }
+  body.orig .tblk { display:none; }
+  @keyframes blink { 50% { opacity:.35 } }
+  #sel { display:none; position:fixed; right:16px; bottom:16px; max-width:420px; z-index:9; background:#fff; border:1px solid rgba(234,76,137,.4);
+    border-radius:10px; padding:10px 12px; box-shadow:0 6px 24px rgba(0,0,0,.15); }
+  #sel .o { font-size:12.5px; color:var(--sub); margin-top:4px; max-height:120px; overflow:auto; }
+  #settings { display:none; padding:10px 14px; border-bottom:1px solid var(--line); background:#fff; }
+  #settings .grid { display:grid; grid-template-columns:1fr 1fr; gap:4px 12px; max-width:760px; margin:0 auto; }
+  #settings label { display:block; font-size:12px; color:var(--sub); margin:6px 0 2px; }
+  #settings input, #settings select { width:100%; padding:5px 8px; border:1px solid var(--line); border-radius:7px; font:inherit; font-size:13px; background:#fff; }
+  .chk { display:flex !important; align-items:center; gap:6px; color:var(--ink) !important; font-size:13px !important; }
+  .chk input { width:auto !important; }
+  .empty { color:var(--sub); text-align:center; padding:60px 10px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <div class="brand"><span class="dot">译</span>沉浸式翻译 <span class="meta" id="pageInfo"></span></div>
+    <div class="seg" id="viewSeg"><button data-v="reflow">双语对照</button><button data-v="side">原版 PDF</button></div>
+    <div class="seg" id="dispSeg"><button data-d="bi">显示译文</button><button data-d="orig">仅原文</button></div>
+    <button id="zoomOut" title="缩小">－</button><button id="zoomIn" title="放大">＋</button>
+    <button id="bRetry" title="重新翻译当前页">↻</button>
+    <button id="bBuild" class="primary" title="生成可批注的双语 PDF（原生高亮/摘录/脑图全部可用）">生成双语 PDF</button>
+    <button id="bRange" title="从当前页开始连续翻译 10 页">翻译后 10 页</button>
+    <button id="bSettings" title="设置">设置</button>
+    <button id="bClose" title="收起">✕</button>
+  </div>
+  <div class="err" id="err"></div>
+  <div id="build" style="display:none;font-size:12px;color:#ea4c89;margin-top:4px"></div>
+</header>
+<section id="settings"><div class="grid">
+  <div><label>翻译引擎</label><select id="sEngine"><option value="claude">Claude（高质量）</option><option value="google">Google（免费，快速）</option></select></div>
+  <div><label>目标语言</label><select id="sLang"><option>简体中文</option><option>繁體中文</option><option>English</option><option>日本語</option><option>한국어</option></select></div>
+  <div><label>Claude 模型</label><input id="sModel" placeholder="claude-haiku-5-5"></div>
+  <div><label>API Base URL</label><input id="sBase" placeholder="https://api.anthropic.com"></div>
+  <div><label>API Key（留空表示不修改）</label><input id="sKey" type="password" placeholder="sk-ant-..."></div>
+  <div><label>译文样式</label><select id="sStyle"><option value="bar">左侧竖线</option><option value="under">虚线下划线</option><option value="mask">模糊遮罩（学习模式）</option></select></div>
+  <div><label>原版 PDF 页内译文显示</label><select id="sMode"><option value="cover">译文覆盖原文（点击切换）</option><option value="bilingual">原文优先（点「译」看译文）</option></select></div>
+  <div><label>原版 PDF 页内译文字号缩放</label><input id="sFont" type="number" step="0.05" min="0.6" max="1.5"></div>
+  <div><label class="chk"><input type="checkbox" id="sAuto">自动翻译正在阅读的页面</label></div>
+  <div><label class="chk"><input type="checkbox" id="sPrefetch">预翻译后续页面</label></div>
+  <div><button id="bClear">清除本文档缓存</button></div>
+  <div style="text-align:right"><button class="primary" id="bSave">保存</button></div>
+</div></section>
+<main id="main"><div class="empty" id="empty">正在加载文档…</div></main>
+<div id="sel"><div class="t"></div><div class="o"></div></div>
+<script src="vendor/pdf.worker.min.js"></script>
+<script src="vendor/pdf.min.js"></script>
+<script src="vendor/pdf-lib.min.js"></script>
+<script src="vendor/fontkit.umd.min.js"></script>
+<script src="bilingual.js"></script>
+<script>
+(function(){
+  var out = [], state = null, $ = function(id){ return document.getElementById(id); };
+  var LS = window.localStorage || {};
+  var disp = LS.imtDisp || 'bi', tstyle = LS.imtStyle || 'bar', zoom = +(LS.imtZoom || 1);
+  var DOC = { md5:null, chunks:[], pdf:null, count:0, sizes:{}, pages:{}, data:{}, wanted:{} };
+  var curPage = 1, lastSentPage = null, programmaticScroll = false;
+  function send(m){ out.push(JSON.stringify(m)); }
+  function esc(s){ return String(s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  window.IMT = {
+    drain: function(){ var take = [], n = 0; while (out.length && (n < 1500000 || !take.length)) { n += out[0].length; take.push(out.shift()); } return take.join('\n'); },
+    recv: function(raw){
+      var m = JSON.parse(raw);
+      if (m.type === 'state') onState(m);
+      else if (m.type === 'selection') showSel(m);
+      else if (m.type === 'doc') onDoc(m);
+      else if (m.type === 'pdfChunk') { if (m.md5 === DOC.md5) DOC.chunks.push(m.data); }
+      else if (m.type === 'pdfEnd') { if (m.md5 === DOC.md5) loadPdf(); }
+      else if (m.type === 'pageData') onPageData(m);
+      else if (m.type === 'buildProgress') buildProgress(m);
+      else if (m.type === 'fontChunk') fontChunks.push(m.data);
+      else if (m.type === 'build') doBuild(m);
+    }
+  };
+  if (window.pdfjsLib) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
+  }
+  function applyBody(){
+    document.body.className = (disp === 'orig' ? 'orig ' : '') + 'style-' + tstyle;
+    Array.prototype.forEach.call(document.querySelectorAll('#dispSeg button'), function(b){ b.className = b.dataset.d === disp ? 'on' : ''; });
+  }
+  function showSel(m){
+    var el = $('sel'); el.style.display = 'block';
+    el.querySelector('.t').textContent = m.tr; el.querySelector('.o').textContent = m.orig;
+    el.onclick = function(){ el.style.display = 'none'; };
+  }
+  function onState(m){
+    state = m; var c = m.cfg; applyBody();
+    Array.prototype.forEach.call(document.querySelectorAll('#viewSeg button'), function(b){ b.className = b.dataset.v === c.view ? 'on' : ''; });
+    if (!m.page) { $('pageInfo').textContent = ''; return; }
+    $('pageInfo').textContent = '· ' + curPage + ' / ' + m.page.count + ' · ' + (c.engine === 'claude' ? c.model : 'Google');
+    var j = m.page.job; $('err').textContent = j && j.state === 'error' ? '⚠️ ' + j.err : '';
+    if (DOC.pdf && m.page.no !== curPage && m.page.no !== lastSentPage) scrollToPage(m.page.no);
+  }
+
+  // ---------- document ----------
+  function onDoc(m){
+    if (m.error) { $('empty').textContent = m.error; return; }
+    if (DOC.md5 === m.md5 && DOC.pdf) return;
+    DOC = { md5:m.md5, chunks:[], pdf:null, count:m.pageCount, sizes:{}, pages:{}, data:{}, wanted:{}, startPage:m.page };
+    $('main').innerHTML = '<div class="empty" id="empty">正在加载文档…</div>';
+  }
+  function b64ToBytes(b64){
+    var bin = atob(b64), n = bin.length, u = new Uint8Array(n);
+    for (var i = 0; i < n; i++) u[i] = bin.charCodeAt(i);
+    return u;
+  }
+  function loadPdf(){
+    var bytes = b64ToBytes(DOC.chunks.join('')); DOC.chunks = []; srcBytesCopy = bytes.slice(0);
+    var md5 = DOC.md5;
+    pdfjsLib.getDocument({ data: bytes, cMapUrl: 'vendor/cmaps/', cMapPacked: true, standardFontDataUrl: 'vendor/standard_fonts/', isEvalSupported: false }).promise.then(function(pdf){
+      if (md5 !== DOC.md5) return;
+      DOC.pdf = pdf; DOC.count = pdf.numPages;
+      return pdf.getPage(1).then(function(p1){
+        var v = p1.view; var w0 = v[2] - v[0], h0 = v[3] - v[1];
+        buildShells(w0, h0);
+        scrollToPage(DOC.startPage || 1);
+        onScroll();
+      });
+    }).catch(function(e){ $('main').innerHTML = '<div class="empty">PDF 加载失败：' + esc(e && e.message || e) + '</div>'; });
+  }
+  function pageWidth(){ return Math.min(window.innerWidth - 80, 900) * zoom; }
+  function buildShells(w0, h0){
+    var main = $('main'); main.innerHTML = '';
+    var W = pageWidth();
+    for (var i = 1; i <= DOC.count; i++) {
+      var d = document.createElement('div'); d.className = 'page'; d.id = 'pg' + i;
+      d.style.width = W + 'px'; d.style.minHeight = (W * h0 / w0) + 'px';
+      d.innerHTML = '<div class="ph">第 ' + i + ' 页</div><div class="no">' + i + '</div>';
+      main.appendChild(d);
+    }
+  }
+  function scrollToPage(n){
+    var el = $('pg' + n); if (!el) return;
+    programmaticScroll = true; curPage = n;
+    window.scrollTo(0, el.offsetTop - 50);
+    setTimeout(function(){ programmaticScroll = false; }, 400);
+  }
+
+  // ---------- rendering a page: original pixels, split after each paragraph, translation blocks inserted ----------
+  function onPageData(m){
+    if (m.md5 !== DOC.md5) return;
+    var prev = DOC.data[m.no];
+    DOC.data[m.no] = m;
+    if (DOC.pages[m.no] && DOC.pages[m.no].canvas) {
+      if (!prev || JSON.stringify(prev.paras) !== JSON.stringify(m.paras)) compose(m.no);
+    } else renderPage(m.no);
+  }
+  function renderPage(n){
+    if (!DOC.pdf || DOC.pages[n]) return;
+    DOC.pages[n] = { rendering:true };
+    DOC.pdf.getPage(n).then(function(page){
+      var W = pageWidth(), v = page.view;
+      var vp1 = page.getViewport({ scale:1 });
+      var dpr = Math.min(window.devicePixelRatio || 1, 2) * 1.0;
+      var scale = W / vp1.width;
+      var vp = page.getViewport({ scale: scale * dpr });
+      var cv = document.createElement('canvas'); cv.width = Math.ceil(vp.width); cv.height = Math.ceil(vp.height);
+      return page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise.then(function(){
+        DOC.pages[n] = { canvas:cv, scale:scale, dpr:dpr, view:v, W:W, H:vp1.height * scale, rot:page.rotate };
+        compose(n);
+      });
+    }).catch(function(e){ DOC.pages[n] = null; });
+  }
+  function median(a){ a = a.slice().sort(function(x,y){return x-y}); return a.length ? a[a.length>>1] : 10; }
+  function compose(n){
+    var P = DOC.pages[n]; if (!P || !P.canvas) return;
+    var el = $('pg' + n); if (!el) return;
+    var data = DOC.data[n];
+    var s = P.scale, top = P.view[3], left = P.view[0];
+    var paras = (data && data.paras || []).map(function(p){
+      return { p:p, t:(top - p.y1) * s, b:(top - p.y0) * s, l:(p.x0 - left) * s, r:(p.x1 - left) * s };
+    });
+    // valid cut positions: y where no paragraph straddles
+    function valid(y){ for (var i = 0; i < paras.length; i++) { var q = paras[i]; if (q.t < y - 1 && q.b > y + 1) return false; } return true; }
+    function norm(x){ return String(x||'').toLowerCase().replace(/[^a-z0-9]/g,''); }
+    var trs = paras.filter(function(q){ return q.p.translatable && !(q.p.tr && norm(q.p.tr) === norm(q.p.text)); });
+    var cuts = {};
+    trs.forEach(function(q){
+      var y = q.b + 2;
+      var cands = paras.map(function(o){ return o.b + 2; }).filter(function(c){ return c >= y - 0.5; }).sort(function(a,b){ return a-b; });
+      var c = null; for (var i = 0; i < cands.length; i++) if (valid(cands[i])) { c = cands[i]; break; }
+      if (c === null) c = P.H;
+      c = Math.min(P.H, c);
+      (cuts[c] = cuts[c] || []).push(q);
+    });
+    var ys = Object.keys(cuts).map(Number).sort(function(a,b){ return a-b; });
+    var hs = []; trs.forEach(function(q){ for (var i = 0; i < Math.min(6, q.p.n); i++) hs.push(q.p.h); });
+    var base = median(hs);
+    el.innerHTML = '<div class="no">' + n + '</div>'; el.style.minHeight = '';
+    var y0 = 0;
+    function strip(a, b){
+      if (b - a < 0.5) return;
+      var c = document.createElement('canvas'), d = P.dpr;
+      c.width = P.canvas.width; c.height = Math.max(1, Math.round((b - a) * d));
+      c.getContext('2d').drawImage(P.canvas, 0, Math.round(a * d), P.canvas.width, c.height, 0, 0, c.width, c.height);
+      c.className = 'seg-img'; c.style.width = P.W + 'px'; c.style.height = (b - a) + 'px';
+      el.appendChild(c);
+    }
+    ys.forEach(function(y){
+      strip(y0, y); y0 = y;
+      var group = cuts[y];
+      var blk = document.createElement('div'); blk.className = 'tblk';
+      // group into columns by horizontal overlap
+      var cols = [];
+      group.sort(function(a,b){ return a.t - b.t; }).forEach(function(q){
+        var col = null;
+        for (var i = 0; i < cols.length; i++) { var cc = cols[i]; if (Math.min(cc.r, q.r) - Math.max(cc.l, q.l) > 0.3 * Math.min(cc.r - cc.l, q.r - q.l)) { col = cc; break; } }
+        if (!col) { col = { l:q.l, r:q.r, items:[] }; cols.push(col); }
+        col.l = Math.min(col.l, q.l); col.r = Math.max(col.r, q.r); col.items.push(q);
+      });
+      cols.forEach(function(col){
+        var cd = document.createElement('div'); cd.className = 'tcol';
+        cd.style.left = Math.max(0, col.l - 2) + 'px'; cd.style.width = Math.min(P.W - col.l + 2, col.r - col.l + 6) + 'px';
+        col.items.forEach(function(q){
+          var t = document.createElement('div');
+          var ph = q.p.h * s;
+          var heading = q.p.h > base * 1.2 && q.p.n <= 3;
+          var fs = Math.max(10, Math.min(heading ? 26 : 19, ph * (heading ? 0.82 : 0.78)));
+          t.className = 'tr' + (q.p.tr ? '' : ' wait') + (heading ? ' hd' : '');
+          var pc = (q.l + q.r) / 2, centered = Math.abs(pc - P.W / 2) < P.W * 0.04 && (q.r - q.l) < P.W * 0.72;
+          if (centered || heading && q.p.n <= 2 && Math.abs(pc - P.W / 2) < P.W * 0.04) { t.style.textAlign = 'center'; t.style.borderLeft = '0'; t.style.paddingLeft = '0'; }
+          t.style.fontSize = fs.toFixed(1) + 'px'; t.style.lineHeight = heading ? '1.35' : '1.6';
+          if (q.p.tr) t.textContent = q.p.tr;
+          cd.appendChild(t);
+        });
+        blk.appendChild(cd);
+      });
+      el.appendChild(blk);
+      var mh = 0; Array.prototype.forEach.call(blk.children, function(cd){ mh = Math.max(mh, cd.offsetHeight); });
+      blk.style.height = (mh + 4) + 'px';
+    });
+    strip(y0, P.H);
+  }
+
+  // ---------- visibility: render + request translation of pages near the viewport ----------
+  var scrollT = null;
+  function onScroll(){
+    if (!DOC.pdf) return;
+    var vt = window.scrollY, vb = vt + window.innerHeight, need = [], mid = vt + window.innerHeight * 0.3, vis = curPage;
+    for (var i = 1; i <= DOC.count; i++) {
+      var el = $('pg' + i); var t = el.offsetTop, b = t + el.offsetHeight;
+      if (t <= mid) vis = i;
+      if (b > vt - window.innerHeight && t < vb + window.innerHeight) { if (!DOC.wanted[i]) { DOC.wanted[i] = 1; need.push(i); } }
+      if (t > vb + 2 * window.innerHeight) break;
+    }
+    if (need.length) send({ type:'need', pages:need });
+    if (vis !== curPage) { curPage = vis; if (state && state.page) $('pageInfo').textContent = '· ' + curPage + ' / ' + state.page.count + ' · ' + (state.cfg.engine === 'claude' ? state.cfg.model : 'Google'); }
+    if (!programmaticScroll && vis !== lastSentPage && state && state.page && vis !== state.page.no) { lastSentPage = vis; send({ type:'gotoPage', page:vis }); }
+  }
+  window.addEventListener('scroll', function(){ clearTimeout(scrollT); scrollT = setTimeout(onScroll, 120); });
+  function rezoom(f){
+    zoom = Math.max(0.5, Math.min(2.5, zoom * f)); LS.imtZoom = zoom;
+    if (!DOC.pdf) return;
+    var keep = curPage;
+    DOC.pages = {};
+    DOC.pdf.getPage(1).then(function(p1){ var v = p1.view; buildShells(v[2]-v[0], v[3]-v[1]);
+      Object.keys(DOC.data).forEach(function(k){ DOC.wanted[k] = 0; });
+      for (var k in DOC.data) DOC.wanted[k] = 1;
+      scrollToPage(keep);
+      Object.keys(DOC.data).forEach(function(k){ if (Math.abs(k - keep) <= 2) renderPage(+k); });
+      DOC.wanted = {}; onScroll(); });
+  }
+  var rzT = null; window.addEventListener('resize', function(){ clearTimeout(rzT); rzT = setTimeout(function(){ rezoom(1); }, 300); });
+
+  // ---------- bilingual PDF export ----------
+  var srcBytesCopy = null, fontChunks = [], fontBytes = null;
+  function buildProgress(m){
+    var el = $('build'); el.style.display = 'block';
+    if (m.stage === 'translate') el.textContent = '① 翻译全文 ' + m.done + ' / ' + m.total + ' 页…';
+    else if (m.stage === 'layout') el.textContent = '② 排版双语 PDF ' + m.done + ' / ' + m.total + ' 页…';
+    else if (m.stage === 'upload') el.textContent = '③ 保存中…';
+    else if (m.stage === 'saved') { el.innerHTML = '✅ 已生成并加入文档库：<b>' + esc(m.path.split('/').pop()) + '</b>（在 MarginNote 文档列表中打开即可原生批注）'; setTimeout(function(){ el.style.display = 'none'; }, 15000); }
+  }
+  function u8ToB64(u8){ var s = '', CH = 0x8000; for (var i = 0; i < u8.length; i += CH) s += String.fromCharCode.apply(null, u8.subarray(i, i + CH)); return btoa(s); }
+  function doBuild(m){
+    if (!srcBytesCopy) { send({type:'buildFailed', err:'PDF 未加载'}); return; }
+    if (!fontBytes && fontChunks.length) { fontBytes = b64ToBytes(fontChunks.join('')); fontChunks = []; }
+    Promise.resolve(fontBytes).then(function(fb){
+      return IMTBilingual.build({ PDFLib: PDFLib, fontkit: fontkit, srcBytes: srcBytesCopy.slice(0), fontBytes: new Uint8Array(fb), pages: m.pages, title: m.title,
+        onProgress: function(d, t){ buildProgress({stage:'layout', done:d, total:t}); } });
+    }).then(function(bytes){
+      buildProgress({stage:'upload'});
+      var b64 = u8ToB64(bytes), CH = 1000000;
+      for (var i = 0; i < b64.length; i += CH) send({type:'outChunk', data: b64.slice(i, i + CH)});
+      send({type:'outEnd', name: m.title});
+    }).catch(function(e){ $('build').textContent = '生成失败：' + (e && e.message || e); send({type:'buildFailed', err: String(e && e.message || e)}); });
+  }
+
+  // ---------- controls ----------
+  $('bBuild').onclick = function(){ send({type:'makeBilingual'}); };
+  Array.prototype.forEach.call(document.querySelectorAll('#viewSeg button'), function(b){ b.onclick = function(){ send({type:'setCfg', cfg:{view:b.dataset.v}}); }; });
+  Array.prototype.forEach.call(document.querySelectorAll('#dispSeg button'), function(b){ b.onclick = function(){ disp = LS.imtDisp = b.dataset.d; applyBody(); }; });
+  $('zoomIn').onclick = function(){ rezoom(1.15); };
+  $('zoomOut').onclick = function(){ rezoom(1/1.15); };
+  $('bRetry').onclick = function(){ send({type:'retranslate', page:curPage}); };
+  $('bRange').onclick = function(){ send({type:'translateRange', count:10}); };
+  $('bClose').onclick = function(){ send({type:'close'}); };
+  $('bClear').onclick = function(){ send({type:'clearCache'}); DOC.wanted = {}; setTimeout(onScroll, 500); };
+  $('bSettings').onclick = function(){
+    var s = $('settings'), open = s.style.display !== 'block'; s.style.display = open ? 'block' : 'none';
+    if (open && state) { var c = state.cfg;
+      $('sEngine').value = c.engine; $('sLang').value = c.targetLang; $('sModel').value = c.model; $('sBase').value = c.baseURL; $('sMode').value = c.mode; $('sStyle').value = tstyle;
+      $('sKey').value = ''; $('sKey').placeholder = c.apiKey || 'sk-ant-...'; $('sFont').value = c.fontScale; $('sAuto').checked = !!c.auto; $('sPrefetch').checked = !!c.prefetch; }
+  };
+  $('bSave').onclick = function(){
+    var cfg = { engine:$('sEngine').value, targetLang:$('sLang').value, model:$('sModel').value.trim() || 'claude-haiku-5-5', mode:$('sMode').value,
+      baseURL:$('sBase').value.trim() || 'https://api.anthropic.com', fontScale: parseFloat($('sFont').value) || 1, auto:$('sAuto').checked, prefetch:$('sPrefetch').checked };
+    if ($('sKey').value.trim()) cfg.apiKey = $('sKey').value.trim();
+    tstyle = LS.imtStyle = $('sStyle').value; applyBody();
+    send({type:'setCfg', cfg:cfg, reset:true}); $('settings').style.display = 'none';
+    DOC.wanted = {}; setTimeout(onScroll, 500);
+  };
+  window.addEventListener('error', function(e){ $('err').textContent = 'JS: ' + e.message; });
+  applyBody();
+  send({type:'ready'});
+})();
+</script>
+</body>
+</html>

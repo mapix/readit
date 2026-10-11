@@ -1,0 +1,8 @@
+.build/
+build/
+dist/
+*.xcodeproj/
+.swiftpm/
+.DS_Store
+landing/node_modules/
+landing/download/
