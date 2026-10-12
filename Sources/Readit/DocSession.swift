@@ -101,7 +101,7 @@ final class DocSession: ObservableObject {
 
     // MARK: translation scheduling
     /// translate-ahead window: current page + N following (default 2). "全文翻译" sets fullDocument.
-    var lookahead: Int { max(0, UserDefaults.standard.object(forKey: "lookahead") as? Int ?? 2) }
+    var lookahead: Int { Settings.lookahead }
     @Published var fullDocument = false
 
     func startBilingual(from page: Int) {

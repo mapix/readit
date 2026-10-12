@@ -1,22 +1,72 @@
 import Foundation
 
+/// Resolved settings. Order: config file (`ConfigFile`) → legacy preferences (UserDefaults) → environment → default.
+/// Setters always update the legacy preferences (so older builds keep working) and, if the config file
+/// exists, write the value into it as well.
 enum Settings {
     static var d: UserDefaults { .standard }
+    static var env: [String: String] { ProcessInfo.processInfo.environment }
+
     static var apiKey: String {
-        get { d.string(forKey: "apiKey") ?? ProcessInfo.processInfo.environment["ANTHROPIC_AUTH_TOKEN"] ?? ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? "" }
-        set { d.set(newValue, forKey: "apiKey") }
+        get {
+            if ConfigFile.keySource != .none, let k = ConfigFile.apiKey() { return k }
+            return nonEmpty(d.string(forKey: "apiKey")) ?? nonEmpty(env["ANTHROPIC_AUTH_TOKEN"]) ?? nonEmpty(env["ANTHROPIC_API_KEY"]) ?? ""
+        }
+        set {
+            d.set(newValue, forKey: "apiKey")
+            // only touch the file if it already stores the key in plain text
+            if ConfigFile.keySource == .file { ConfigFile.set(["gateway.api_key": .str(newValue)]) }
+        }
+    }
+    /// the key is provided by the config file (env var / command) and cannot be edited in the Settings window
+    static var apiKeyManagedByFile: Bool {
+        switch ConfigFile.keySource { case .env, .command: return true; default: return false }
     }
     static var baseURL: String {
-        get { d.string(forKey: "baseURL") ?? ProcessInfo.processInfo.environment["ANTHROPIC_BASE_URL"] ?? "https://api.anthropic.com" }
-        set { d.set(newValue, forKey: "baseURL") }
+        get { ConfigFile.string("gateway.base_url") ?? nonEmpty(d.string(forKey: "baseURL")) ?? nonEmpty(env["ANTHROPIC_BASE_URL"]) ?? "https://api.anthropic.com" }
+        set { d.set(newValue, forKey: "baseURL"); ConfigFile.set(["gateway.base_url": .str(newValue)]) }
     }
     static var model: String {
         get { d.string(forKey: "model") ?? "claude-haiku-5-5" }
         set { d.set(newValue, forKey: "model") }
     }
     static var targetLang: String {
-        get { d.string(forKey: "targetLang") ?? "简体中文" }
-        set { d.set(newValue, forKey: "targetLang") }
+        get { ConfigFile.string("translate.target_language") ?? d.string(forKey: "targetLang") ?? "简体中文" }
+        set { d.set(newValue, forKey: "targetLang"); ConfigFile.set(["translate.target_language": .str(newValue)]) }
+    }
+    /// pages translated ahead of the current one
+    static var lookahead: Int {
+        get { max(0, ConfigFile.int("translate.lookahead_pages") ?? d.object(forKey: "lookahead") as? Int ?? 2) }
+        set { d.set(newValue, forKey: "lookahead"); ConfigFile.set(["translate.lookahead_pages": .int(newValue)]) }
+    }
+    static var ttsVoice: String {
+        get { ConfigFile.string("tts.voice") ?? d.string(forKey: "narrVoice") ?? "Zephyr" }
+        set { d.set(newValue, forKey: "narrVoice"); ConfigFile.set(["tts.voice": .str(newValue)]) }
+    }
+    static var ttsSpeed: Float {
+        get { ConfigFile.double("tts.speed").map { Float($0) } ?? d.object(forKey: "narrRate2") as? Float ?? 1.5 }
+        set { d.set(newValue, forKey: "narrRate2"); ConfigFile.set(["tts.speed": .num(Double(newValue))]) }
+    }
+
+    /// snapshot used to create the config file from the current state (no API key)
+    static var snapshot: [String: ConfigFile.Value] {
+        [
+            "gateway.base_url": .str(baseURL),
+            "translate.model": .str(ModelConfig.translateModel),
+            "translate.protocol": .str(ModelConfig.style("translate").configName),
+            "translate.target_language": .str(targetLang),
+            "translate.lookahead_pages": .int(lookahead),
+            "assistant.model": .str(ModelConfig.chatModel),
+            "assistant.protocol": .str(ModelConfig.style("chat").configName),
+            "tts.model": .str(ModelConfig.ttsModel),
+            "tts.voice": .str(ttsVoice),
+            "tts.speed": .num(Double(ttsSpeed)),
+        ]
+    }
+
+    private static func nonEmpty(_ s: String?) -> String? {
+        guard let s, !s.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
+        return s
     }
 }
 

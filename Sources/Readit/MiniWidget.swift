@@ -218,7 +218,10 @@ struct WidgetView: View {
                 HStack {
                     Text(narrating ? LF("第 %d/%d 段", n.segIndex + 1, max(1, n.segments.count)) : LF("第 %d 页", currentPage + 1)).font(.system(size: 9.5)).foregroundStyle(.tertiary).monospacedDigit()
                     Spacer()
-                    Text("\(Int(progress * 100))%").font(.system(size: 9.5)).foregroundStyle(.tertiary).monospacedDigit()
+                    TimelineView(.periodic(from: .now, by: 1)) { _ in
+                        let eta = narrating ? (n.remainingSeconds().map { Narrator.formatRemaining($0) + " · " } ?? "") : ""
+                        Text(eta + "\(Int(progress * 100))%").font(.system(size: 9.5)).foregroundStyle(.tertiary).monospacedDigit()
+                    }
                 }
             }
             // transport

@@ -5,7 +5,7 @@ A native macOS app (SwiftUI + PDFKit) for reading PDFs bilingually with the orig
 - Website & download: https://readit.novarock.io
 - Source: https://github.com/mapix/readit (MIT licensed)
 - Build: `./build_app.sh` (produces `build/Readit.app`, installs it into `/Applications`, and packages `dist/Readit-<version>.zip`)
-- On first launch, open **Settings** and enter your model gateway URL and API key (Anthropic / OpenAI Chat Completions / OpenAI Responses are supported).
+- On first launch, enter your model gateway URL and API key in **Settings**, or use a config file — see [Configuration](#configuration). Anthropic / OpenAI Chat Completions / OpenAI Responses are supported.
 
 ## Interface & Windows
 
@@ -54,6 +54,7 @@ A native macOS app (SwiftUI + PDFKit) for reading PDFs bilingually with the orig
   - **Buffering**: the next 10 segments are synthesized ahead of time for gap-free playback.
   - **Follow along**: the paragraph or figure being narrated gets a soft "breathing" outline and is smoothly scrolled to the center.
   - **Controls**: adjustable speed and voice; hold the mic button (or ⌃Space) to interrupt with a spoken question at any time.
+  - **Time left**: the player, the minimized pill, and the desktop widget show an estimate of the remaining listening time for the whole document at the current speed. It is based on the scripts already written plus the speaking pace learned from synthesized audio, and gets more accurate as you listen.
 
 ## Excerpts & Notes (modeled on MarginNote 3)
 
@@ -83,9 +84,54 @@ A native macOS app (SwiftUI + PDFKit) for reading PDFs bilingually with the orig
 - **Smart skipping**: formulas, pseudocode, tables, tables of contents, and author blocks are not translated.
 - **Background translation**: translation starts at the current page and covers the whole book; finished pages are swapped in place without moving your reading position.
 
-## Settings
+## Configuration
 
-Open **Readit → Settings…** (⌘,) to set the API key, base URL, models (default `claude-haiku-5-5`), and target language. A **Test Connection** button verifies the setup.
+Readit can be configured either in the **Settings** window (⌘,) or with a plain-text file at `~/.config/readit/config.toml` (override the path with the `READIT_CONFIG` environment variable). The file is optional — start from [`config.example.toml`](config.example.toml):
+
+```bash
+mkdir -p ~/.config/readit
+cp config.example.toml ~/.config/readit/config.toml
+chmod 600 ~/.config/readit/config.toml
+```
+
+or click **Create Config File** in Settings, which writes your current settings (without the API key).
+
+```toml
+[gateway]
+base_url = "https://gateway.example.com"      # no trailing /v1
+api_key_command = "security find-generic-password -s readit -w"
+
+[translate]
+model = "claude-haiku-5-5"
+protocol = "anthropic"                         # anthropic | chat | responses
+target_language = "简体中文"
+lookahead_pages = 2
+
+[assistant]                                    # AI Assistant / Narration / Flashcards
+model = "claude-haiku-5-5"
+protocol = "anthropic"
+
+[tts]
+model = "gemini-3.8-flash-tts"
+voice = "Zephyr"
+speed = 1.5
+```
+
+**Precedence**: config file → Settings window / legacy preferences → environment variables (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`) → built-in defaults. Keys you leave out of the file fall back to the next source, so existing setups keep working unchanged. Edits to the file are picked up without restarting; when the file exists, saving in the Settings window writes the changes back into it, keeping your comments.
+
+**API key**: the app never writes your key into the file. Choose one of:
+
+- `api_key_command` — run a command and use its output; recommended with the macOS Keychain. Store the key once with `security add-generic-password -s readit -a "$USER" -w`.
+- `api_key_env` — read an environment variable. This only works when Readit is launched from a shell that exports it; apps opened from Finder or the Dock don't inherit shell variables.
+- `api_key` — plain text in the file; keep the file `chmod 600` and never commit it.
+- none of the above — the key entered in the Settings window is used, as before.
+
+**Legacy preferences** are still honored. They live in the `local.bireader.app` defaults domain, for example:
+
+```bash
+defaults write local.bireader.app baseURL -string "https://gateway.example.com"
+defaults write local.bireader.app model.tts -string "gemini-3.8-flash-tts"
+```
 
 ## Data Location
 

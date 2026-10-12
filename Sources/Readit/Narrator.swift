@@ -60,11 +60,11 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         return d
     }
 
-    @Published var rate: Float = UserDefaults.standard.object(forKey: "narrRate2") as? Float ?? 1.5 {
-        didSet { UserDefaults.standard.set(rate, forKey: "narrRate2"); applyRate(old: oldValue) }
+    @Published var rate: Float = Settings.ttsSpeed {
+        didSet { if rate != oldValue { Settings.ttsSpeed = rate }; applyRate(old: oldValue) }
     }
-    @Published var voice: String = UserDefaults.standard.string(forKey: "narrVoice") ?? "Zephyr" {
-        didSet { UserDefaults.standard.set(voice, forKey: "narrVoice") }
+    @Published var voice: String = Settings.ttsVoice {
+        didSet { if voice != oldValue { Settings.ttsVoice = voice } }
     }
     static let voices = ["Zephyr", "Leda", "Aoede", "Kore", "Puck", "Charon", "Fenrir", "Orus"]
     static let voiceNames = ["Leda": "Leda · 年轻轻松女声", "Aoede": "Aoede · 温柔女声", "Kore": "Kore · 沉稳女声", "Zephyr": "Zephyr · 明亮女声", "Puck": "Puck · 活泼男声", "Charon": "Charon · 知性男声", "Fenrir": "Fenrir · 激昂男声", "Orus": "Orus · 低沉男声"]
@@ -96,11 +96,112 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         return (Double(page) + inPage) / Double(pageCount)
     }
 
+    // MARK: remaining-time estimate
+
+    /// script length (characters) per page, from the cached scripts; pages not scripted yet are estimated
+    var pageChars: [Int: Int] = [:]
+    var pageCharsMissing: Set<Int> = []
+
+    private func chars(ofPage p: Int) -> Int? {
+        if let c = pageChars[p] { return c }
+        if pageCharsMissing.contains(p) { return nil }
+        let u = cacheDir().appendingPathComponent("p\(p).json")
+        if let d = try? Data(contentsOf: u), let s = try? JSONDecoder().decode([Segment].self, from: d) {
+            let c = s.reduce(0) { $0 + $1.text.count }
+            pageChars[p] = c
+            return c
+        }
+        pageCharsMissing.insert(p)
+        return nil
+    }
+
+    /// seconds of audio per character at 1×, learned from synthesized clips (per target language)
+    static var paceKey: String { "narrPace." + Settings.targetLang }
+    static var pace: Double {
+        if let a = UserDefaults.standard.array(forKey: paceKey) as? [Double], a.count == 2, a[0] > 200, a[1] > 0 {
+            return a[1] / a[0]
+        }
+        // defaults: CJK speech ≈ 4.5 chars/s, alphabetic ≈ 14 chars/s
+        let l = Settings.targetLang
+        return (l.contains("中文") || l.contains("日本") || l.contains("한국")) ? 0.22 : 0.072
+    }
+    private var paceSeen: Set<String> = []
+    private func learnPace(key: String, text: String, wav: Data) {
+        guard !paceSeen.contains(key), let secs = Narrator.wavSeconds(wav), secs > 0.3, text.count > 4 else { return }
+        paceSeen.insert(key)
+        var a = UserDefaults.standard.array(forKey: Narrator.paceKey) as? [Double] ?? [0, 0]
+        if a.count != 2 { a = [0, 0] }
+        a[0] += Double(text.count); a[1] += secs
+        if a[1] > 3600 { a = a.map { $0 / 2 } }      // keep adapting to recent voices
+        UserDefaults.standard.set(a, forKey: Narrator.paceKey)
+    }
+    static func wavSeconds(_ d: Data) -> Double? {
+        guard d.count > 44 else { return nil }
+        func u32(_ o: Int) -> Int { Int(d[o]) | Int(d[o+1]) << 8 | Int(d[o+2]) << 16 | Int(d[o+3]) << 24 }
+        func u16(_ o: Int) -> Int { Int(d[o]) | Int(d[o+1]) << 8 }
+        let byteRate = u32(28), ch = u16(22), bits = u16(34)
+        guard byteRate > 0, ch > 0, bits > 0 else { return nil }
+        return Double(d.count - 44) / Double(byteRate)
+    }
+
+    /// estimated real time (seconds, at the current speed) to finish the document from the current position
+    func remainingSeconds() -> Double? {
+        guard docId != nil, pageCount > 0, state != .idle else { return nil }
+        let speed = Double(max(0.25, rate))
+        let pace = Narrator.pace
+        var seconds = 0.0
+        var n = 0                       // characters still to be spoken on known scripts
+        var unknownPages = 0
+        if segments.isEmpty {
+            if let c = chars(ofPage: page) { n += c } else { unknownPages += 1 }
+        } else {
+            if segIndex < segments.count {
+                if let pl = player, state == .playing || state == .paused, pl.duration > 0 {
+                    seconds += max(0, pl.duration - pl.currentTime) / Double(max(0.25, pl.rate))
+                } else {
+                    n += segments[segIndex].text.count
+                }
+            }
+            if segIndex + 1 < segments.count {
+                n += segments[(segIndex + 1)...].reduce(0) { $0 + $1.text.count }
+            }
+        }
+        // following pages: cached scripts where available, the average scripted page otherwise
+        if page + 1 < pageCount {
+            for p in (page + 1)..<pageCount {
+                if let c = chars(ofPage: p) { n += c } else { unknownPages += 1 }
+            }
+        }
+        let scripted = pageChars.values
+        let avg = scripted.isEmpty ? 420.0 : Double(scripted.reduce(0, +)) / Double(scripted.count)
+        let totalChars = Double(n) + avg * Double(unknownPages)
+        seconds += totalChars * pace / speed
+        return seconds
+    }
+
+    /// "剩余约 1 小时 5 分" / "about 1 h 5 min left"
+    static func formatRemaining(_ s: Double) -> String {
+        let m = Int((s / 60).rounded())
+        if m < 1 { return L("剩余不到 1 分钟") }
+        if m < 60 { return LF("剩余约 %d 分钟", m) }
+        return LF("剩余约 %d 小时 %d 分", m / 60, m % 60)
+    }
+    /// short form for compact UIs: "≈12m" / "≈1h05m"
+    static func formatRemainingShort(_ s: Double) -> String {
+        let m = max(1, Int((s / 60).rounded()))
+        return m < 60 ? "≈\(m)m" : String(format: "≈%dh%02dm", m / 60, m % 60)
+    }
+
     // MARK: control
 
     /// start narrating; by default resumes from the position saved for this document (survives stop / quit / crash)
     func start(docId: UUID, doc: PDFDocument, title: String, from page: Int, resume: Bool = true) {
         stop()
+        // pick up hand edits of config.toml since launch
+        let v = Settings.ttsVoice, r = Settings.ttsSpeed
+        if voice != v { voice = v }
+        if rate != r { rate = r }
+        if self.docId != docId { pageChars = [:]; pageCharsMissing = [] }
         self.docId = docId; self.doc = doc; self.title = title
         sourceDoc = Store.shared.session(docId)?.original
         pageCount = doc.pageCount
@@ -384,6 +485,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         defer { scriptTasks[p] = nil }
         let segs = try await task.value
         if let d = try? JSONEncoder().encode(segs) { try? d.write(to: url) }
+        pageChars[p] = segs.reduce(0) { $0 + $1.text.count }; pageCharsMissing.remove(p)
         return segs
     }
 
@@ -391,7 +493,9 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
 
     func audio(page p: Int, seg i: Int, text: String) async throws -> Data {
         let url = cacheDir().appendingPathComponent("p\(p)-s\(i)-\(voice)-v2.wav")
-        if let d = try? Data(contentsOf: url), d.count > 1000 { return Narrator.cleanWAV(d) }
+        if let d = try? Data(contentsOf: url), d.count > 1000 {
+            let w = Narrator.cleanWAV(d); learnPace(key: url.lastPathComponent, text: text, wav: w); return w
+        }
         let key = url.lastPathComponent
         if let t = audioTasks[key] { return try await t.value }
         let v = voice
@@ -420,6 +524,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         defer { audioTasks[key] = nil }
         let d = try await task.value
         try? d.write(to: url, options: .atomic)
+        learnPace(key: key, text: text, wav: d)
         refreshBuffered()
         return d
     }

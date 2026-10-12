@@ -1,0 +1,41 @@
+# Readit configuration example.
+# Copy to ~/.config/readit/config.toml (or point READIT_CONFIG at another path):
+#
+#   mkdir -p ~/.config/readit && cp config.example.toml ~/.config/readit/config.toml && chmod 600 ~/.config/readit/config.toml
+#
+# Values here take precedence over the Settings window and legacy `defaults write local.bireader.app …`
+# preferences; anything you leave out falls back to those. Changes are picked up without restarting.
+
+[gateway]
+# Your model gateway. Readit appends /v1/messages, /v1/chat/completions, /v1/responses,
+# /v1/models and /v1/audio/speech itself, so do not include a trailing /v1.
+base_url = "https://gateway.example.com"
+
+# API key — choose ONE of the options below. If none is set, the key saved in the Settings window is used.
+#
+# 1) macOS Keychain (recommended). Store it once with:
+#      security add-generic-password -s readit -a "$USER" -w
+#    then:
+# api_key_command = "security find-generic-password -s readit -w"
+#
+# 2) Environment variable — only works when Readit is launched from a shell that exports it:
+# api_key_env = "READIT_API_KEY"
+#
+# 3) Plain text in this file (keep the file chmod 600; never commit it):
+# api_key = "<your-api-key>"
+
+[translate]
+model = "claude-haiku-5-5"
+protocol = "anthropic"          # anthropic | chat | responses
+target_language = "简体中文"     # 简体中文 | 繁體中文 | English | 日本語 | 한국어
+lookahead_pages = 2             # pages translated ahead of the one you are reading
+
+[assistant]
+# AI Assistant, Narration, Flashcards and mind maps. Narration sends page images, so pick a vision model.
+model = "claude-haiku-5-5"
+protocol = "anthropic"
+
+[tts]
+model = "gemini-3.8-flash-tts"  # served via OpenAI-compatible /v1/audio/speech
+voice = "Zephyr"                # Zephyr | Leda | Aoede | Kore | Puck | Charon | Fenrir | Orus
+speed = 1.5                     # 0.75 – 3.0

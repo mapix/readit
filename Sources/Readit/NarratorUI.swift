@@ -80,7 +80,11 @@ struct NarratorBar: View {
             }
             .frame(width: 22, height: 22)
             if n.recording { RecDot(on: true).help(L("录制中")) }
-            Text("p.\(n.page + 1) · \(n.segIndex + 1)/\(max(1, n.segments.count))").font(.system(size: 11.5, weight: .medium)).monospacedDigit()
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                let eta = n.remainingSeconds().map { " · " + Narrator.formatRemainingShort($0) } ?? ""
+                Text("p.\(n.page + 1) · \(n.segIndex + 1)/\(max(1, n.segments.count))" + eta).font(.system(size: 11.5, weight: .medium)).monospacedDigit()
+            }
+            .help(n.remainingSeconds().map { Narrator.formatRemaining($0) } ?? "")
             Button { n.togglePause() } label: { Image(systemName: n.state == .playing ? "pause.fill" : "play.fill") }.buttonStyle(.plain).disabled(n.state == .preparing)
             Button { n.next() } label: { Image(systemName: "forward.fill") }.buttonStyle(.plain)
             MicButton().scaleEffect(0.8)
@@ -156,7 +160,12 @@ struct NarratorBar: View {
                     Group {
                         if let e = n.error { Text("⚠️ " + e).foregroundStyle(.red) }
                         else if n.state == .preparing { Text(n.segments.isEmpty ? L("正在阅读本页并组织讲解…") : L("正在生成语音…")) }
-                        else { Text("第 \(n.segIndex + 1)/\(max(1, n.segments.count)) 段 · 全文 \(Int(n.progress * 100))% · 已缓冲 \(n.buffered) 段") }
+                        else {
+                            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                                let eta = n.remainingSeconds().map { " · " + Narrator.formatRemaining($0) } ?? ""
+                                Text(LF("第 %d/%d 段 · 全文 %d%%", n.segIndex + 1, max(1, n.segments.count), Int(n.progress * 100)) + eta + " · " + LF("已缓冲 %d 段", n.buffered))
+                            }
+                        }
                     }
                     .font(.system(size: 10.5)).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
                 }

@@ -309,6 +309,17 @@ enum L10nTable {
         "缺 %d 段": ("%d segments missing", "%d 段落不足"),
         "准备画面": ("Preparing frames", "画面を準備中"),
         "没有可导出的讲解内容": ("Nothing to export", "書き出せる解説がありません"),
-        "录制中（已播放 %d 段）。导出时会从第一页到最后一页完整合成一遍": ("Recording (%d segments played). Export renders one complete pass from the first page to the last", "録画中（%d 段落再生済み）。書き出しは最初から最後のページまで通しで合成します"),
+        "配置文件": ("Config File", "設定ファイル"),
+        "创建配置文件": ("Create Config File", "設定ファイルを作成"),
+        "✅ 已创建配置文件": ("✅ Config file created", "✅ 設定ファイルを作成しました"),
+        "由配置文件提供": ("Provided by config file", "設定ファイルから取得"),
+        "配置文件中的值优先于这里的设置；在这里保存会同步写回配置文件。API Key 不会写入文件。": ("Values in the config file take precedence; saving here also writes them back to the file. The API key is never written to the file.", "設定ファイルの値が優先されます。ここで保存するとファイルにも書き戻されます。API キーはファイルに書き込まれません。"),
+        "可选：用一个文本文件管理网关、模型和语音配置。未创建时使用这里的设置。": ("Optional: manage gateway, models and voice in a text file. Without it, the settings here are used.", "任意：ゲートウェイ・モデル・音声をテキストファイルで管理できます。未作成の場合はここの設定を使用します。"),
+        "剩余不到 1 分钟": ("under 1 min left", "残り 1 分未満"),
+        "剩余约 %d 分钟": ("about %d min left", "残り約 %d 分"),
+        "剩余约 %d 小时 %d 分": ("about %d h %d min left", "残り約 %d 時間 %d 分"),
+        "第 %d/%d 段 · 全文 %d%%": ("Segment %d/%d · %d%% of document", "段落 %d/%d · 全体 %d%%"),
+        "已缓冲 %d 段": ("%d buffered", "%d 段落バッファ済み"),
+        "录制中（已播放 %d 段）。导出时会从第一页到最后一页完整合成一遍":("Recording (%d segments played). Export renders one complete pass from the first page to the last", "録画中（%d 段落再生済み）。書き出しは最初から最後のページまで通しで合成します"),
     ]
 }

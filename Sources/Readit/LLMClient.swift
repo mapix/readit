@@ -18,18 +18,40 @@ enum APIStyle: String, CaseIterable, Identifiable, Codable {
         if m.hasPrefix("gpt-5") || m.hasPrefix("gpt-6") || m.hasPrefix("o3") || m.hasPrefix("o4") { return .responses }
         return .chat
     }
+    /// value used in config.toml (`protocol = "anthropic" | "chat" | "responses"`)
+    var configName: String { rawValue }
+    /// accepts the config names plus a few common aliases
+    init?(configName s: String) {
+        switch s.lowercased().replacingOccurrences(of: "_", with: "-") {
+        case "anthropic", "messages", "anthropic-messages": self = .anthropic
+        case "chat", "openai", "openai-chat", "chat-completions", "openai-chat-completions": self = .chat
+        case "responses", "openai-responses": self = .responses
+        default: return nil
+        }
+    }
 }
 
 /// Per-purpose model configuration (translation / chat / TTS).
+/// Roles map to config.toml sections: translate → [translate], chat → [assistant], tts → [tts].
 enum ModelConfig {
     static var d: UserDefaults { .standard }
-    static func model(_ role: String, default def: String) -> String { d.string(forKey: "model.\(role)") ?? def }
-    static func setModel(_ role: String, _ v: String) { d.set(v, forKey: "model.\(role)") }
+    static func section(_ role: String) -> String { role == "chat" ? "assistant" : role }
+    static func model(_ role: String, default def: String) -> String {
+        ConfigFile.string(section(role) + ".model") ?? d.string(forKey: "model.\(role)") ?? def
+    }
+    static func setModel(_ role: String, _ v: String) {
+        d.set(v, forKey: "model.\(role)")
+        ConfigFile.set([section(role) + ".model": .str(v)])
+    }
     static func style(_ role: String) -> APIStyle {
+        if let s = ConfigFile.string(section(role) + ".protocol"), let v = APIStyle(configName: s) { return v }
         if let s = d.string(forKey: "style.\(role)"), let v = APIStyle(rawValue: s) { return v }
         return .guess(model(role, default: Settings.model))
     }
-    static func setStyle(_ role: String, _ v: APIStyle) { d.set(v.rawValue, forKey: "style.\(role)") }
+    static func setStyle(_ role: String, _ v: APIStyle) {
+        d.set(v.rawValue, forKey: "style.\(role)")
+        ConfigFile.set([section(role) + ".protocol": .str(v.configName)])
+    }
 
     static var translateModel: String { model("translate", default: Settings.model) }
     static var chatModel: String { model("chat", default: Settings.model) }

@@ -258,7 +258,9 @@ struct SettingsView: View {
     @State var cStyle = ModelConfig.style("chat")
     @State var ttsModel = ModelConfig.ttsModel
     @State var voice = Narrator.shared.voice
-    @State var lookahead = UserDefaults.standard.object(forKey: "lookahead") as? Int ?? 2
+    @State var lookahead = Settings.lookahead
+    @State var configExists = ConfigFile.exists
+    @State var keyManaged = Settings.apiKeyManagedByFile
     @State var theme = AppTheme.current
     @ObservedObject var lc = LangCenter.shared
 
@@ -270,8 +272,31 @@ struct SettingsView: View {
                 Section(L("界面语言") + " / Interface Language") {
                     Picker(L("界面语言"), selection: Binding(get: { lc.lang }, set: { lc.set($0) })) { ForEach(UILang.allCases) { Text($0.name).tag($0) } }.pickerStyle(.segmented)
                 }
+                Section(L("配置文件")) {
+                    HStack {
+                        Text(ConfigFile.displayPath).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
+                        Spacer()
+                        if configExists {
+                            Button(L("打开")) { NSWorkspace.shared.open(ConfigFile.url) }
+                            Button(L("在访达中显示")) { NSWorkspace.shared.activateFileViewerSelecting([ConfigFile.url]) }
+                        } else {
+                            Button(L("创建配置文件")) {
+                                save()
+                                do { try ConfigFile.create(from: Settings.snapshot); configExists = true; status = L("✅ 已创建配置文件") }
+                                catch { status = "❌ " + error.localizedDescription }
+                            }
+                        }
+                    }
+                    Text(configExists ? L("配置文件中的值优先于这里的设置；在这里保存会同步写回配置文件。API Key 不会写入文件。")
+                                      : L("可选：用一个文本文件管理网关、模型和语音配置。未创建时使用这里的设置。"))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Section(L("网关")) {
-                    SecureField("API Key", text: $key)
+                    if keyManaged {
+                        LabeledContent("API Key", value: L("由配置文件提供"))
+                    } else {
+                        SecureField("API Key", text: $key)
+                    }
                     TextField("Base URL", text: $base)
                     HStack {
                         Button(loading ? L("加载中…") : L("刷新可用模型")) { Task { await reload() } }.disabled(loading)
@@ -357,19 +382,21 @@ struct SettingsView: View {
     }
 
     func reload() async {
-        Settings.apiKey = key; Settings.baseURL = base
+        if !keyManaged { Settings.apiKey = key }
+        Settings.baseURL = base
         loading = true
         models = await LLMClient.listModels()
         loading = false
     }
 
     func save() {
-        Settings.apiKey = key; Settings.baseURL = base; Settings.targetLang = lang
+        if !keyManaged { Settings.apiKey = key }
+        Settings.baseURL = base; Settings.targetLang = lang
         ModelConfig.setModel("translate", tModel); ModelConfig.setStyle("translate", tStyle)
         ModelConfig.setModel("chat", cModel); ModelConfig.setStyle("chat", cStyle)
         ModelConfig.setModel("tts", ttsModel)
         Narrator.shared.voice = voice
-        UserDefaults.standard.set(lookahead, forKey: "lookahead")
+        Settings.lookahead = lookahead
         ThemeCenter.shared.set(theme)
     }
 }
