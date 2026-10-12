@@ -258,6 +258,8 @@ struct SettingsView: View {
     @State var cStyle = ModelConfig.style("chat")
     @State var ttsModel = ModelConfig.ttsModel
     @State var voice = Narrator.shared.voice
+    @State var ttsProvider = Narrator.shared.provider
+    @State var sysVoice = Narrator.shared.systemVoice
     @State var lookahead = Settings.lookahead
     @State var configExists = ConfigFile.exists
     @State var keyManaged = Settings.apiKeyManagedByFile
@@ -315,8 +317,28 @@ struct SettingsView: View {
                     Text(L("AI 解读会把页面截图发给模型，请选择支持图片输入的模型。")).font(.caption).foregroundStyle(.secondary)
                 }
                 Section(L("语音（TTS）")) {
-                    modelRow(L("TTS 模型"), $ttsModel, filter: { $0.contains("tts") })
-                    Picker(L("音色"), selection: $voice) { ForEach(Narrator.voices, id: \.self) { Text(Narrator.voiceNames[$0] ?? $0).tag($0) } }
+                    Picker(L("语音引擎"), selection: $ttsProvider) {
+                        Text(L("系统语音（macOS，免费，无需模型）")).tag(TTSProvider.system)
+                        Text(L("网关 TTS（/v1/audio/speech）")).tag(TTSProvider.gateway)
+                    }
+                    if ttsProvider == .system {
+                        Picker(L("音色"), selection: $sysVoice) {
+                            Text(L("自动（按目标语言）")).tag("")
+                            ForEach(SystemTTS.options(for: lang)) { Text($0.label).tag($0.id) }
+                        }
+                        Text(L("更自然的声音可在「系统设置 → 辅助功能 → 朗读内容 → 系统声音 → 管理声音」中下载，推荐「高级」或「增强」版本。")).font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        modelRow(L("TTS 模型"), $ttsModel, filter: { $0.contains("tts") })
+                        Picker(L("音色"), selection: $voice) { ForEach(Narrator.voices, id: \.self) { Text(Narrator.voiceNames[$0] ?? $0).tag($0) } }
+                        Text(L("网关需提供 OpenAI 兼容的 POST /v1/audio/speech。请求失败（如没有该模型）时会自动改用系统语音。")).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Button(L("试听")) {
+                        save(); status = L("合成中…")
+                        Task {
+                            do { try await Narrator.shared.previewVoice(); status = "✅ " + L("试听") }
+                            catch { status = "❌ TTS: " + error.localizedDescription }
+                        }
+                    }
                 }
                 Section(L("PDF 打开方式")) {
                     HStack {
@@ -394,8 +416,10 @@ struct SettingsView: View {
         Settings.baseURL = base; Settings.targetLang = lang
         ModelConfig.setModel("translate", tModel); ModelConfig.setStyle("translate", tStyle)
         ModelConfig.setModel("chat", cModel); ModelConfig.setStyle("chat", cStyle)
-        ModelConfig.setModel("tts", ttsModel)
+        if ttsProvider == .gateway || ttsModel != ModelConfig.ttsModel { ModelConfig.setModel("tts", ttsModel) }
         Narrator.shared.voice = voice
+        Narrator.shared.provider = ttsProvider
+        Narrator.shared.systemVoice = sysVoice
         Settings.lookahead = lookahead
         ThemeCenter.shared.set(theme)
     }

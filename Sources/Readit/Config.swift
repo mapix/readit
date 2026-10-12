@@ -150,9 +150,13 @@ enum ConfigFile {
         protocol = \(v("assistant.protocol", "\"anthropic\""))
 
         [tts]
-        model = \(v("tts.model", "\"gemini-3.8-flash-tts\""))
-        voice = \(v("tts.voice", "\"Zephyr\""))   # Zephyr Leda Aoede Kore Puck Charon Fenrir Orus
+        provider = \(v("tts.provider", "\"system\""))   # system (macOS voices, no model needed) | gateway
         speed = \(v("tts.speed", "1.5"))
+        # provider = "system": voice identifier, empty = best installed voice for target_language
+        system_voice = \(v("tts.system_voice", "\"\""))
+        # provider = "gateway": OpenAI-compatible POST {base_url}/v1/audio/speech
+        model = \(v("tts.model", "\"gemini-3.8-flash-tts\""))
+        voice = \(v("tts.voice", "\"Zephyr\""))   # depends on the model, e.g. Zephyr Kore Puck (Gemini) / alloy nova (OpenAI)
 
         """
         try text.write(to: url, atomically: true, encoding: .utf8)

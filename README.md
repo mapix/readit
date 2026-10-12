@@ -35,7 +35,10 @@ A native macOS app (SwiftUI + PDFKit) for reading PDFs bilingually with the orig
 - **Translation & AI features**: choose separate models for *Translation* and for *AI Assistant / Narration / Flashcards* in Settings.
   - The model list is fetched from the gateway's `/v1/models`.
   - Wire protocol: Anthropic Messages, OpenAI Chat Completions, or OpenAI Responses.
-- **Speech**: the TTS model and voice are configurable too; defaults are `gemini-3.8-flash-tts` with the Zephyr voice.
+- **Speech (TTS)**: two engines.
+  - **System voice** (default): macOS `AVSpeechSynthesizer` — free, offline, no TTS model needed. Download nicer voices in *System Settings → Accessibility → Spoken Content → System Voice → Manage Voices* (Premium / Enhanced).
+  - **Gateway TTS**: any model your gateway serves on the OpenAI-compatible `POST /v1/audio/speech` (e.g. `gemini-3.8-flash-tts`, `gpt-4o-mini-tts`). If the gateway rejects the request (missing model, 401/404…), narration switches to the system voice automatically.
+  - Settings has a **Preview** button to hear the selected engine and voice.
 
 ## AI Features
 
@@ -112,9 +115,12 @@ model = "claude-haiku-5-5"
 protocol = "anthropic"
 
 [tts]
-model = "gemini-3.8-flash-tts"
-voice = "Zephyr"
+provider = "system"                            # system (macOS voices) | gateway
+system_voice = ""                              # empty = best installed voice for the language
 speed = 1.5
+# for provider = "gateway":
+# model = "gemini-3.8-flash-tts"
+# voice = "Zephyr"
 ```
 
 **Precedence**: config file → Settings window / legacy preferences → environment variables (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`) → built-in defaults. Keys you leave out of the file fall back to the next source, so existing setups keep working unchanged. Edits to the file are picked up without restarting; when the file exists, saving in the Settings window writes the changes back into it, keeping your comments.
@@ -125,6 +131,18 @@ speed = 1.5
 - `api_key_env` — read an environment variable. This only works when Readit is launched from a shell that exports it; apps opened from Finder or the Dock don't inherit shell variables.
 - `api_key` — plain text in the file; keep the file `chmod 600` and never commit it.
 - none of the above — the key entered in the Settings window is used, as before.
+
+**Gateway TTS request** — Readit sends a standard OpenAI Audio Speech request, so any compatible gateway works:
+
+```http
+POST {base_url}/v1/audio/speech
+Authorization: Bearer <key>
+Content-Type: application/json
+
+{"model": "gemini-3.8-flash-tts", "input": "…", "voice": "Zephyr", "instructions": "…", "response_format": "wav"}
+```
+
+The response must be audio (16-bit PCM WAV). Voices are model-specific. Existing installs that already set a TTS model keep using the gateway; new installs default to the system voice.
 
 **Legacy preferences** are still honored. They live in the `local.bireader.app` defaults domain, for example:
 

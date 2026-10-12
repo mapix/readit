@@ -189,6 +189,10 @@ struct NarratorBar: View {
             .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 6)
             // row 2: resume info + secondary controls
             HStack(spacing: 14) {
+                if n.fallbackToSystem {
+                    Label(L("网关 TTS 不可用，已改用系统语音"), systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange).lineLimit(1).help(n.fallbackReason)
+                }
                 if let r = n.resumedFrom {
                     Button { n.restartFromCurrentPage() } label: {
                         Label("已从第 \(r.page + 1) 页第 \(r.seg + 1) 段继续 · 从当前页重新开始", systemImage: "arrow.counterclockwise")
@@ -204,10 +208,15 @@ struct NarratorBar: View {
                 } label: { Label(rateText(n.rate), systemImage: "speedometer").monospacedDigit() }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help(L("语速"))
                 Menu {
-                    ForEach(Narrator.voices, id: \.self) { v in
-                        Button { n.voice = v } label: { let t = Narrator.voiceNames[v] ?? v; if n.voice == v { Label(t, systemImage: "checkmark") } else { Text(t) } }
+                    ForEach(n.voiceOptions) { o in
+                        Button { n.selectVoice(o.id) } label: { if n.currentVoiceID == o.id { Label(o.label, systemImage: "checkmark") } else { Text(o.label) } }
                     }
-                } label: { Label(n.voice, systemImage: "person.wave.2") }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help(L("音色"))
+                    Divider()
+                    Picker(L("语音引擎"), selection: Binding(get: { n.provider }, set: { n.provider = $0 })) {
+                        Text(L("系统语音")).tag(TTSProvider.system)
+                        Text(L("网关 TTS")).tag(TTSProvider.gateway)
+                    }
+                } label: { Label(n.currentVoiceName, systemImage: n.effectiveProvider == .system ? "person.wave.2" : "cloud") }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help(L("音色"))
                 recordToggle
                 Menu {
                     Button(L("导出 MP4（第 1 页到最后一页完整一遍）")) { ex.start() }.disabled(ex.running)

@@ -71,7 +71,7 @@ final class NarrationExporter: ObservableObject {
 
     private func run(docId: UUID, doc: PDFDocument, ses: DocSession, title: String, pageCount: Int) async throws {
         let n = Narrator.shared
-        let voice = n.voice
+        let voice = n.voiceTag
         let dir = Paths.docDir(docId).appendingPathComponent("narration", isDirectory: true)
         let fm = FileManager.default
         func scriptURL(_ p: Int) -> URL { dir.appendingPathComponent("p\(p).json") }

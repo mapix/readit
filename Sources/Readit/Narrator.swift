@@ -63,12 +63,39 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     @Published var rate: Float = Settings.ttsSpeed {
         didSet { if rate != oldValue { Settings.ttsSpeed = rate }; applyRate(old: oldValue) }
     }
+    /// gateway TTS voice
     @Published var voice: String = Settings.ttsVoice {
         didSet { if voice != oldValue { Settings.ttsVoice = voice } }
     }
+    /// TTS engine and macOS voice (identifier; "" = automatic)
+    @Published var provider: TTSProvider = Settings.ttsProvider {
+        didSet { if provider != oldValue { Settings.ttsProvider = provider; fallbackToSystem = false; refreshBuffered() } }
+    }
+    @Published var systemVoice: String = Settings.systemVoice {
+        didSet { if systemVoice != oldValue { Settings.systemVoice = systemVoice; refreshBuffered() } }
+    }
+    /// set for the current run when the gateway rejects TTS requests (no TTS model, bad key…)
+    @Published var fallbackToSystem = false
+    @Published var fallbackReason = ""
+    var effectiveProvider: TTSProvider { fallbackToSystem ? .system : provider }
+    /// part of the audio cache filename, so clips from different engines / voices never mix
+    var voiceTag: String {
+        effectiveProvider == .gateway ? voice : SystemTTS.cacheTag(systemVoice, target: Settings.targetLang)
+    }
+    /// entries for the voice menus
+    var voiceOptions: [VoiceOption] {
+        if effectiveProvider == .gateway { return Narrator.voices.map { VoiceOption(id: $0, label: Narrator.voiceNames[$0] ?? $0) } }
+        return [VoiceOption(id: "", label: L("自动（按目标语言）"))] + SystemTTS.options(for: Settings.targetLang)
+    }
+    var currentVoiceID: String { effectiveProvider == .gateway ? voice : systemVoice }
+    var currentVoiceName: String {
+        if effectiveProvider == .gateway { return voice }
+        return SystemTTS.resolve(systemVoice, target: Settings.targetLang)?.name ?? L("系统语音")
+    }
+    func selectVoice(_ id: String) { if effectiveProvider == .gateway { voice = id } else { systemVoice = id } }
     static let voices = ["Zephyr", "Leda", "Aoede", "Kore", "Puck", "Charon", "Fenrir", "Orus"]
     static let voiceNames = ["Leda": "Leda · 年轻轻松女声", "Aoede": "Aoede · 温柔女声", "Kore": "Kore · 沉稳女声", "Zephyr": "Zephyr · 明亮女声", "Puck": "Puck · 活泼男声", "Charon": "Charon · 知性男声", "Fenrir": "Fenrir · 激昂男声", "Orus": "Orus · 低沉男声"]
-    static let styleInstruction = "用年轻、轻松、亲切的语气朗读，像和朋友聊天一样自然，语调有起伏，不要播音腔。"
+    nonisolated static let styleInstruction = "用年轻、轻松、亲切的语气朗读，像和朋友聊天一样自然，语调有起伏，不要播音腔。"
     /// reader of the window showing the narrated document
     static var reader: ReaderController { DocWindows.shared.entries[shared.docId ?? UUID()]?.reader ?? ReaderController.shared }
     static var ttsModel: String { ModelConfig.ttsModel }
@@ -116,7 +143,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     }
 
     /// seconds of audio per character at 1×, learned from synthesized clips (per target language)
-    static var paceKey: String { "narrPace." + Settings.targetLang }
+    static var paceKey: String { "narrPace." + shared.effectiveProvider.rawValue + "." + Settings.targetLang }
     static var pace: Double {
         if let a = UserDefaults.standard.array(forKey: paceKey) as? [Double], a.count == 2, a[0] > 200, a[1] > 0 {
             return a[1] / a[0]
@@ -198,9 +225,12 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     func start(docId: UUID, doc: PDFDocument, title: String, from page: Int, resume: Bool = true) {
         stop()
         // pick up hand edits of config.toml since launch
-        let v = Settings.ttsVoice, r = Settings.ttsSpeed
+        let v = Settings.ttsVoice, r = Settings.ttsSpeed, pr = Settings.ttsProvider, sv = Settings.systemVoice
         if voice != v { voice = v }
         if rate != r { rate = r }
+        if provider != pr { provider = pr }
+        if systemVoice != sv { systemVoice = sv }
+        fallbackToSystem = false
         if self.docId != docId { pageChars = [:]; pageCharsMissing = [] }
         self.docId = docId; self.doc = doc; self.title = title
         sourceDoc = Store.shared.session(docId)?.original
@@ -327,16 +357,70 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
 
     /// one-off synthesis (not cached per segment)
     private func synth(_ text: String) async throws -> Data {
+        if effectiveProvider == .system { return try await systemSynth(text) }
+        do { return try await Narrator.gatewaySpeech(text, voice: voice) }
+        catch let e as TranslateError where Narrator.isConfigError(e) {
+            fallbackToSystem = true; fallbackReason = e.errorDescription ?? ""
+            return try await systemSynth(text)
+        }
+    }
+
+    /// Settings → "试听": synthesize a short sample with the selected engine (no automatic fallback) and play it
+    func previewVoice() async throws {
+        let sample = Settings.targetLang.contains("English") ? "Hi, this is how narration will sound in Readit." : (Settings.targetLang.contains("日本") ? "こんにちは。Readit の解説はこの声で読み上げます。" : "你好，这是 Readit 讲解时会用到的声音。")
+        let wav: Data
+        if provider == .gateway { wav = try await Narrator.gatewaySpeech(sample, voice: voice) }
+        else { wav = try await systemSynth(sample) }
+        resumeAfterQA = false
+        let pl = try makePlayer(wav)
+        qaPlayer?.stop()
+        pl.delegate = self
+        qaPlayer = pl
+        pl.play()
+    }
+
+    /// macOS voices, one utterance at a time
+    private var systemChain: Task<Data, Error>?
+    private func systemSynth(_ text: String) async throws -> Data {
+        let prev = systemChain, vid = systemVoice, lang = Settings.targetLang
+        let t = Task<Data, Error> { @MainActor in
+            _ = try? await prev?.value
+            return try await SystemTTS.synthesize(text, voiceId: vid, target: lang)
+        }
+        systemChain = t
+        return try await t.value
+    }
+
+    /// OpenAI-compatible POST {base}/v1/audio/speech → cleaned WAV
+    nonisolated static func gatewaySpeech(_ text: String, voice v: String, attempts: Int = 1) async throws -> Data {
         let k = Settings.apiKey
         let base = Settings.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        var req = URLRequest(url: URL(string: base + "/v1/audio/speech")!)
-        req.httpMethod = "POST"; req.timeoutInterval = 120
+        guard let url = URL(string: base + "/v1/audio/speech") else { throw TranslateError.bad("Base URL") }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 120
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Bearer " + k, forHTTPHeaderField: "Authorization")
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["model": Narrator.ttsModel, "input": text, "voice": voice, "instructions": Narrator.styleInstruction, "response_format": "wav"])
-        let (data, resp) = try await URLSession.shared.data(for: req)
-        guard (resp as? HTTPURLResponse)?.statusCode == 200, data.count > 1000 else { throw TranslateError.bad("语音合成失败") }
-        return Narrator.cleanWAV(data)
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["model": ModelConfig.ttsModel, "input": text, "voice": v, "instructions": Narrator.styleInstruction, "response_format": "wav"])
+        var last: Error = TranslateError.bad("TTS 失败")
+        for attempt in 0..<max(1, attempts) {
+            do {
+                let (data, resp) = try await URLSession.shared.data(for: req)
+                let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                if code == 200, data.count > 1000 { return Narrator.cleanWAV(data) }
+                last = TranslateError.http(code, String(data: data.prefix(200), encoding: .utf8) ?? "")
+                if (400..<500).contains(code) && code != 429 { throw last }      // config problem: don't retry
+            } catch let e as TranslateError { throw e }
+            catch { last = error }
+            if attempt + 1 < attempts { try? await Task.sleep(nanoseconds: UInt64(800_000_000 * (attempt + 1))) }
+        }
+        throw last
+    }
+
+    /// 4xx other than 429: missing TTS model, bad key, unsupported endpoint…
+    nonisolated static func isConfigError(_ e: TranslateError) -> Bool {
+        if case .http(let c, _) = e { return (400..<500).contains(c) && c != 429 }
+        return false
     }
 
     // MARK: engine
@@ -432,6 +516,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         guard docId != nil else { buffered = 0; return }
         var n = 0, pg = page, k = segIndex + 1
         var segs = segments
+        let tag = voiceTag
         while n < Narrator.bufferAhead {
             if k >= segs.count {
                 pg += 1; k = 0
@@ -440,7 +525,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
                 segs = s
                 continue
             }
-            if FileManager.default.fileExists(atPath: cacheDir().appendingPathComponent("p\(pg)-s\(k)-\(voice)-v2.wav").path) { n += 1; k += 1 } else { break }
+            if FileManager.default.fileExists(atPath: cacheDir().appendingPathComponent("p\(pg)-s\(k)-\(tag)-v2.wav").path) { n += 1; k += 1 } else { break }
         }
         if buffered != n { buffered = n }
     }
@@ -492,37 +577,26 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     // MARK: TTS (gemini-3.8-flash-tts via gateway, OpenAI-compatible /v1/audio/speech)
 
     func audio(page p: Int, seg i: Int, text: String) async throws -> Data {
-        let url = cacheDir().appendingPathComponent("p\(p)-s\(i)-\(voice)-v2.wav")
+        let url = cacheDir().appendingPathComponent("p\(p)-s\(i)-\(voiceTag)-v2.wav")
         if let d = try? Data(contentsOf: url), d.count > 1000 {
             let w = Narrator.cleanWAV(d); learnPace(key: url.lastPathComponent, text: text, wav: w); return w
         }
         let key = url.lastPathComponent
         if let t = audioTasks[key] { return try await t.value }
-        let v = voice
-        let task = Task<Data, Error> {
-            let k = Settings.apiKey
-            let base = Settings.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            var req = URLRequest(url: URL(string: base + "/v1/audio/speech")!)
-            req.httpMethod = "POST"
-            req.timeoutInterval = 120
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.setValue("Bearer " + k, forHTTPHeaderField: "Authorization")
-            req.httpBody = try JSONSerialization.data(withJSONObject: ["model": Narrator.ttsModel, "input": text, "voice": v, "instructions": Narrator.styleInstruction, "response_format": "wav"])
-            var last: Error = TranslateError.bad("TTS 失败")
-            for attempt in 0..<3 {
-                do {
-                    let (data, resp) = try await URLSession.shared.data(for: req)
-                    let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-                    if code == 200, data.count > 1000 { return Narrator.cleanWAV(data) }
-                    last = TranslateError.http(code, String(data: data.prefix(200), encoding: .utf8) ?? "")
-                } catch { last = error }
-                try? await Task.sleep(nanoseconds: UInt64(800_000_000 * (attempt + 1)))
-            }
-            throw last
+        let useGateway = effectiveProvider == .gateway, v = voice
+        let task = Task<Data, Error> { @MainActor in
+            if !useGateway { return try await self.systemSynth(text) }
+            return try await Narrator.gatewaySpeech(text, voice: v, attempts: 3)
         }
         audioTasks[key] = task
         defer { audioTasks[key] = nil }
-        let d = try await task.value
+        let d: Data
+        do { d = try await task.value }
+        catch let e as TranslateError where useGateway && Narrator.isConfigError(e) {
+            // gateway has no usable TTS: switch this run to the macOS voice and tell the user why
+            if !fallbackToSystem { fallbackToSystem = true; fallbackReason = e.errorDescription ?? "" }
+            return try await audio(page: p, seg: i, text: text)
+        }
         try? d.write(to: url, options: .atomic)
         learnPace(key: key, text: text, wav: d)
         refreshBuffered()
@@ -532,7 +606,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     /// The gateway wraps the TTS WAV inside another WAV and appends C2PA/SynthID metadata after the PCM.
     /// Played as-is, that metadata is a burst of noise at the end of every clip. Extract the innermost PCM
     /// and rebuild a clean WAV with a short fade-out.
-    static func cleanWAV(_ d: Data) -> Data {
+    nonisolated static func cleanWAV(_ d: Data) -> Data {
         func u32(_ o: Int) -> Int { o + 4 <= d.count ? Int(d[o]) | Int(d[o+1]) << 8 | Int(d[o+2]) << 16 | Int(d[o+3]) << 24 : 0 }
         func u16(_ o: Int) -> Int { o + 2 <= d.count ? Int(d[o]) | Int(d[o+1]) << 8 : 0 }
         func tag(_ o: Int) -> String { o + 4 <= d.count ? String(bytes: d[o..<o+4], encoding: .ascii) ?? "" : "" }

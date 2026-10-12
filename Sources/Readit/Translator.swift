@@ -39,6 +39,23 @@ enum Settings {
         get { max(0, ConfigFile.int("translate.lookahead_pages") ?? d.object(forKey: "lookahead") as? Int ?? 2) }
         set { d.set(newValue, forKey: "lookahead"); ConfigFile.set(["translate.lookahead_pages": .int(newValue)]) }
     }
+    /// TTS engine. Default is the macOS system voice; installs that already configured a gateway TTS model
+    /// (legacy `model.tts` preference, or `tts.model` in the config file without `provider`) keep using the gateway.
+    static var ttsProvider: TTSProvider {
+        get {
+            if let s = ConfigFile.string("tts.provider"), let p = TTSProvider(configName: s) { return p }
+            if let s = d.string(forKey: "ttsProvider"), let p = TTSProvider(rawValue: s) { return p }
+            if ConfigFile.string("tts.model") != nil || d.string(forKey: "model.tts") != nil { return .gateway }
+            return .system
+        }
+        set { d.set(newValue.rawValue, forKey: "ttsProvider"); ConfigFile.set(["tts.provider": .str(newValue.rawValue)]) }
+    }
+    /// AVSpeechSynthesisVoice identifier; empty = best installed voice for the target language
+    static var systemVoice: String {
+        get { ConfigFile.values["tts.system_voice"] ?? d.string(forKey: "narrSystemVoice") ?? "" }
+        set { d.set(newValue, forKey: "narrSystemVoice"); ConfigFile.set(["tts.system_voice": .str(newValue)]) }
+    }
+    /// gateway TTS voice
     static var ttsVoice: String {
         get { ConfigFile.string("tts.voice") ?? d.string(forKey: "narrVoice") ?? "Zephyr" }
         set { d.set(newValue, forKey: "narrVoice"); ConfigFile.set(["tts.voice": .str(newValue)]) }
@@ -58,6 +75,8 @@ enum Settings {
             "translate.lookahead_pages": .int(lookahead),
             "assistant.model": .str(ModelConfig.chatModel),
             "assistant.protocol": .str(ModelConfig.style("chat").configName),
+            "tts.provider": .str(ttsProvider.rawValue),
+            "tts.system_voice": .str(systemVoice),
             "tts.model": .str(ModelConfig.ttsModel),
             "tts.voice": .str(ttsVoice),
             "tts.speed": .num(Double(ttsSpeed)),

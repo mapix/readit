@@ -36,6 +36,18 @@ model = "claude-haiku-5-5"
 protocol = "anthropic"
 
 [tts]
-model = "gemini-3.8-flash-tts"  # served via OpenAI-compatible /v1/audio/speech
-voice = "Zephyr"                # Zephyr | Leda | Aoede | Kore | Puck | Charon | Fenrir | Orus
-speed = 1.5                     # 0.75 – 3.0
+# provider = "system"  → macOS voices (AVSpeechSynthesizer): free, offline, no TTS model required. Default.
+# provider = "gateway" → OpenAI-compatible POST {base_url}/v1/audio/speech on your gateway.
+#                        If the gateway rejects the request (no such model, 401/404…), Readit falls back to "system".
+provider = "system"
+speed = 1.5                     # playback speed, 0.75 – 3.0
+
+# --- provider = "system" ---
+# Voice identifier; leave empty to pick the best installed voice for translate.target_language.
+# More natural voices: System Settings → Accessibility → Spoken Content → System Voice → Manage Voices
+# (choose a "Premium" or "Enhanced" voice). The voice picker in Readit → Settings lists what is installed.
+system_voice = ""               # e.g. "com.apple.voice.premium.zh-CN.Lilian"
+
+# --- provider = "gateway" ---
+model = "gemini-3.8-flash-tts"  # any model your gateway serves on /v1/audio/speech, e.g. gpt-4o-mini-tts
+voice = "Zephyr"                # model-specific: Zephyr Leda Aoede Kore Puck Charon Fenrir Orus (Gemini) · alloy nova shimmer … (OpenAI)
