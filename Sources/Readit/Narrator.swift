@@ -357,11 +357,11 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
 
     /// one-off synthesis (not cached per segment)
     private func synth(_ text: String) async throws -> Data {
-        if effectiveProvider == .system { return try await systemSynth(text) }
+        if effectiveProvider == .system { return try await systemSynth(text, urgent: true) }
         do { return try await Narrator.gatewaySpeech(text, voice: voice) }
         catch let e as TranslateError where Narrator.isConfigError(e) {
             fallbackToSystem = true; fallbackReason = e.errorDescription ?? ""
-            return try await systemSynth(text)
+            return try await systemSynth(text, urgent: true)
         }
     }
 
@@ -370,7 +370,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         let sample = Settings.targetLang.contains("English") ? "Hi, this is how narration will sound in Readit." : (Settings.targetLang.contains("日本") ? "こんにちは。Readit の解説はこの声で読み上げます。" : "你好，这是 Readit 讲解时会用到的声音。")
         let wav: Data
         if provider == .gateway { wav = try await Narrator.gatewaySpeech(sample, voice: voice) }
-        else { wav = try await systemSynth(sample) }
+        else { wav = try await systemSynth(sample, urgent: true) }
         resumeAfterQA = false
         let pl = try makePlayer(wav)
         qaPlayer?.stop()
@@ -379,16 +379,37 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         pl.play()
     }
 
-    /// macOS voices, one utterance at a time
-    private var systemChain: Task<Data, Error>?
-    private func systemSynth(_ text: String) async throws -> Data {
-        let prev = systemChain, vid = systemVoice, lang = Settings.targetLang
-        let t = Task<Data, Error> { @MainActor in
-            _ = try? await prev?.value
-            return try await SystemTTS.synthesize(text, voiceId: vid, target: lang)
+    /// macOS voices: one utterance at a time; the clip playback is waiting for goes first
+    private struct SystemRequest {
+        let text: String, voice: String, lang: String
+        let cont: CheckedContinuation<Data, Error>
+    }
+    private var systemQueue: [SystemRequest] = []
+    private var systemBusy = false
+    private func systemSynth(_ text: String, urgent: Bool = false) async throws -> Data {
+        let vid = systemVoice, lang = Settings.targetLang
+        return try await withCheckedThrowingContinuation { c in
+            let r = SystemRequest(text: text, voice: vid, lang: lang, cont: c)
+            if urgent { systemQueue.insert(r, at: 0) } else { systemQueue.append(r) }
+            pumpSystem()
         }
-        systemChain = t
-        return try await t.value
+    }
+    private func promoteSystem(_ text: String) {
+        guard let i = systemQueue.firstIndex(where: { $0.text == text }), i > 0 else { return }
+        systemQueue.insert(systemQueue.remove(at: i), at: 0)
+    }
+    private func pumpSystem() {
+        guard !systemBusy, !systemQueue.isEmpty else { return }
+        systemBusy = true
+        let r = systemQueue.removeFirst()
+        Task { @MainActor in
+            do {
+                let d = try await SystemTTS.synthesize(r.text, voiceId: r.voice, target: r.lang)
+                r.cont.resume(returning: d)
+            } catch { r.cont.resume(throwing: error) }
+            self.systemBusy = false
+            self.pumpSystem()
+        }
     }
 
     /// OpenAI-compatible POST {base}/v1/audio/speech → cleaned WAV
@@ -431,6 +452,8 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         page = p
         state = .preparing
         if Narrator.reader.currentPageIndex != p { Narrator.reader.goToPage(p) }
+        // next pages' scripts start while this one loads (fresh token: never re-plans audio with stale segments)
+        kickScripts(after: p, token: UUID())
         Task {
             do {
                 let segs = try await script(for: p)
@@ -441,7 +464,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
                 segIndex = i
                 if let id = docId { Narrator.saveProgress(id, page: p, seg: i) }
                 prefetch(page: p, from: i + 1)
-                let wav = try await audio(page: p, seg: i, text: segs[i].text)
+                let wav = try await audio(page: p, seg: i, text: segs[i].text, urgent: true)
                 guard token == runToken else { return }
                 let pl = try makePlayer(wav)
                 pl.delegate = self
@@ -483,29 +506,79 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         }
     }
 
-    /// keep ~10 upcoming segments synthesized (spanning into following pages), 3 requests in flight
-    static let bufferAhead = 10
+    // MARK: look-ahead
+    //
+    // Two independent pipelines so playback rarely waits:
+    //  • scripts: the next `scriptPagesAhead` pages are written in parallel as soon as a page starts;
+    //  • audio: everything already scripted is synthesized up to `bufferSeconds` of listening time
+    //    (at the current speed; at least `minBufferSegments`, at most `maxBufferSegments`), with a sliding
+    //    window of requests in flight. It never blocks on a script that is still being written — when that
+    //    script lands, the audio plan is extended.
+
+    /// listening time to keep synthesized ahead (seconds at the current speed); `tts.buffer_seconds`
+    static var bufferSeconds: Double { Double(max(30, ConfigFile.int("tts.buffer_seconds") ?? UserDefaults.standard.object(forKey: "narrBufferSeconds") as? Int ?? 300)) }
+    /// pages whose scripts are prepared ahead; `tts.script_pages_ahead`
+    static var scriptPagesAhead: Int { max(1, min(10, ConfigFile.int("tts.script_pages_ahead") ?? UserDefaults.standard.object(forKey: "narrScriptPagesAhead") as? Int ?? 3)) }
+    static let minBufferSegments = 12
+    static let maxBufferSegments = 60
+    /// kept for the UI counter
+    static var bufferAhead: Int { maxBufferSegments }
     private var prefetchToken = UUID()
+
+    private func cachedScript(_ p: Int) -> [Segment]? {
+        guard let d = try? Data(contentsOf: cacheDir().appendingPathComponent("p\(p).json")) else { return nil }
+        return try? JSONDecoder().decode([Segment].self, from: d)
+    }
+    private func audioURL(_ p: Int, _ i: Int, tag: String) -> URL { cacheDir().appendingPathComponent("p\(p)-s\(i)-\(tag)-v2.wav") }
+
+    /// start writing scripts for the pages after `p` (parallel, deduplicated by `script(for:)`)
+    private func kickScripts(after p: Int, token: UUID) {
+        guard pageCount > 0 else { return }
+        for k in 1...Narrator.scriptPagesAhead where p + k < pageCount {
+            let pg = p + k
+            if chars(ofPage: pg) != nil { continue }       // already written (in flight ones are joined below)
+            Task {
+                guard let segs = try? await self.script(for: pg), !segs.isEmpty else { return }
+                // a new script widens what the audio pipeline can buffer
+                if token == self.prefetchToken, self.page == p { self.prefetch(page: p, from: self.segIndex + 1) }
+            }
+        }
+    }
 
     private func prefetch(page p: Int, from i: Int) {
         let token = UUID(); prefetchToken = token
-        let first = segments
-        Task {
-            // collect (page, seg, text) for the next N segments
-            var plan: [(Int, Int, String)] = []
-            var pg = p, k = i, segs = first
-            while plan.count < Narrator.bufferAhead {
-                if k < segs.count { plan.append((pg, k, segs[k].text)); k += 1; continue }
-                pg += 1; k = 0
-                guard pg < pageCount, token == prefetchToken, let next = try? await script(for: pg) else { break }
-                segs = next
+        kickScripts(after: p, token: token)
+        let first = segments, tag = voiceTag
+        let pace = Narrator.pace, speed = Double(max(0.25, rate)), target = Narrator.bufferSeconds
+        // plan: upcoming segments over pages that are already scripted, skipping cached audio
+        var plan: [(Int, Int, String)] = []
+        var ahead = 0.0, count = 0
+        var pg = p, k = i, segs = first
+        while count < Narrator.maxBufferSegments && (ahead < target || count < Narrator.minBufferSegments) {
+            if k < segs.count {
+                let t = segs[k].text
+                if !FileManager.default.fileExists(atPath: audioURL(pg, k, tag: tag).path) { plan.append((pg, k, t)) }
+                ahead += Double(t.count) * pace / speed; count += 1; k += 1
+                continue
             }
-            var idx = 0
-            while idx < plan.count, token == prefetchToken {
-                await withTaskGroup(of: Void.self) { g in
-                    for (pp, ss, tt) in plan[idx..<min(plan.count, idx + 3)] { g.addTask { _ = try? await self.audio(page: pp, seg: ss, text: tt) } }
+            pg += 1; k = 0
+            guard pg < pageCount, let next = cachedScript(pg) else { break }   // not written yet → kickScripts re-triggers
+            segs = next
+        }
+        guard !plan.isEmpty else { refreshBuffered(); return }
+        let width = effectiveProvider == .gateway ? 4 : 2
+        Task {
+            // sliding window: start the next request as soon as one finishes, in playback order
+            await withTaskGroup(of: Void.self) { g in
+                var it = plan.makeIterator()
+                for _ in 0..<width {
+                    guard let x = it.next() else { break }
+                    g.addTask { _ = try? await self.audio(page: x.0, seg: x.1, text: x.2) }
                 }
-                idx += 3
+                while await g.next() != nil {
+                    guard token == self.prefetchToken, let x = it.next() else { continue }
+                    g.addTask { _ = try? await self.audio(page: x.0, seg: x.1, text: x.2) }
+                }
             }
         }
     }
@@ -517,7 +590,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         var n = 0, pg = page, k = segIndex + 1
         var segs = segments
         let tag = voiceTag
-        while n < Narrator.bufferAhead {
+        while n < Narrator.maxBufferSegments {
             if k >= segs.count {
                 pg += 1; k = 0
                 let u = cacheDir().appendingPathComponent("p\(pg).json")
@@ -576,16 +649,19 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
 
     // MARK: TTS (gemini-3.8-flash-tts via gateway, OpenAI-compatible /v1/audio/speech)
 
-    func audio(page p: Int, seg i: Int, text: String) async throws -> Data {
+    func audio(page p: Int, seg i: Int, text: String, urgent: Bool = false) async throws -> Data {
         let url = cacheDir().appendingPathComponent("p\(p)-s\(i)-\(voiceTag)-v2.wav")
         if let d = try? Data(contentsOf: url), d.count > 1000 {
             let w = Narrator.cleanWAV(d); learnPace(key: url.lastPathComponent, text: text, wav: w); return w
         }
         let key = url.lastPathComponent
-        if let t = audioTasks[key] { return try await t.value }
+        if let t = audioTasks[key] {
+            if urgent { promoteSystem(text) }                   // the clip we are waiting on jumps the queue
+            return try await t.value
+        }
         let useGateway = effectiveProvider == .gateway, v = voice
         let task = Task<Data, Error> { @MainActor in
-            if !useGateway { return try await self.systemSynth(text) }
+            if !useGateway { return try await self.systemSynth(text, urgent: urgent) }
             return try await Narrator.gatewaySpeech(text, voice: v, attempts: 3)
         }
         audioTasks[key] = task
@@ -595,7 +671,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         catch let e as TranslateError where useGateway && Narrator.isConfigError(e) {
             // gateway has no usable TTS: switch this run to the macOS voice and tell the user why
             if !fallbackToSystem { fallbackToSystem = true; fallbackReason = e.errorDescription ?? "" }
-            return try await audio(page: p, seg: i, text: text)
+            return try await audio(page: p, seg: i, text: text, urgent: urgent)
         }
         try? d.write(to: url, options: .atomic)
         learnPace(key: key, text: text, wav: d)

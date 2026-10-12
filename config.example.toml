@@ -41,6 +41,8 @@ protocol = "anthropic"
 #                        If the gateway rejects the request (no such model, 401/404…), Readit falls back to "system".
 provider = "system"
 speed = 1.5                     # playback speed, 0.75 – 3.0
+buffer_seconds = 300            # listening time kept synthesized ahead (at the current speed)
+script_pages_ahead = 3          # pages whose narration scripts are written ahead, in parallel
 
 # --- provider = "system" ---
 # Voice identifier; leave empty to pick the best installed voice for translate.target_language.
