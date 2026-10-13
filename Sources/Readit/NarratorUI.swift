@@ -195,9 +195,9 @@ struct NarratorBar: View {
                     Label(L("网关 TTS 不可用，已改用系统语音"), systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange).lineLimit(1).help(n.fallbackReason)
                 }
-                if let r = n.resumedFrom {
+                if let r = n.resumedFrom, r.page == n.page {       // only while still on the resumed page
                     Button { n.restartFromCurrentPage() } label: {
-                        Label("已从第 \(r.page + 1) 页第 \(r.seg + 1) 段继续 · 从当前页重新开始", systemImage: "arrow.counterclockwise")
+                        Label(LF("已从第 %d 页第 %d 段继续 · 从当前页重新开始", r.page + 1, r.seg + 1), systemImage: "arrow.counterclockwise")
                             .lineLimit(1)
                     }
                     .buttonStyle(.plain).foregroundStyle(.purple).help(L("从当前页重新开始"))

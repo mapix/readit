@@ -310,6 +310,7 @@ enum L10nTable {
         "准备画面": ("Preparing frames", "画面を準備中"),
         "没有可导出的讲解内容": ("Nothing to export", "書き出せる解説がありません"),
         "配置文件": ("Config File", "設定ファイル"),
+        "已从第 %d 页第 %d 段继续 · 从当前页重新开始": ("Resumed at page %d, segment %d · Restart from current page", "%d ページ第 %d 段落から再開 · 現在のページからやり直す"),
         "从第 %d 页讲": ("From p.%d", "%d ページから"),
         "从第 %d 页开始讲": ("Narrate from page %d", "%d ページから解説"),
         "你正在看第 %d 页，点击从这一页开头继续讲解": ("You're viewing page %d — click to continue the narration from the top of this page", "%d ページを表示中です。クリックするとこのページの最初から解説を続けます"),
