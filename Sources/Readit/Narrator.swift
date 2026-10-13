@@ -78,10 +78,14 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     @Published var fallbackToSystem = false
     @Published var fallbackReason = ""
     var effectiveProvider: TTSProvider { fallbackToSystem ? .system : provider }
-    /// part of the audio cache filename, so clips from different engines / voices never mix
+    /// part of the audio cache filename, so clips from different engines / voices / script styles never mix
     var voiceTag: String {
-        effectiveProvider == .gateway ? voice : SystemTTS.cacheTag(systemVoice, target: Settings.targetLang)
+        (effectiveProvider == .gateway ? voice : SystemTTS.cacheTag(systemVoice, target: Settings.targetLang)) + scriptSuffix
     }
+    /// "" for the default narration style (original cache names), else a per-style suffix
+    var scriptSuffix: String { NarrationStyle.cacheSuffix(style: Settings.narrationStyle, extra: Settings.narrationExtraPrompt) }
+    func scriptFileName(_ p: Int) -> String { "p\(p)\(scriptSuffix).json" }
+    func scriptURL(_ p: Int) -> URL { cacheDir().appendingPathComponent(scriptFileName(p)) }
     /// entries for the voice menus
     var voiceOptions: [VoiceOption] {
         if effectiveProvider == .gateway { return Narrator.voices.map { VoiceOption(id: $0, label: Narrator.voiceNames[$0] ?? $0) } }
@@ -114,7 +118,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     @Published var recording = false { didSet { if recording && !oldValue { recorded = [] } } }
     @Published var recorded: Set<String> = []
     private var runToken = UUID()
-    private var scriptTasks: [Int: Task<[Segment], Error>] = [:]
+    private var scriptTasks: [String: Task<[Segment], Error>] = [:]     // "page+style suffix"
     private var audioTasks: [String: Task<Data, Error>] = [:]
 
     var progress: Double {
@@ -129,10 +133,13 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     var pageChars: [Int: Int] = [:]
     var pageCharsMissing: Set<Int> = []
 
+    private var pageCharsSuffix = ""
     private func chars(ofPage p: Int) -> Int? {
+        let sfx = scriptSuffix
+        if sfx != pageCharsSuffix { pageCharsSuffix = sfx; pageChars = [:]; pageCharsMissing = [] }
         if let c = pageChars[p] { return c }
         if pageCharsMissing.contains(p) { return nil }
-        let u = cacheDir().appendingPathComponent("p\(p).json")
+        let u = scriptURL(p)
         if let d = try? Data(contentsOf: u), let s = try? JSONDecoder().decode([Segment].self, from: d) {
             let c = s.reduce(0) { $0 + $1.text.count }
             pageChars[p] = c
@@ -532,7 +539,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     private var prefetchToken = UUID()
 
     private func cachedScript(_ p: Int) -> [Segment]? {
-        guard let d = try? Data(contentsOf: cacheDir().appendingPathComponent("p\(p).json")) else { return nil }
+        guard let d = try? Data(contentsOf: scriptURL(p)) else { return nil }
         return try? JSONDecoder().decode([Segment].self, from: d)
     }
     private func audioURL(_ p: Int, _ i: Int, tag: String) -> URL { cacheDir().appendingPathComponent("p\(p)-s\(i)-\(tag)-v2.wav") }
@@ -599,7 +606,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         while n < Narrator.maxBufferSegments {
             if k >= segs.count {
                 pg += 1; k = 0
-                let u = cacheDir().appendingPathComponent("p\(pg).json")
+                let u = scriptURL(pg)
                 guard pg < pageCount, let d = try? Data(contentsOf: u), let s = try? JSONDecoder().decode([Segment].self, from: d) else { break }
                 segs = s
                 continue
@@ -625,7 +632,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     }
 
     func script(for p: Int) async throws -> [Segment] {
-        let url = cacheDir().appendingPathComponent("p\(p).json")
+        let url = scriptURL(p)
         if let d = try? Data(contentsOf: url), let s = try? JSONDecoder().decode([Segment].self, from: d) {
             guard ScriptParser.looksBroken(s.map(\.text)) else { return s }
             // written by an older build whose fallback kept the raw JSON as one segment: repair it in place
@@ -638,23 +645,16 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
             }
             try? FileManager.default.removeItem(at: url)
         }
-        if let t = scriptTasks[p] { return try await t.value }
+        let taskKey = "\(p)\(scriptSuffix)"
+        if let t = scriptTasks[taskKey] { return try await t.value }
         guard let doc = sourceDoc ?? doc, let pg = doc.safePage(p) else { return [] }
         let text = pg.string ?? ""
         let image = Narrator.jpeg(of: pg)
         let prevText = p > 0 ? String((doc.safePage(p - 1)?.string ?? "").suffix(600)) : ""
         let title = self.title, total = doc.pageCount, lang = Settings.targetLang
+        let style = Settings.narrationStyle, extra = Settings.narrationExtraPrompt
         let task = Task<[Segment], Error> {
-            let sys = """
-            你是一位擅长把学术论文讲给普通人听的讲解员，正在以播客口吻逐页讲解《\(title)》。用\(lang)口语讲解。
-            要求：
-            - 不要逐句翻译，而是用人能轻松听懂的方式解释本页在讲什么、为什么重要；术语第一次出现时用一句话解释。
-            - 页面上的图表、表格、公式要专门讲：它展示了什么、怎么看、得出什么结论。
-            - 分成 3–7 段，每段 2–4 句话（适合朗读，避免括号、符号、长串数字和网址；公式用口语表达）。
-            - 自然衔接上一页，不要每页都重新打招呼；第一页可以简短开场。参考文献、附录这类页面一两句带过即可。
-            只输出 JSON 数组，不要代码块或其他文字：[{"text": "朗读内容", "focus": "本段讲解对应的页面原文片段：复制该段落开头的 6~15 个连续单词（必须逐字出自页面文字，不要只给一个词或数字）；讲图表时填图注开头，如 Figure 2"}]
-            必须是合法 JSON：text 里需要引号时用「」，不要出现英文双引号；focus 里的英文双引号写成 \\"。
-            """
+            let sys = NarrationStyle.systemPrompt(style: style, extra: extra, title: title, lang: lang)
             let input = LLMInput(text: "这是第 \(p + 1)/\(total) 页。\n上一页结尾：\(prevText)\n\n本页文字：\n\(text)", images: [image])
             var out = try await LLMClient.complete(role: "chat", system: sys, input: input, maxTokens: 4000)
             if let items = ScriptParser.parse(out), !items.isEmpty { return items.map { Segment(text: $0.text, focus: $0.focus) } }
@@ -662,8 +662,8 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
             if let again = try? await LLMClient.complete(role: "chat", system: sys + "\n上一次的输出不是合法 JSON，请严格按格式重新输出。", input: input, maxTokens: 4000) { out = again }
             return ScriptParser.salvage(out).map { Segment(text: $0.text, focus: $0.focus) }
         }
-        scriptTasks[p] = task
-        defer { scriptTasks[p] = nil }
+        scriptTasks[taskKey] = task
+        defer { scriptTasks[taskKey] = nil }
         let segs = try await task.value
         if let d = try? JSONEncoder().encode(segs) { try? d.write(to: url) }
         pageChars[p] = segs.reduce(0) { $0 + $1.text.count }; pageCharsMissing.remove(p)

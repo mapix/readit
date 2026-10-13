@@ -18,6 +18,8 @@ final class NarrationExporter: ObservableObject {
     @Published var total = 0
     @Published var detail = ""
     @Published var outputURL: URL?
+    /// "一键准备": fill every script + clip for the whole document and stop before rendering video
+    @Published var prepareOnly = false
     var running: Bool { task != nil }
     private var task: Task<Void, Never>?
 
@@ -29,10 +31,27 @@ final class NarrationExporter: ObservableObject {
     var statusText: String {
         switch phase {
         case .idle: return ""
-        case .done: return L("已导出：") + (outputURL?.lastPathComponent ?? "")
-        case .failed: return L("导出失败：") + detail
-        default: return L("导出 MP4") + " · \(L(phase.rawValue)) \(done)/\(total)" + (detail.isEmpty ? "" : " · \(detail)")
+        case .done: return prepareOnly ? L("全部讲解和语音已就绪") : L("已导出：") + (outputURL?.lastPathComponent ?? "")
+        case .failed: return (prepareOnly ? L("准备失败：") : L("导出失败：")) + detail
+        default: return (prepareOnly ? L("准备全部讲解") : L("导出 MP4")) + " · \(L(phase.rawValue)) \(done)/\(total)" + (detail.isEmpty ? "" : " · \(detail)")
         }
+    }
+
+    /// run `body` over `items` with `width` in flight, starting the next as soon as one finishes; counts into `done`
+    private func window<T>(_ items: [T], width: Int, _ body: @escaping @MainActor (T) async -> Void) async throws {
+        var it = items.makeIterator()
+        await withTaskGroup(of: Void.self) { g in
+            for _ in 0..<max(1, width) {
+                guard let x = it.next() else { break }
+                g.addTask { @MainActor in await body(x) }
+            }
+            while await g.next() != nil {
+                done += 1
+                if Task.isCancelled { continue }
+                if let x = it.next() { g.addTask { @MainActor in await body(x) } }
+            }
+        }
+        try Task.checkCancellation()
     }
 
     private func log(_ s: String) { print("EXPORT", s); fflush(stdout) }
@@ -44,8 +63,9 @@ final class NarrationExporter: ObservableObject {
     }
 
     /// limitPages: only export the first N pages (testing; env EXPORT_PAGES)
-    func start(limitPages: Int? = nil) {
+    func start(limitPages: Int? = nil, prepareOnly: Bool = false) {
         guard task == nil else { return }
+        self.prepareOnly = prepareOnly
         let n = Narrator.shared
         guard let docId = n.docId, let doc = n.narratedDoc, let ses = Store.shared.session(docId) else {
             phase = .failed; detail = L("请先开始 AI 解读"); log("failed: no narration"); return
@@ -74,7 +94,7 @@ final class NarrationExporter: ObservableObject {
         let voice = n.voiceTag
         let dir = Paths.docDir(docId).appendingPathComponent("narration", isDirectory: true)
         let fm = FileManager.default
-        func scriptURL(_ p: Int) -> URL { dir.appendingPathComponent("p\(p).json") }
+        func scriptURL(_ p: Int) -> URL { dir.appendingPathComponent(n.scriptFileName(p)) }
         func wavURL(_ p: Int, _ s: Int) -> URL { dir.appendingPathComponent("p\(p)-s\(s)-\(voice)-v2.wav") }
         func cached(_ p: Int) -> [Narrator.Segment]? {
             guard let d = try? Data(contentsOf: scriptURL(p)),
@@ -84,41 +104,33 @@ final class NarrationExporter: ObservableObject {
 
         // 1. scan
         phase = .scan
-        let missingScripts = (0..<pageCount).filter { cached($0) == nil }
+        // start from the page being narrated, so what you'll hear next is ready first
+        let from = min(max(0, n.page), pageCount - 1)
+        let order = Array(from..<pageCount) + Array(0..<from)
+        let missingScripts = order.filter { cached($0) == nil }
         log("pages \(pageCount) missingScripts \(missingScripts.count)")
 
         // 2. fill scripts in batches
         phase = .scripts; total = missingScripts.count; done = 0; detail = missingScripts.isEmpty ? "" : LF("缺 %d 页", missingScripts.count)
-        var idx = 0
-        while idx < missingScripts.count {
-            try Task.checkCancellation()
-            let batch = Array(missingScripts[idx..<min(missingScripts.count, idx + Self.concurrency)])
-            await withTaskGroup(of: Void.self) { g in
-                for p in batch { g.addTask { @MainActor in _ = try? await n.script(for: p) } }
-            }
-            idx += batch.count; done = idx
-            log("scripts \(done)/\(total)")
-        }
+        try await window(missingScripts, width: 4) { p in _ = try? await n.script(for: p) }
         try Task.checkCancellation()
 
         // 3. fill audio in batches
         var scripts: [Int: [Narrator.Segment]] = [:]
         for p in 0..<pageCount { scripts[p] = cached(p) ?? [] }
         var missingAudio: [(Int, Int, String)] = []
-        for p in 0..<pageCount { for (i, s) in (scripts[p] ?? []).enumerated() where !fm.fileExists(atPath: wavURL(p, i).path) { missingAudio.append((p, i, s.text)) } }
+        for p in order { for (i, s) in (scripts[p] ?? []).enumerated() where !fm.fileExists(atPath: wavURL(p, i).path) { missingAudio.append((p, i, s.text)) } }
         log("missingAudio \(missingAudio.count)")
         phase = .audio; total = missingAudio.count; done = 0; detail = missingAudio.isEmpty ? "" : LF("缺 %d 段", missingAudio.count)
-        idx = 0
-        while idx < missingAudio.count {
-            try Task.checkCancellation()
-            let batch = Array(missingAudio[idx..<min(missingAudio.count, idx + Self.concurrency)])
-            await withTaskGroup(of: Void.self) { g in
-                for (p, s, t) in batch { g.addTask { @MainActor in _ = try? await n.audio(page: p, seg: s, text: t) } }
-            }
-            idx += batch.count; done = idx
-            log("audio \(done)/\(total)")
-        }
+        try await window(missingAudio, width: n.effectiveProvider == .gateway ? 4 : 2) { x in _ = try? await n.audio(page: x.0, seg: x.1, text: x.2) }
         try Task.checkCancellation()
+
+        if prepareOnly {
+            phase = .done; total = 0; done = 0; detail = ""
+            n.refreshBuffered()
+            log("prepared all scripts + audio")
+            return
+        }
 
         // 4. collect render plan (main actor: PDFKit lookups + page rasterization)
         phase = .render; total = pageCount; done = 0; detail = L("准备画面")

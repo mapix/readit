@@ -53,6 +53,8 @@ struct NarratorBar: View {
     @AppStorage("narrShowScript") private var showScript = true
     @AppStorage("narrMini") private var mini = false
     @AppStorage("narratorDock") private var dockRaw = NarratorDock.bottomCenter.rawValue
+    @State private var confirmPrepare = false
+    @State private var styleTick = 0
 
     var body: some View {
         Group { if mini { pill } else { full } }
@@ -219,7 +221,17 @@ struct NarratorBar: View {
                         Text(L("网关 TTS")).tag(TTSProvider.gateway)
                     }
                 } label: { Label(n.currentVoiceName, systemImage: n.effectiveProvider == .system ? "person.wave.2" : "cloud") }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help(L("音色"))
+                styleMenu
                 recordToggle
+                Button { confirmPrepare = true } label: { Image(systemName: "tray.and.arrow.down") }
+                    .buttonStyle(.plain).disabled(ex.running)
+                    .help(L("一键生成整本文档的讲解词和语音，之后播放无需等待"))
+                    .confirmationDialog(LF("为全部 %d 页生成讲解和语音？", n.pageCount), isPresented: $confirmPrepare) {
+                        Button(L("开始准备")) { ex.start(prepareOnly: true) }
+                        Button(L("取消"), role: .cancel) {}
+                    } message: {
+                        Text(L("会从当前页开始，在后台逐页调用模型写讲稿，再合成全部语音；已生成的部分会跳过。页数多时需要较长时间并产生相应的模型费用，可以随时取消。"))
+                    }
                 Menu {
                     Button(L("导出 MP4（第 1 页到最后一页完整一遍）")) { ex.start() }.disabled(ex.running)
                     if ex.running { Button(L("取消导出")) { ex.cancel() } }
@@ -239,6 +251,21 @@ struct NarratorBar: View {
         .background(RoundedRectangle(cornerRadius: 14).fill(.regularMaterial))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.purple.opacity(0.25)))
         .shadow(color: .black.opacity(0.18), radius: 14, y: 4)
+    }
+
+    /// quick switch of the narration style (applies to pages not generated yet in that style)
+    var styleMenu: some View {
+        let cur = Settings.narrationStyle
+        return Menu {
+            ForEach(NarrationStyle.allCases) { st in
+                Button { Settings.narrationStyle = st; styleTick += 1 } label: {
+                    let t = L(st.title) + " — " + L(st.subtitle)
+                    if st == cur { Label(t, systemImage: "checkmark") } else { Text(t) }
+                }
+            }
+        } label: { Label(L(cur.shortTitle), systemImage: "theatermasks") }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help(L("讲解风格（从下一页开始生效）"))
+            .id(styleTick)
     }
 
     var recordToggle: some View {

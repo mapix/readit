@@ -55,6 +55,19 @@ enum Settings {
         get { ConfigFile.values["tts.system_voice"] ?? d.string(forKey: "narrSystemVoice") ?? "" }
         set { d.set(newValue, forKey: "narrSystemVoice"); ConfigFile.set(["tts.system_voice": .str(newValue)]) }
     }
+    /// AI Narration style preset (`[narration] style`)
+    static var narrationStyle: NarrationStyle {
+        get {
+            if let s = ConfigFile.string("narration.style"), let v = NarrationStyle(configName: s) { return v }
+            return d.string(forKey: "narrStyle").flatMap(NarrationStyle.init(rawValue:)) ?? .podcast
+        }
+        set { d.set(newValue.rawValue, forKey: "narrStyle"); ConfigFile.set(["narration.style": .str(newValue.rawValue)]) }
+    }
+    /// free-form extra instructions appended to the narration prompt (`[narration] extra_prompt`)
+    static var narrationExtraPrompt: String {
+        get { ConfigFile.values["narration.extra_prompt"] ?? d.string(forKey: "narrExtraPrompt") ?? "" }
+        set { d.set(newValue, forKey: "narrExtraPrompt"); ConfigFile.set(["narration.extra_prompt": .str(newValue)]) }
+    }
     /// gateway TTS voice
     static var ttsVoice: String {
         get { ConfigFile.string("tts.voice") ?? d.string(forKey: "narrVoice") ?? "Zephyr" }
@@ -75,6 +88,8 @@ enum Settings {
             "translate.lookahead_pages": .int(lookahead),
             "assistant.model": .str(ModelConfig.chatModel),
             "assistant.protocol": .str(ModelConfig.style("chat").configName),
+            "narration.style": .str(narrationStyle.rawValue),
+            "narration.extra_prompt": .str(narrationExtraPrompt),
             "tts.provider": .str(ttsProvider.rawValue),
             "tts.system_voice": .str(systemVoice),
             "tts.model": .str(ModelConfig.ttsModel),

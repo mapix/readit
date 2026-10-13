@@ -35,6 +35,17 @@ lookahead_pages = 2             # pages translated ahead of the one you are read
 model = "claude-haiku-5-5"
 protocol = "anthropic"
 
+[narration]
+# Style of the AI Narration scripts:
+#   podcast     — default: friendly, explains each page like a chat
+#   storyteller — 评书 storyteller voice, with suspense and rhythm (content stays accurate)
+#   deep        — technical deep dive for engineers: mechanisms, trade-offs, details
+#   popular     — popular science: analogies, little jargon
+#   brief       — one or two key points per page
+style = "podcast"
+# Extra instructions appended to the prompt (use \n for new lines):
+extra_prompt = ""               # e.g. "多结合代码讲解；每页结尾用一句话总结"
+
 [tts]
 # provider = "system"  → macOS voices (AVSpeechSynthesizer): free, offline, no TTS model required. Default.
 # provider = "gateway" → OpenAI-compatible POST {base_url}/v1/audio/speech on your gateway.

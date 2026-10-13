@@ -149,6 +149,10 @@ enum ConfigFile {
         model = \(v("assistant.model", "\"claude-haiku-5-5\""))
         protocol = \(v("assistant.protocol", "\"anthropic\""))
 
+        [narration]   # AI Narration script style
+        style = \(v("narration.style", "\"podcast\""))   # podcast | storyteller | deep | popular | brief
+        extra_prompt = \(v("narration.extra_prompt", "\"\""))   # extra instructions, e.g. "多举代码例子"
+
         [tts]
         provider = \(v("tts.provider", "\"system\""))   # system (macOS voices, no model needed) | gateway
         speed = \(v("tts.speed", "1.5"))

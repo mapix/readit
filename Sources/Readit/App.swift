@@ -259,6 +259,8 @@ struct SettingsView: View {
     @State var ttsModel = ModelConfig.ttsModel
     @State var voice = Narrator.shared.voice
     @State var ttsProvider = Narrator.shared.provider
+    @State var narrStyle = Settings.narrationStyle
+    @State var narrExtra = Settings.narrationExtraPrompt
     @State var sysVoice = Narrator.shared.systemVoice
     @State var lookahead = Settings.lookahead
     @State var configExists = ConfigFile.exists
@@ -315,6 +317,20 @@ struct SettingsView: View {
                     modelRow(L("模型"), $cModel, filter: { !$0.contains("tts") && !$0.contains("image") && !$0.contains("embedding") })
                     Picker(L("接口协议"), selection: $cStyle) { ForEach(APIStyle.allCases) { Text($0.name).tag($0) } }
                     Text(L("AI 解读会把页面截图发给模型，请选择支持图片输入的模型。")).font(.caption).foregroundStyle(.secondary)
+                }
+                Section(L("AI 解读风格")) {
+                    Picker(L("讲解风格"), selection: $narrStyle) {
+                        ForEach(NarrationStyle.allCases) { st in Text(L(st.title) + " — " + L(st.subtitle)).tag(st) }
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(L("补充提示词（可选）")).font(.callout)
+                        TextEditor(text: $narrExtra)
+                            .font(.system(size: 12.5))
+                            .frame(minHeight: 60, maxHeight: 110)
+                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25)))
+                        Text(L("例如：多结合代码讲解；每页结尾用一句话总结；讲给高中生听。修改后新生成的讲解会采用新风格，已生成的旧风格内容会保留，切回去可直接复用。"))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
                 Section(L("语音（TTS）")) {
                     Picker(L("语音引擎"), selection: $ttsProvider) {
@@ -419,6 +435,8 @@ struct SettingsView: View {
         if ttsProvider == .gateway || ttsModel != ModelConfig.ttsModel { ModelConfig.setModel("tts", ttsModel) }
         Narrator.shared.voice = voice
         Narrator.shared.provider = ttsProvider
+        if Settings.narrationStyle != narrStyle { Settings.narrationStyle = narrStyle }
+        if Settings.narrationExtraPrompt != narrExtra { Settings.narrationExtraPrompt = narrExtra }
         Narrator.shared.systemVoice = sysVoice
         Settings.lookahead = lookahead
         ThemeCenter.shared.set(theme)
