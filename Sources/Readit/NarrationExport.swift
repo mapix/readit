@@ -77,8 +77,9 @@ final class NarrationExporter: ObservableObject {
         func scriptURL(_ p: Int) -> URL { dir.appendingPathComponent("p\(p).json") }
         func wavURL(_ p: Int, _ s: Int) -> URL { dir.appendingPathComponent("p\(p)-s\(s)-\(voice)-v2.wav") }
         func cached(_ p: Int) -> [Narrator.Segment]? {
-            guard let d = try? Data(contentsOf: scriptURL(p)) else { return nil }
-            return try? JSONDecoder().decode([Narrator.Segment].self, from: d)
+            guard let d = try? Data(contentsOf: scriptURL(p)),
+                  let s = try? JSONDecoder().decode([Narrator.Segment].self, from: d) else { return nil }
+            return ScriptParser.looksBroken(s.map(\.text)) ? nil : s      // broken → re-made by script(for:)
         }
 
         // 1. scan

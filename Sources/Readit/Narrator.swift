@@ -611,6 +611,13 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
 
     // MARK: script (Claude, with the page image so figures/tables are explained)
 
+    /// remove every synthesized clip of a page (all engines / voices)
+    private func dropAudio(page p: Int) {
+        let dir = cacheDir(), prefix = "p\(p)-s"
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        for f in files where f.hasPrefix(prefix) && f.hasSuffix(".wav") { try? FileManager.default.removeItem(at: dir.appendingPathComponent(f)) }
+    }
+
     private func cacheDir() -> URL {
         let u = Paths.docDir(docId ?? UUID()).appendingPathComponent("narration", isDirectory: true)
         try? FileManager.default.createDirectory(at: u, withIntermediateDirectories: true)
@@ -619,7 +626,18 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
 
     func script(for p: Int) async throws -> [Segment] {
         let url = cacheDir().appendingPathComponent("p\(p).json")
-        if let d = try? Data(contentsOf: url), let s = try? JSONDecoder().decode([Segment].self, from: d) { return s }
+        if let d = try? Data(contentsOf: url), let s = try? JSONDecoder().decode([Segment].self, from: d) {
+            guard ScriptParser.looksBroken(s.map(\.text)) else { return s }
+            // written by an older build whose fallback kept the raw JSON as one segment: repair it in place
+            let fixed = ScriptParser.salvage(s.map(\.text).joined(separator: "\n")).map { Segment(text: $0.text, focus: $0.focus) }
+            dropAudio(page: p)
+            if !fixed.isEmpty {
+                if let d = try? JSONEncoder().encode(fixed) { try? d.write(to: url, options: .atomic) }
+                pageChars[p] = fixed.reduce(0) { $0 + $1.text.count }; pageCharsMissing.remove(p)
+                return fixed
+            }
+            try? FileManager.default.removeItem(at: url)
+        }
         if let t = scriptTasks[p] { return try await t.value }
         guard let doc = sourceDoc ?? doc, let pg = doc.safePage(p) else { return [] }
         let text = pg.string ?? ""
@@ -634,16 +652,15 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
             - 页面上的图表、表格、公式要专门讲：它展示了什么、怎么看、得出什么结论。
             - 分成 3–7 段，每段 2–4 句话（适合朗读，避免括号、符号、长串数字和网址；公式用口语表达）。
             - 自然衔接上一页，不要每页都重新打招呼；第一页可以简短开场。参考文献、附录这类页面一两句带过即可。
-            只输出 JSON 数组：[{"text": "朗读内容", "focus": "本段讲解对应的页面原文片段：复制该段落开头的 6~15 个连续单词（必须逐字出自页面文字，不要只给一个词或数字）；讲图表时填图注开头，如 Figure 2"}]
+            只输出 JSON 数组，不要代码块或其他文字：[{"text": "朗读内容", "focus": "本段讲解对应的页面原文片段：复制该段落开头的 6~15 个连续单词（必须逐字出自页面文字，不要只给一个词或数字）；讲图表时填图注开头，如 Figure 2"}]
+            必须是合法 JSON：text 里需要引号时用「」，不要出现英文双引号；focus 里的英文双引号写成 \\"。
             """
-            let out = try await LLMClient.complete(role: "chat", system: sys, input: LLMInput(text: "这是第 \(p + 1)/\(total) 页。\n上一页结尾：\(prevText)\n\n本页文字：\n\(text)", images: [image]), maxTokens: 3000)
-            var t = out.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let r = t.range(of: "\\[[\\s\\S]*\\]", options: .regularExpression) { t = String(t[r]) }
-            guard let d = t.data(using: .utf8), let segs = try? JSONDecoder().decode([Segment].self, from: d), !segs.isEmpty else {
-                // fallback: plain paragraphs
-                return out.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0.count > 8 }.map { Segment(text: $0, focus: nil) }
-            }
-            return segs
+            let input = LLMInput(text: "这是第 \(p + 1)/\(total) 页。\n上一页结尾：\(prevText)\n\n本页文字：\n\(text)", images: [image])
+            var out = try await LLMClient.complete(role: "chat", system: sys, input: input, maxTokens: 4000)
+            if let items = ScriptParser.parse(out), !items.isEmpty { return items.map { Segment(text: $0.text, focus: $0.focus) } }
+            // unusable reply: ask once more, then salvage whatever is there (never read raw JSON aloud)
+            if let again = try? await LLMClient.complete(role: "chat", system: sys + "\n上一次的输出不是合法 JSON，请严格按格式重新输出。", input: input, maxTokens: 4000) { out = again }
+            return ScriptParser.salvage(out).map { Segment(text: $0.text, focus: $0.focus) }
         }
         scriptTasks[p] = task
         defer { scriptTasks[p] = nil }
