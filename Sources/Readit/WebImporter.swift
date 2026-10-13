@@ -160,8 +160,10 @@ final class WebImporter: NSObject, ObservableObject, WKNavigationDelegate {
 
     private func extract(_ wv: WKWebView) async throws -> Extracted {
         try await primeLazyImages(wv)
-        _ = try await wv.evaluateJavaScript(WebImporter.extractorJS)
-        guard let json = try await wv.evaluateJavaScript("window.__readitExtract()") as? String,
+        // isolated content world: shares the DOM but not the page's JS, and is not subject to the page's
+        // Trusted Types / CSP rules (innerHTML would throw on such sites)
+        let body = WebImporter.extractorJS + "\nreturn window.__readitExtract();"
+        guard let json = try await wv.callAsyncJavaScript(body, arguments: [:], in: nil, in: .defaultClient) as? String,
               let data = json.data(using: .utf8),
               let info = try? JSONDecoder().decode(Extracted.self, from: data) else {
             throw ImportError.message(L("页面脚本执行失败"))
@@ -444,7 +446,7 @@ final class WebImporter: NSObject, ObservableObject, WKNavigationDelegate {
                 .appendingPathComponent("Resources/web/\(name).js")
             return (try? String(contentsOf: src, encoding: .utf8)) ?? ""
         }
-        return read("Readability") + "\n;\n" + read("readit-extract") + "\n;true;"
+        return read("Readability") + "\n;\n" + read("readit-extract") + "\n;"
     }()
 }
 
