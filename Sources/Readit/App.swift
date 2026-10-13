@@ -18,6 +18,7 @@ struct BiReaderApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button(L("导入 PDF…")) { importPanel() }.keyboardShortcut("o")
+                Button(L("从网页导入…")) { WebImportPanel.show() }.keyboardShortcut("o", modifiers: [.command, .shift])
                 Button(L("新建笔记本")) { store.newNotebook() }.keyboardShortcut("n", modifiers: [.command, .shift])
                 Divider()
                 Button(L("导出双语 PDF…")) { exportBilingual() }.keyboardShortcut("e", modifiers: [.command, .shift])

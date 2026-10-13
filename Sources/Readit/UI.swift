@@ -326,6 +326,7 @@ struct LibraryView: View {
                         } else {
                             ForEach(store.lib.docs) { d in docTile(d, notebook: nil) }
                             importTile(nil)
+                            webImportTile(nil)
                         }
                     }
                     .padding(30)
@@ -363,6 +364,7 @@ struct LibraryView: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 150, maximum: 180), spacing: 26)], spacing: 30) {
                 ForEach(nb.docIds, id: \.self) { id in if let d = store.doc(id) { docTile(d, notebook: nb.id) } }
                 importTile(nb.id)
+                webImportTile(nb.id)
             }
         }
         .padding(30)
@@ -438,9 +440,26 @@ struct LibraryView: View {
             }
             if let nb = notebook { Button(L("从此笔记本移除")) { store.currentNotebookId = nb; store.removeDocFromNotebook(d.id) } }
             Button(L("在访达中显示")) { NSWorkspace.shared.activateFileViewerSelecting([Paths.pdf(d.id)]) }
+            if let s = d.source, let u = URL(string: s) {
+                Button(L("打开原网页")) { NSWorkspace.shared.open(u) }
+                Button(L("重新从网页导入")) { WebImportPanel.show(notebook: notebook, url: s) }
+            }
             Divider()
             Button(L("删除文档"), role: .destructive) { DocWindows.shared.close(d.id); store.deleteDoc(d.id) }
         }
+    }
+
+    func webImportTile(_ nb: UUID?) -> some View {
+        VStack(spacing: 8) {
+            RoundedRectangle(cornerRadius: 4).strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6, 4])).foregroundStyle(.secondary)
+                .frame(width: 140, height: 186)
+                .overlay(VStack(spacing: 6) { Image(systemName: "globe").font(.system(size: 24)); Text(L("从网页导入")).font(.system(size: 12)) }.foregroundStyle(.secondary))
+            Text(" ").font(.system(size: 12))
+        }
+        .frame(width: 160)
+        .contentShape(Rectangle())
+        .onTapGesture { WebImportPanel.show(notebook: nb) }
+        .help(L("粘贴文章链接，提取正文生成 PDF（⌘⇧O）"))
     }
 
     func importTile(_ nb: UUID?) -> some View {

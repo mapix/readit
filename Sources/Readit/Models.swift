@@ -8,6 +8,8 @@ struct Doc: Codable, Identifiable, Hashable {
     var id = UUID()
     var title: String
     var added = Date()
+    /// web page the PDF was imported from (Readit's "从网页导入")
+    var source: String? = nil
 }
 
 struct Card: Codable, Identifiable, Hashable {
@@ -260,6 +262,12 @@ final class Store: ObservableObject {
         saveNow()
         if open { DocWindows.shared.open(d.id) }
         return d.id
+    }
+
+    func setSource(_ docId: UUID, _ url: String) {
+        guard let i = lib.docs.firstIndex(where: { $0.id == docId }) else { return }
+        lib.docs[i].source = url
+        saveNow()
     }
 
     func addDocToNotebook(_ docId: UUID, notebook: UUID? = nil) {

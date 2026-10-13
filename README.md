@@ -62,6 +62,20 @@ A native macOS app (SwiftUI + PDFKit) for reading PDFs bilingually with the orig
   - **Controls**: adjustable speed and voice; hold the mic button (or ⌃Space) to interrupt with a spoken question at any time.
   - **Time left**: the player, the minimized pill, and the desktop widget show an estimate of the remaining listening time for the whole document at the current speed. It is based on the scripts already written plus the speaking pace learned from synthesized audio, and gets more accurate as you listen.
 
+## Import from the Web
+
+Many sources are web pages, not PDFs. **File → Import from Web…** (⌘⇧O), or the *Import from Web* tile in the library, takes a link and adds a clean PDF of the article:
+
+- The page is opened in a real (hidden) WebKit view, so JavaScript-rendered sites work, and logins in that view persist between imports.
+- Readit scrolls through the page so lazy images load, then keeps only the main content using [Mozilla Readability](https://github.com/mozilla/readability) plus its own clean-up: navigation, sidebars, comments, share and subscribe bars, cookie banners, related posts, ads, avatars and similar chrome are dropped.
+- Images are downloaded with the article as Referer, so hotlink-protected CDNs work. KaTeX and MathJax formulas are kept as native MathML, code blocks keep their formatting, and embedded videos become links.
+- The article is laid out with Readit's print style (title, author, site, date, source URL) and printed to A4. Bilingual view, narration and notes then work as with any PDF.
+- Direct links to `.pdf` files are downloaded as they are.
+- If a site asks for a login or a human check, choose **Open in a window**: sign in or verify there, then click **Extract & Import**.
+- The source URL is remembered: right-click the document for **Open Original Page** or **Re-import from Web**.
+
+The extractor lives in `Resources/web/readit-extract.js`. `Tests/webimport/e2e.py` runs the same pipeline in headless Chromium over a set of blogs (English and Chinese, MathJax, SPA, Medium, GitHub, Wikipedia) and writes the PDFs plus a contact sheet.
+
 ## Excerpts & Notes (modeled on MarginNote 3)
 
 1. **Select text**: when you release the mouse, a floating toolbar appears above the selection.

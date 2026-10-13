@@ -9,6 +9,9 @@ APP=build/Readit.app
 rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/Readit "$APP/Contents/MacOS/Readit"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/"
+# web import: Mozilla Readability + Readit's article extractor (loaded by WebImporter)
+mkdir -p "$APP/Contents/Resources/web"
+cp Resources/web/*.js "$APP/Contents/Resources/web/"
 cat > "$APP/Contents/Info.plist" <<P
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
