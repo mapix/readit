@@ -85,6 +85,7 @@ struct NarratorBar: View {
                 Text("p.\(n.page + 1) · \(n.segIndex + 1)/\(max(1, n.segments.count))" + eta).font(.system(size: 11.5, weight: .medium)).monospacedDigit()
             }
             .help(n.remainingSeconds().map { Narrator.formatRemaining($0) } ?? "")
+            FromHereButton(rc: Narrator.reader, compact: true)
             Button { n.togglePause() } label: { Image(systemName: n.state == .playing ? "pause.fill" : "play.fill") }.buttonStyle(.plain).disabled(n.state == .preparing)
             Button { n.next() } label: { Image(systemName: "forward.fill") }.buttonStyle(.plain)
             MicButton().scaleEffect(0.8)
@@ -170,6 +171,7 @@ struct NarratorBar: View {
                     .font(.system(size: 10.5)).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
                 }
                 .layoutPriority(1)
+                FromHereButton(rc: Narrator.reader, compact: false)
                 Spacer(minLength: 8)
                 HStack(spacing: 16) {
                     Button { n.previous() } label: { Image(systemName: "backward.fill") }.help(L("上一段"))
@@ -312,5 +314,47 @@ struct RecDot: View {
     private func startBlink() {
         dim = false
         withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) { dim = true }
+    }
+}
+
+
+/// "从这页开始讲": appears when the reader shows a different page than the one being narrated
+/// (you scrolled or jumped elsewhere); one click continues the narration from the top of that page.
+struct FromHereButton: View {
+    @ObservedObject var n = Narrator.shared
+    @ObservedObject var rc: ReaderController
+    var compact: Bool
+    /// page the reader has settled on (debounced, so auto-scrolling during narration doesn't flash the button)
+    @State private var settled: Int?
+
+    var body: some View {
+        ZStack {
+            if let target = settled, n.state != .idle, target != n.page, target >= 0, target < n.pageCount { button(target) }
+        }
+        .task(id: "\(rc.currentPageIndex)-\(n.page)") {
+            settled = nil
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            if !Task.isCancelled { settled = rc.currentPageIndex }
+        }
+    }
+
+    @ViewBuilder func button(_ target: Int) -> some View {
+            Button { n.narrateFromReaderPage() } label: {
+                if compact {
+                    Label(LF("从第 %d 页讲", target + 1), systemImage: "text.line.first.and.arrowtriangle.forward")
+                        .font(.system(size: 11, weight: .semibold))
+                } else {
+                    Label(LF("从第 %d 页开始讲", target + 1), systemImage: "text.line.first.and.arrowtriangle.forward")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(Capsule().fill(Color.purple.opacity(0.12)))
+                }
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.purple)
+            .lineLimit(1)
+            .fixedSize()
+            .help(LF("你正在看第 %d 页，点击从这一页开头继续讲解", target + 1))
+            .transition(.opacity.combined(with: .scale(scale: 0.9)))
     }
 }

@@ -56,6 +56,7 @@ A native macOS app (SwiftUI + PDFKit) for reading PDFs bilingually with the orig
   - **Style**: a conversational, page-by-page walkthrough that also covers figures and tables, turning pages automatically.
   - **Buffering**: scripts for the next 3 pages are written in parallel, and about 5 minutes of upcoming audio (at the current speed, 12–60 segments) is synthesized ahead with several requests in flight, so playback rarely waits. Tune with `tts.buffer_seconds` and `tts.script_pages_ahead`.
   - **Follow along**: the paragraph or figure being narrated gets a soft "breathing" outline and is smoothly scrolled to the center.
+  - **Start from here**: scroll or jump to any page while narrating and a **Narrate from page N** button appears in the player; one click continues from the top of that page.
   - **Controls**: adjustable speed and voice; hold the mic button (or ⌃Space) to interrupt with a spoken question at any time.
   - **Time left**: the player, the minimized pill, and the desktop widget show an estimate of the remaining listening time for the whole document at the current speed. It is based on the scripts already written plus the speaking pace learned from synthesized audio, and gets more accurate as you listen.
 

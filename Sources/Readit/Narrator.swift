@@ -297,6 +297,12 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     }
     func jumpToSegment(_ i: Int) { guard docId != nil, i < segments.count else { return }; play(page: page, seg: i) }
     func jump(page p: Int) { guard docId != nil else { return }; play(page: max(0, min(pageCount - 1, p)), seg: 0) }
+    /// "从这页开始讲": continue the narration from the page the reader is showing now
+    func narrateFromReaderPage() {
+        guard docId != nil, state != .idle else { return }
+        resumedFrom = nil
+        jump(page: Narrator.reader.currentPageIndex)
+    }
 
     // MARK: voice Q&A (interrupt narration)
     @Published var listening = false
