@@ -20,12 +20,14 @@ struct BiReaderApp: App {
                 Button(L("检查更新…")) { Task { await UpdateChecker.shared.check(manual: true) } }
             }
             CommandGroup(replacing: .newItem) {
-                Button(L("导入 PDF…")) { importPanel() }.keyboardShortcut("o")
+                Button(L("导入 PDF 或文档…")) { importPanel() }.keyboardShortcut("o")
                 Button(L("从网页导入…")) { WebImportPanel.show() }.keyboardShortcut("o", modifiers: [.command, .shift])
                 Button(L("新建笔记本")) { store.newNotebook() }.keyboardShortcut("n", modifiers: [.command, .shift])
                 Divider()
                 Button(L("导出双语 PDF…")) { exportBilingual() }.keyboardShortcut("e", modifiers: [.command, .shift])
                 Button(L("导出脑图为 Markdown…")) { exportMarkdown() }
+                Button(L("导出摘录笔记为 Markdown…")) { exportNotesMarkdown() }
+                Button(L("导出到 Anki…")) { exportAnki() }
             }
             CommandGroup(after: .textEditing) {
                 Divider()
@@ -200,7 +202,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { MainActor.assumeIsolated { UpdateChecker.shared.checkOnLaunch() } }
     }
     func application(_ application: NSApplication, open urls: [URL]) {
-        Task { @MainActor in for u in urls where u.pathExtension.lowercased() == "pdf" { _ = Store.shared.importPDF(u, open: true) } }
+        Task { @MainActor in importFiles(urls) }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { !MiniWidget.shared.active }
     func applicationShouldHandleReopen(_ s: NSApplication, hasVisibleWindows: Bool) -> Bool { Task { @MainActor in MiniWidget.shared.expand() }; return true }
@@ -215,11 +217,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-@MainActor func importPanel() {
+/// file types Readit can open: PDFs directly, other documents are converted to PDF
+@MainActor var importableTypes: [UTType] {
+    [.pdf] + DocConverter.supportedExtensions.compactMap { UTType(filenameExtension: $0) }
+}
+
+@MainActor func importPanel(notebook: UUID? = nil) {
     let p = NSOpenPanel()
-    p.allowedContentTypes = [.pdf]
+    p.allowedContentTypes = importableTypes
     p.allowsMultipleSelection = true
-    if p.runModal() == .OK { for u in p.urls { _ = Store.shared.importPDF(u, open: true) } }
+    p.message = L("PDF 直接导入；EPUB、Markdown、Word、RTF、HTML、TXT 会转换成 PDF")
+    if p.runModal() == .OK { importFiles(p.urls, notebook: notebook) }
+}
+
+@MainActor func importFiles(_ urls: [URL], notebook: UUID? = nil, open: Bool = true) {
+    for u in urls {
+        let ext = u.pathExtension.lowercased()
+        if ext == "pdf" {
+            if let nb = notebook { Store.shared.currentNotebookId = nb }
+            _ = Store.shared.importPDF(u, open: open)
+        } else if DocConverter.supportedExtensions.contains(ext) {
+            WebImportPanel.show(notebook: notebook, url: nil)
+            WebImporter.shared.startFile(u, notebook: notebook)
+        }
+    }
 }
 
 @MainActor func exportBilingual() {

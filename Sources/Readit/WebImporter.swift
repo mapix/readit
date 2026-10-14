@@ -49,6 +49,68 @@ final class WebImporter: NSObject, ObservableObject, WKNavigationDelegate {
         task = Task { await self.run(url) }
     }
 
+    /// local documents: EPUB, Markdown, Word/RTF, HTML, plain text → PDF (PDFs are imported as they are)
+    private var fileQueue: [(URL, UUID?)] = []
+    func startFile(_ url: URL, notebook: UUID? = nil) {
+        guard !running else { fileQueue.append((url, notebook)); return }
+        targetNotebook = notebook
+        lastURL = url.absoluteString
+        canOpenInteractive = false
+        error = ""
+        task = Task { await self.runFile(url) }
+    }
+
+    private func runFile(_ url: URL) async {
+        let ext = url.pathExtension.lowercased()
+        let title = url.deletingPathExtension().lastPathComponent
+        do {
+            if ext == "pdf" { finishImport(url, source: nil, title: title); return }
+            phase = .loading; status = LF("正在转换 %@…", url.lastPathComponent)
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("readit-doc-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: dir) }
+            if ["html", "htm", "xhtml", "webarchive"].contains(ext) {
+                // a saved web page: same article extraction as for links
+                let wv = makeWebView()
+                let w = NSWindow(contentRect: NSRect(x: -30000, y: -30000, width: 1100, height: 1400), styleMask: [.borderless], backing: .buffered, defer: false)
+                w.isReleasedWhenClosed = false; w.contentView = wv; w.orderFrontRegardless()
+                host = w; web = wv
+                try await loadFile(wv, url, dir: url.deletingLastPathComponent())
+                try await process(from: wv, url: url)
+                return
+            }
+            phase = .extracting
+            let doc = try await DocConverter.convert(url, workDir: dir)
+            let html = try await buildPrintHTML(doc)
+            let index = dir.appendingPathComponent("index.html")
+            try html.write(to: index, atomically: true, encoding: .utf8)
+            let pdf = try await printDocument(index: index, readAccess: URL(fileURLWithPath: "/"), name: doc.title.isEmpty ? title : doc.title)
+            let keep = FileManager.default.temporaryDirectory.appendingPathComponent(pdf.lastPathComponent)
+            try? FileManager.default.removeItem(at: keep)
+            try FileManager.default.moveItem(at: pdf, to: keep)
+            finishImport(keep, source: nil, title: doc.title.isEmpty ? title : doc.title)
+        } catch is CancellationError {
+            teardown()
+        } catch {
+            fail(error.localizedDescription)
+        }
+    }
+
+    /// wrap converted content in Readit's print template (same CSS as web articles); Markdown is rendered with marked
+    private func buildPrintHTML(_ d: DocConverter.Converted) async throws -> String {
+        let wv = makeWebView()
+        try await waitNavigation(wv) { wv.loadHTMLString("<html><body></body></html>", baseURL: nil) }
+        let js = WebImporter.script("marked.umd") + "\n;\n" + WebImporter.script("readit-extract") + """
+        \n;
+        const content = isMarkdown ? marked.parse(body) : body;
+        return window.__readit.build({ title: title, byline: author, site: "", date: "", url: source, lang: "", content: content });
+        """
+        let r = try await wv.callAsyncJavaScript(js, arguments: ["isMarkdown": d.markdown, "body": d.body, "title": d.title, "author": d.author, "source": d.source],
+                                                 in: nil, in: .defaultClient)
+        guard let html = r as? String, !html.isEmpty else { throw ImportError.message(L("页面脚本执行失败")) }
+        return html
+    }
+
     func cancel() {
         task?.cancel(); task = nil
         web?.stopLoading()
@@ -140,7 +202,14 @@ final class WebImporter: NSObject, ObservableObject, WKNavigationDelegate {
         let index = dir.appendingPathComponent("index.html")
         try html.write(to: index, atomically: true, encoding: .utf8)
 
-        // render + print
+        let name = WebImporter.fileName(info.title.isEmpty ? (url.host ?? "web") : info.title)
+        let pdf = try await printDocument(index: index, readAccess: url.isFileURL ? URL(fileURLWithPath: "/") : dir, name: name)
+        finishImport(pdf, source: url.isFileURL ? nil : info.url, title: info.title)
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    /// render a prepared print document (index.html + assets) and print it to an A4 PDF next to it
+    func printDocument(index: URL, readAccess: URL, name: String) async throws -> URL {
         phase = .rendering; status = L("正在生成 PDF…")
         let pv = makeWebView(width: 760)
         let pw = NSWindow(contentRect: NSRect(x: -30000, y: -30000, width: 760, height: 1100), styleMask: [.borderless], backing: .buffered, defer: false)
@@ -148,15 +217,13 @@ final class WebImporter: NSObject, ObservableObject, WKNavigationDelegate {
         pw.contentView = pv
         pw.orderFrontRegardless()
         defer { pw.orderOut(nil) }
-        try await loadFile(pv, index, dir: dir)
+        try await loadFile(pv, index, dir: readAccess)
         try await waitForImages(pv)
-        let name = WebImporter.fileName(info.title.isEmpty ? (url.host ?? "web") : info.title)
-        let pdf = dir.appendingPathComponent(name + ".pdf")
+        let pdf = index.deletingLastPathComponent().appendingPathComponent(WebImporter.fileName(name) + ".pdf")
         var ok = await printPDF(pv, window: pw, to: pdf)
         if !ok || (PDFDocument(url: pdf)?.pageCount ?? 0) == 0 { ok = try await slicedPDF(pv, to: pdf) }
         guard ok else { throw ImportError.message(L("生成 PDF 失败")) }
-        finishImport(pdf, source: info.url, title: info.title)
-        try? FileManager.default.removeItem(at: dir)
+        return pdf
     }
 
     private func extract(_ wv: WKWebView) async throws -> Extracted {
@@ -224,19 +291,27 @@ final class WebImporter: NSObject, ObservableObject, WKNavigationDelegate {
         finishImport(dst, source: url.absoluteString, title: name)
     }
 
-    private func finishImport(_ pdf: URL, source: String, title: String) {
+    private func finishImport(_ pdf: URL, source: String?, title: String) {
         if let nb = targetNotebook { Store.shared.currentNotebookId = nb }
         let id = Store.shared.importPDF(pdf, open: true)
-        if let id { Store.shared.setSource(id, source) }
+        if let id, let source { Store.shared.setSource(id, source) }
         teardown()
         phase = id == nil ? .failed : .done
         status = id == nil ? "" : LF("已导入：%@", title)
         if id == nil { error = L("导入失败") }
+        nextQueued()
+    }
+
+    private func nextQueued() {
+        guard !fileQueue.isEmpty else { return }
+        let (u, nb) = fileQueue.removeFirst()
+        DispatchQueue.main.async { self.startFile(u, notebook: nb) }
     }
 
     private func fail(_ m: String) {
         teardown(keepBrowser: true)
         phase = .failed; status = ""; error = m
+        nextQueued()
     }
 
     private func teardown(keepBrowser: Bool = false) {
@@ -261,7 +336,7 @@ final class WebImporter: NSObject, ObservableObject, WKNavigationDelegate {
 
     /// resolves on didFinish / failure, or after 30 s for pages that never finish (endless trackers)
     private weak var navTarget: WKWebView?
-    private func waitNavigation(_ wv: WKWebView, _ start: () -> Void) async throws {
+    func waitNavigation(_ wv: WKWebView, _ start: () -> Void) async throws {
         let token = UUID(); navToken = token; navTarget = wv
         try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
             navWaiter = c
@@ -493,16 +568,15 @@ final class WebImporter: NSObject, ObservableObject, WKNavigationDelegate {
         return ["png", "jpg", "jpeg", "gif", "webp", "svg", "avif"].contains(e) ? e : "jpg"
     }
 
-    /// Readability + Readit's extractor, from the app bundle (or the source tree when run from `swift run`)
-    static let extractorJS: String = {
-        func read(_ name: String) -> String {
-            if let u = Bundle.main.url(forResource: name, withExtension: "js", subdirectory: "web"), let s = try? String(contentsOf: u, encoding: .utf8) { return s }
-            let src = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-                .appendingPathComponent("Resources/web/\(name).js")
-            return (try? String(contentsOf: src, encoding: .utf8)) ?? ""
-        }
-        return read("Readability") + "\n;\n" + read("readit-extract") + "\n;"
-    }()
+    /// a bundled script from Resources/web (app bundle, or the source tree when run from `swift run`)
+    static func script(_ name: String) -> String {
+        if let u = Bundle.main.url(forResource: name, withExtension: "js", subdirectory: "web"), let s = try? String(contentsOf: u, encoding: .utf8) { return s }
+        let src = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Resources/web/\(name).js")
+        return (try? String(contentsOf: src, encoding: .utf8)) ?? ""
+    }
+    /// Readability + Readit's extractor
+    static let extractorJS: String = script("Readability") + "\n;\n" + script("readit-extract") + "\n;"
 }
 
 // MARK: - UI

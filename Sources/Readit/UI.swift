@@ -85,7 +85,7 @@ struct ContentView: View {
             .onDrop(of: [.fileURL], isTargeted: nil) { providers in
                 for p in providers {
                     _ = p.loadObject(ofClass: URL.self) { u, _ in
-                        if let u, u.pathExtension.lowercased() == "pdf" { DispatchQueue.main.async { if let id = store.importPDF(u) { DocWindows.shared.open(id) } } }
+                        if let u { DispatchQueue.main.async { importFiles([u]) } }
                     }
                 }
                 return true
@@ -343,11 +343,12 @@ struct LibraryView: View {
 
     func importInto(_ nb: UUID?) {
         let p = NSOpenPanel()
-        p.allowedContentTypes = [.pdf]
+        p.allowedContentTypes = importableTypes
         p.allowsMultipleSelection = true
+        p.message = L("PDF 直接导入；EPUB、Markdown、Word、RTF、HTML、TXT 会转换成 PDF")
         guard p.runModal() == .OK else { return }
         if let nb { store.currentNotebookId = nb }
-        for u in p.urls { _ = store.importPDF(u, open: false) }
+        importFiles(p.urls, notebook: nb, open: false)
     }
 
     func libTab(_ t: String, _ i: Int) -> some View {

@@ -326,6 +326,7 @@
     var imageURLs = [];
     q(holder, "img").forEach(function (img) {
       var u = img.getAttribute("src") || "";
+      if (/^file:/i.test(u)) return;                 // local document (saved page): read directly
       if (!/^https?:/i.test(u) || /(pixel|beacon|analytics|tracking|\/1x1\.)/i.test(u)) { if (!/^data:image\/(png|jpe?g|webp|gif)/.test(u)) img.remove(); return; }
       var k = imageURLs.indexOf(u);
       if (k < 0) { k = imageURLs.length; imageURLs.push(u); }
