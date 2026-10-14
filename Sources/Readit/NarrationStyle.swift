@@ -124,8 +124,13 @@ enum NarrationStyle: String, CaseIterable, Identifiable {
     static func cacheSuffix(style: NarrationStyle, extra: String) -> String {
         let e = extra.trimmingCharacters(in: .whitespacesAndNewlines)
         if style == .podcast && e.isEmpty { return "" }
-        var h: UInt64 = 0xcbf29ce484222325                 // FNV-1a: stable across launches (unlike hashValue)
-        for b in (style.rawValue + "\u{1}" + e).utf8 { h ^= UInt64(b); h = h &* 0x100000001b3 }
+        return hash(style.rawValue + "\u{1}" + e)
+    }
+
+    /// "-<8 hex>" FNV-1a digest: stable across launches (unlike hashValue)
+    static func hash(_ s: String) -> String {
+        var h: UInt64 = 0xcbf29ce484222325
+        for b in s.utf8 { h ^= UInt64(b); h = h &* 0x100000001b3 }
         return "-" + String(format: "%08x", UInt32(truncatingIfNeeded: h ^ (h >> 32)))
     }
 }

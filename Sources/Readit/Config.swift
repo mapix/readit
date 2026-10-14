@@ -26,7 +26,7 @@ enum ConfigFile {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var cachedMTime: Date?
     nonisolated(unsafe) private static var cachedValues: [String: String] = [:]
-    nonisolated(unsafe) private static var cachedCommandKey: (cmd: String, mtime: Date?, key: String)?
+    nonisolated(unsafe) private static var cachedCommandKeys: [String: (mtime: Date?, key: String)] = [:]
 
     private static func mtime() -> Date? {
         (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
@@ -54,27 +54,31 @@ enum ConfigFile {
 
     enum KeySource: Equatable { case file, env(String), command, none }
 
-    /// where the config file says the key comes from (`.none` → fall back to preferences / environment)
-    static var keySource: KeySource {
-        if string("gateway.api_key") != nil { return .file }
-        if let c = string("gateway.api_key_command"), !c.isEmpty { return .command }
-        if let e = string("gateway.api_key_env") { return .env(e) }
+    /// where the config file says the gateway key comes from (`.none` → fall back to Keychain / environment)
+    static var keySource: KeySource { keySource(for: "gateway") }
+    static func apiKey() -> String? { apiKey(for: "gateway") }
+
+    /// same rules for any section that has its own key (e.g. "tts"): api_key | api_key_command | api_key_env
+    static func keySource(for section: String) -> KeySource {
+        if string(section + ".api_key") != nil { return .file }
+        if let c = string(section + ".api_key_command"), !c.isEmpty { return .command }
+        if let e = string(section + ".api_key_env") { return .env(e) }
         return .none
     }
 
-    static func apiKey() -> String? {
-        switch keySource {
-        case .file: return string("gateway.api_key")
+    static func apiKey(for section: String) -> String? {
+        switch keySource(for: section) {
+        case .file: return string(section + ".api_key")
         case .env(let name):
             let v = ProcessInfo.processInfo.environment[name] ?? ""
             return v.isEmpty ? nil : v
         case .command:
-            guard let cmd = string("gateway.api_key_command") else { return nil }
+            guard let cmd = string(section + ".api_key_command") else { return nil }
             lock.lock()
-            if let c = cachedCommandKey, c.cmd == cmd, c.mtime == cachedMTime { lock.unlock(); return c.key.isEmpty ? nil : c.key }
+            if let c = cachedCommandKeys[cmd], c.mtime == cachedMTime { lock.unlock(); return c.key.isEmpty ? nil : c.key }
             lock.unlock()
             let key = runCommand(cmd)
-            lock.lock(); cachedCommandKey = (cmd, cachedMTime, key); lock.unlock()
+            lock.lock(); cachedCommandKeys[cmd] = (cachedMTime, key); lock.unlock()
             return key.isEmpty ? nil : key
         case .none: return nil
         }

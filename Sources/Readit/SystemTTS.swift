@@ -3,17 +3,159 @@ import AVFoundation
 
 /// Where narration audio comes from.
 /// - system: macOS AVSpeechSynthesizer — free, offline, no model needed (default for new installs)
-/// - gateway: OpenAI-compatible `POST /v1/audio/speech` on the configured gateway
+/// - gateway: OpenAI-compatible `POST /v1/audio/speech` on the main model gateway (same URL and key)
+/// - the others: a speech service with its own base URL and key (see RemoteTTS)
 enum TTSProvider: String, CaseIterable, Identifiable {
-    case system, gateway
+    case system, gateway, openai, gemini, qwen, azure, elevenlabs, minimax, volcengine
     var id: String { rawValue }
+    var isRemote: Bool { self != .system }
+
     init?(configName s: String) {
-        switch s.lowercased() {
+        switch s.lowercased().replacingOccurrences(of: "_", with: "-") {
         case "system", "macos", "apple", "avspeech", "local": self = .system
-        case "gateway", "openai", "api", "remote": self = .gateway
+        case "gateway", "api", "remote": self = .gateway
+        case "openai", "openai-compatible", "compatible", "siliconflow": self = .openai
+        case "gemini", "google": self = .gemini
+        case "qwen", "dashscope", "tongyi", "aliyun", "bailian": self = .qwen
+        case "azure", "microsoft": self = .azure
+        case "elevenlabs", "eleven": self = .elevenlabs
+        case "minimax", "hailuo": self = .minimax
+        case "volcengine", "volcano", "doubao", "bytedance": self = .volcengine
         default: return nil
         }
     }
+
+    /// Chinese source label (localized with L())
+    var title: String {
+        switch self {
+        case .system: return "系统语音（macOS，免费，无需模型）"
+        case .gateway: return "主网关（/v1/audio/speech）"
+        case .openai: return "OpenAI 或兼容接口"
+        case .gemini: return "Google Gemini"
+        case .qwen: return "通义千问 Qwen-TTS（阿里云百炼）"
+        case .azure: return "Microsoft Azure 语音"
+        case .elevenlabs: return "ElevenLabs"
+        case .minimax: return "MiniMax"
+        case .volcengine: return "火山引擎 · 豆包语音"
+        }
+    }
+    var shortTitle: String {
+        switch self {
+        case .system: return "系统语音"
+        case .gateway: return "网关 TTS"
+        case .openai: return "OpenAI"
+        case .gemini: return "Gemini"
+        case .qwen: return "Qwen"
+        case .azure: return "Azure"
+        case .elevenlabs: return "ElevenLabs"
+        case .minimax: return "MiniMax"
+        case .volcengine: return "豆包"
+        }
+    }
+    var defaultBaseURL: String {
+        switch self {
+        case .system, .gateway: return ""
+        case .openai: return "https://api.openai.com"
+        case .gemini: return "https://generativelanguage.googleapis.com"
+        case .qwen: return "https://dashscope.aliyuncs.com"
+        case .azure: return ""                                   // derived from the region
+        case .elevenlabs: return "https://api.elevenlabs.io"
+        case .minimax: return "https://api.minimaxi.com"
+        case .volcengine: return "https://openspeech.bytedance.com"
+        }
+    }
+    var baseURLHint: String {
+        switch self {
+        case .qwen: return "https://dashscope.aliyuncs.com（国际站：https://dashscope-intl.aliyuncs.com）"
+        case .minimax: return "https://api.minimaxi.com（海外：https://api.minimax.io）"
+        case .azure: return "https://<region>.tts.speech.microsoft.com"
+        case .openai: return "https://api.openai.com，或任意兼容 /v1/audio/speech 的服务"
+        default: return defaultBaseURL
+        }
+    }
+    var defaultModel: String {
+        switch self {
+        case .system, .azure: return ""
+        case .gateway: return "gemini-3.8-flash-tts"
+        case .openai: return "gpt-4o-mini-tts"
+        case .gemini: return "gemini-3.8-flash-tts"
+        case .qwen: return "qwen3-tts-flash"
+        case .elevenlabs: return "eleven_multilingual_v2"
+        case .minimax: return "speech-02-hd"
+        case .volcengine: return "volcano_tts"            // the "cluster"
+        }
+    }
+    var defaultVoice: String {
+        switch self {
+        case .system: return ""
+        case .gateway, .gemini: return "Zephyr"
+        case .openai: return "marin"
+        case .qwen: return "Cherry"
+        case .azure: return "zh-CN-XiaoxiaoNeural"
+        case .elevenlabs: return "21m00Tcm4TlvDXrnALMq"
+        case .minimax: return "female-shaonv"
+        case .volcengine: return "zh_female_shuangkuaisisi_moon_bigtts"
+        }
+    }
+    /// well-known voices for the picker (any other id can be typed in)
+    var voiceSuggestions: [VoiceOption] {
+        func v(_ id: String, _ label: String) -> VoiceOption { VoiceOption(id: id, label: label) }
+        switch self {
+        case .system: return []
+        case .gateway, .gemini:
+            return [v("Zephyr", "Zephyr · 明亮女声"), v("Leda", "Leda · 年轻轻松女声"), v("Aoede", "Aoede · 温柔女声"), v("Kore", "Kore · 沉稳女声"),
+                    v("Puck", "Puck · 活泼男声"), v("Charon", "Charon · 知性男声"), v("Fenrir", "Fenrir · 激昂男声"), v("Orus", "Orus · 低沉男声")]
+        case .openai:
+            return ["marin", "cedar", "alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer", "verse"].map { v($0, $0) }
+        case .qwen:
+            return [v("Cherry", "Cherry · 芊悦（女）"), v("Serena", "Serena · 苏瑶（女）"), v("Ethan", "Ethan · 晨煦（男）"), v("Chelsie", "Chelsie · 千雪（女）"),
+                    v("Momo", "Momo · 茉兔（女）"), v("Vivian", "Vivian · 十三（女）"), v("Moon", "Moon · 月白（男）"), v("Kai", "Kai · 凯（男）"),
+                    v("Nofish", "Nofish · 不吃鱼（男）"), v("Jennifer", "Jennifer · 詹妮弗（女，英）"), v("Ryan", "Ryan · 甜茶（男，英）"), v("Dylan", "Dylan · 晓东（北京话）"),
+                    v("Sunny", "Sunny · 晴儿（四川话）"), v("Rocky", "Rocky · 阿强（粤语）")]
+        case .azure:
+            return ["zh-CN-XiaoxiaoNeural", "zh-CN-YunxiNeural", "zh-CN-XiaoyiNeural", "zh-CN-YunjianNeural", "zh-CN-XiaochenMultilingualNeural",
+                    "zh-TW-HsiaoChenNeural", "en-US-AvaMultilingualNeural", "en-US-AndrewMultilingualNeural", "en-US-JennyNeural", "ja-JP-NanamiNeural", "ko-KR-SunHiNeural"].map { v($0, $0) }
+        case .elevenlabs:
+            return [v("21m00Tcm4TlvDXrnALMq", "Rachel"), v("EXAVITQu4vr4xnSDxMaL", "Sarah"), v("pNInz6obpgDQGcFmaJgB", "Adam"), v("JBFqnCBsd6RMkjVDRZzb", "George")]
+        case .minimax:
+            return [v("female-shaonv", "少女音色"), v("female-yujie", "御姐音色"), v("female-chengshu", "成熟女性"), v("male-qn-qingse", "青涩青年"),
+                    v("male-qn-jingying", "精英青年"), v("presenter_male", "男性主持人"), v("presenter_female", "女性主持人"), v("audiobook_male_1", "男性有声书")]
+        case .volcengine:
+            return [v("zh_female_shuangkuaisisi_moon_bigtts", "爽快思思"), v("zh_male_wennuanahu_moon_bigtts", "温暖阿虎"), v("zh_female_wanwanxiaohe_moon_bigtts", "湾湾小何"),
+                    v("zh_male_beijingxiaoye_moon_bigtts", "北京小爷"), v("BV700_streaming", "灿灿"), v("BV001_streaming", "通用女声"), v("BV002_streaming", "通用男声")]
+        }
+    }
+    var needsOwnKey: Bool { ![.system, .gateway].contains(self) }
+    var needsRegion: Bool { self == .azure }
+    var needsAppId: Bool { self == .volcengine }
+    /// where to get a key
+    var keyHelpURL: String? {
+        switch self {
+        case .openai: return "https://platform.openai.com/api-keys"
+        case .gemini: return "https://aistudio.google.com/apikey"
+        case .qwen: return "https://bailian.console.aliyun.com/?apiKey=1"
+        case .azure: return "https://portal.azure.com/#create/Microsoft.CognitiveServicesSpeechServices"
+        case .elevenlabs: return "https://elevenlabs.io/app/settings/api-keys"
+        case .minimax: return "https://platform.minimaxi.com/user-center/basic-information/interface-key"
+        case .volcengine: return "https://console.volcengine.com/speech/app"
+        default: return nil
+        }
+    }
+    /// environment variables checked when no key is configured
+    var envKeys: [String] {
+        switch self {
+        case .openai: return ["OPENAI_API_KEY"]
+        case .gemini: return ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+        case .qwen: return ["DASHSCOPE_API_KEY"]
+        case .azure: return ["AZURE_SPEECH_KEY", "SPEECH_KEY"]
+        case .elevenlabs: return ["ELEVENLABS_API_KEY"]
+        case .minimax: return ["MINIMAX_API_KEY"]
+        case .volcengine: return ["VOLC_TTS_TOKEN"]
+        default: return []
+        }
+    }
+    /// can the request carry a speaking-style prompt
+    var supportsStyle: Bool { [.gateway, .openai, .gemini].contains(self) }
 }
 
 struct VoiceOption: Hashable, Identifiable {

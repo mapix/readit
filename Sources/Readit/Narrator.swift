@@ -63,13 +63,18 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     @Published var rate: Float = Settings.ttsSpeed {
         didSet { if rate != oldValue { Settings.ttsSpeed = rate }; applyRate(old: oldValue) }
     }
-    /// gateway TTS voice
+    /// voice of the active remote TTS provider
     @Published var voice: String = Settings.ttsVoice {
         didSet { if voice != oldValue { Settings.ttsVoice = voice } }
     }
     /// TTS engine and macOS voice (identifier; "" = automatic)
     @Published var provider: TTSProvider = Settings.ttsProvider {
-        didSet { if provider != oldValue { Settings.ttsProvider = provider; fallbackToSystem = false; refreshBuffered() } }
+        didSet {
+            guard provider != oldValue else { return }
+            Settings.ttsProvider = provider; fallbackToSystem = false
+            voice = Settings.ttsVoice(provider)                   // each provider remembers its own voice
+            refreshBuffered()
+        }
     }
     @Published var systemVoice: String = Settings.systemVoice {
         didSet { if systemVoice != oldValue { Settings.systemVoice = systemVoice; refreshBuffered() } }
@@ -80,7 +85,16 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     var effectiveProvider: TTSProvider { fallbackToSystem ? .system : provider }
     /// part of the audio cache filename, so clips from different engines / voices / script styles never mix
     var voiceTag: String {
-        (effectiveProvider == .gateway ? voice : SystemTTS.cacheTag(systemVoice, target: Settings.targetLang)) + scriptSuffix
+        let p = effectiveProvider
+        let engine: String
+        switch p {
+        case .system: engine = SystemTTS.cacheTag(systemVoice, target: Settings.targetLang)
+        case .gateway: engine = voice                                                  // original cache names
+        default:
+            let id = p.rawValue + "|" + voice + "|" + Settings.ttsModel(p) + "|" + Settings.ttsBaseURL(p)
+            engine = p.rawValue + "-" + String(voice.map { $0.isLetter || $0.isNumber ? $0 : "_" }.prefix(40)) + NarrationStyle.hash(id)
+        }
+        return engine + scriptSuffix
     }
     /// "" for the default narration style (original cache names), else a per-style suffix
     var scriptSuffix: String { NarrationStyle.cacheSuffix(style: Settings.narrationStyle, extra: Settings.narrationExtraPrompt) }
@@ -88,21 +102,29 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     func scriptURL(_ p: Int) -> URL { cacheDir().appendingPathComponent(scriptFileName(p)) }
     /// entries for the voice menus
     var voiceOptions: [VoiceOption] {
-        if effectiveProvider == .gateway { return Narrator.voices.map { VoiceOption(id: $0, label: Narrator.voiceNames[$0] ?? $0) } }
+        let p = effectiveProvider
+        if p.isRemote {
+            var list = p.voiceSuggestions
+            if !voice.isEmpty, !list.contains(where: { $0.id == voice }) { list.insert(VoiceOption(id: voice, label: voice), at: 0) }
+            return list
+        }
         return [VoiceOption(id: "", label: L("自动（按目标语言）"))] + SystemTTS.options(for: Settings.targetLang)
     }
-    var currentVoiceID: String { effectiveProvider == .gateway ? voice : systemVoice }
+    var currentVoiceID: String { effectiveProvider.isRemote ? voice : systemVoice }
     var currentVoiceName: String {
-        if effectiveProvider == .gateway { return voice }
+        let p = effectiveProvider
+        if p.isRemote {
+            let label = p.voiceSuggestions.first { $0.id == voice }?.label ?? voice
+            return String(label.split(separator: "·").first ?? Substring(label)).trimmingCharacters(in: .whitespaces)
+        }
         return SystemTTS.resolve(systemVoice, target: Settings.targetLang)?.name ?? L("系统语音")
     }
-    func selectVoice(_ id: String) { if effectiveProvider == .gateway { voice = id } else { systemVoice = id } }
+    func selectVoice(_ id: String) { if effectiveProvider.isRemote { voice = id } else { systemVoice = id } }
     static let voices = ["Zephyr", "Leda", "Aoede", "Kore", "Puck", "Charon", "Fenrir", "Orus"]
     static let voiceNames = ["Leda": "Leda · 年轻轻松女声", "Aoede": "Aoede · 温柔女声", "Kore": "Kore · 沉稳女声", "Zephyr": "Zephyr · 明亮女声", "Puck": "Puck · 活泼男声", "Charon": "Charon · 知性男声", "Fenrir": "Fenrir · 激昂男声", "Orus": "Orus · 低沉男声"]
     nonisolated static let styleInstruction = "用年轻、轻松、亲切的语气朗读，像和朋友聊天一样自然，语调有起伏，不要播音腔。"
     /// reader of the window showing the narrated document
     static var reader: ReaderController { DocWindows.shared.entries[shared.docId ?? UUID()]?.reader ?? ReaderController.shared }
-    static var ttsModel: String { ModelConfig.ttsModel }
 
     private var player: AVAudioPlayer?
     private var doc: PDFDocument?
@@ -371,8 +393,8 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     /// one-off synthesis (not cached per segment)
     private func synth(_ text: String) async throws -> Data {
         if effectiveProvider == .system { return try await systemSynth(text, urgent: true) }
-        do { return try await Narrator.gatewaySpeech(text, voice: voice) }
-        catch let e as TranslateError where Narrator.isConfigError(e) {
+        do { return try await RemoteTTS.synthesize(text, TTSConfig.current(provider)) }
+        catch let e as TranslateError where RemoteTTS.isConfigError(e) {
             fallbackToSystem = true; fallbackReason = e.errorDescription ?? ""
             return try await systemSynth(text, urgent: true)
         }
@@ -382,7 +404,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     func previewVoice() async throws {
         let sample = Settings.targetLang.contains("English") ? "Hi, this is how narration will sound in Readit." : (Settings.targetLang.contains("日本") ? "こんにちは。Readit の解説はこの声で読み上げます。" : "你好，这是 Readit 讲解时会用到的声音。")
         let wav: Data
-        if provider == .gateway { wav = try await Narrator.gatewaySpeech(sample, voice: voice) }
+        if provider.isRemote { wav = try await RemoteTTS.synthesize(sample, TTSConfig.current(provider)) }
         else { wav = try await systemSynth(sample, urgent: true) }
         resumeAfterQA = false
         let pl = try makePlayer(wav)
@@ -423,38 +445,6 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
             self.systemBusy = false
             self.pumpSystem()
         }
-    }
-
-    /// OpenAI-compatible POST {base}/v1/audio/speech → cleaned WAV
-    nonisolated static func gatewaySpeech(_ text: String, voice v: String, attempts: Int = 1) async throws -> Data {
-        let k = Settings.apiKey
-        let base = Settings.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let url = URL(string: base + "/v1/audio/speech") else { throw TranslateError.bad("Base URL") }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.timeoutInterval = 120
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue("Bearer " + k, forHTTPHeaderField: "Authorization")
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["model": ModelConfig.ttsModel, "input": text, "voice": v, "instructions": Narrator.styleInstruction, "response_format": "wav"])
-        var last: Error = TranslateError.bad("TTS 失败")
-        for attempt in 0..<max(1, attempts) {
-            do {
-                let (data, resp) = try await URLSession.shared.data(for: req)
-                let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-                if code == 200, data.count > 1000 { return Narrator.cleanWAV(data) }
-                last = TranslateError.http(code, String(data: data.prefix(200), encoding: .utf8) ?? "")
-                if (400..<500).contains(code) && code != 429 { throw last }      // config problem: don't retry
-            } catch let e as TranslateError { throw e }
-            catch { last = error }
-            if attempt + 1 < attempts { try? await Task.sleep(nanoseconds: UInt64(800_000_000 * (attempt + 1))) }
-        }
-        throw last
-    }
-
-    /// 4xx other than 429: missing TTS model, bad key, unsupported endpoint…
-    nonisolated static func isConfigError(_ e: TranslateError) -> Bool {
-        if case .http(let c, _) = e { return (400..<500).contains(c) && c != 429 }
-        return false
     }
 
     // MARK: engine
@@ -542,7 +532,36 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         guard let d = try? Data(contentsOf: scriptURL(p)) else { return nil }
         return try? JSONDecoder().decode([Segment].self, from: d)
     }
-    private func audioURL(_ p: Int, _ i: Int, tag: String) -> URL { cacheDir().appendingPathComponent("p\(p)-s\(i)-\(tag)-v2.wav") }
+    // MARK: clip cache — AAC (.m4a) since 0.2; WAV clips from older builds are still read
+
+    private func clipStem(_ p: Int, _ i: Int, tag: String) -> String { "p\(p)-s\(i)-\(tag)" }
+    private func clipURLs(_ p: Int, _ i: Int, tag: String) -> (m4a: URL, wav: URL) {
+        let d = cacheDir(), stem = clipStem(p, i, tag: tag)
+        return (d.appendingPathComponent(stem + "-v3.m4a"), d.appendingPathComponent(stem + "-v2.wav"))
+    }
+    func hasClip(page p: Int, seg i: Int, tag: String) -> Bool {
+        let u = clipURLs(p, i, tag: tag)
+        return FileManager.default.fileExists(atPath: u.m4a.path) || FileManager.default.fileExists(atPath: u.wav.path)
+    }
+    /// cached clip as a clean WAV (decoded from AAC when needed)
+    func clipData(page p: Int, seg i: Int, tag: String) -> Data? {
+        let u = clipURLs(p, i, tag: tag)
+        if FileManager.default.fileExists(atPath: u.m4a.path) {
+            if let w = AudioCodec.decodeFile(u.m4a), w.count > 1000 { return w }
+            try? FileManager.default.removeItem(at: u.m4a)          // unreadable: synthesize again
+        }
+        if let d = try? Data(contentsOf: u.wav), d.count > 1000 { return Narrator.cleanWAV(d) }
+        return nil
+    }
+    private var clipsWritten = 0
+    private func storeClip(_ wav: Data, page p: Int, seg i: Int, tag: String) {
+        let u = clipURLs(p, i, tag: tag)
+        if Settings.ttsCacheFormat == "wav" || !AudioCodec.writeAAC(wav: wav, to: u.m4a) {
+            try? wav.write(to: u.wav, options: .atomic)
+        }
+        clipsWritten += 1
+        if clipsWritten % 40 == 0 { let keep = docId; Task.detached(priority: .utility) { StorageManager.enforceAudioLimit(keep: keep) } }
+    }
 
     /// start writing scripts for the pages after `p` (parallel, deduplicated by `script(for:)`)
     private func kickScripts(after p: Int, token: UUID) {
@@ -570,7 +589,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         while count < Narrator.maxBufferSegments && (ahead < target || count < Narrator.minBufferSegments) {
             if k < segs.count {
                 let t = segs[k].text
-                if !FileManager.default.fileExists(atPath: audioURL(pg, k, tag: tag).path) { plan.append((pg, k, t)) }
+                if !hasClip(page: pg, seg: k, tag: tag) { plan.append((pg, k, t)) }
                 ahead += Double(t.count) * pace / speed; count += 1; k += 1
                 continue
             }
@@ -579,7 +598,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
             segs = next
         }
         guard !plan.isEmpty else { refreshBuffered(); return }
-        let width = effectiveProvider == .gateway ? 4 : 2
+        let width = effectiveProvider.isRemote ? 4 : 2
         Task {
             // sliding window: start the next request as soon as one finishes, in playback order
             await withTaskGroup(of: Void.self) { g in
@@ -611,7 +630,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
                 segs = s
                 continue
             }
-            if FileManager.default.fileExists(atPath: cacheDir().appendingPathComponent("p\(pg)-s\(k)-\(tag)-v2.wav").path) { n += 1; k += 1 } else { break }
+            if hasClip(page: pg, seg: k, tag: tag) { n += 1; k += 1 } else { break }
         }
         if buffered != n { buffered = n }
     }
@@ -622,7 +641,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     private func dropAudio(page p: Int) {
         let dir = cacheDir(), prefix = "p\(p)-s"
         let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-        for f in files where f.hasPrefix(prefix) && f.hasSuffix(".wav") { try? FileManager.default.removeItem(at: dir.appendingPathComponent(f)) }
+        for f in files where f.hasPrefix(prefix) && (f.hasSuffix(".wav") || f.hasSuffix(".m4a")) { try? FileManager.default.removeItem(at: dir.appendingPathComponent(f)) }
     }
 
     private func cacheDir() -> URL {
@@ -673,30 +692,29 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     // MARK: TTS (gemini-3.8-flash-tts via gateway, OpenAI-compatible /v1/audio/speech)
 
     func audio(page p: Int, seg i: Int, text: String, urgent: Bool = false) async throws -> Data {
-        let url = cacheDir().appendingPathComponent("p\(p)-s\(i)-\(voiceTag)-v2.wav")
-        if let d = try? Data(contentsOf: url), d.count > 1000 {
-            let w = Narrator.cleanWAV(d); learnPace(key: url.lastPathComponent, text: text, wav: w); return w
-        }
-        let key = url.lastPathComponent
+        let tag = voiceTag
+        let key = clipStem(p, i, tag: tag)
+        if let w = clipData(page: p, seg: i, tag: tag) { learnPace(key: key, text: text, wav: w); return w }
         if let t = audioTasks[key] {
             if urgent { promoteSystem(text) }                   // the clip we are waiting on jumps the queue
             return try await t.value
         }
-        let useGateway = effectiveProvider == .gateway, v = voice
+        let remote = effectiveProvider.isRemote
+        let cfg = TTSConfig.current(effectiveProvider)
         let task = Task<Data, Error> { @MainActor in
-            if !useGateway { return try await self.systemSynth(text, urgent: urgent) }
-            return try await Narrator.gatewaySpeech(text, voice: v, attempts: 3)
+            if !remote { return try await self.systemSynth(text, urgent: urgent) }
+            return try await RemoteTTS.synthesize(text, cfg, attempts: 3)
         }
         audioTasks[key] = task
         defer { audioTasks[key] = nil }
         let d: Data
         do { d = try await task.value }
-        catch let e as TranslateError where useGateway && Narrator.isConfigError(e) {
-            // gateway has no usable TTS: switch this run to the macOS voice and tell the user why
-            if !fallbackToSystem { fallbackToSystem = true; fallbackReason = e.errorDescription ?? "" }
+        catch where remote && RemoteTTS.isConfigError(error) {
+            // the speech service is not usable (no key / model / permission): switch this run to the macOS voice
+            if !fallbackToSystem { fallbackToSystem = true; fallbackReason = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription }
             return try await audio(page: p, seg: i, text: text, urgent: urgent)
         }
-        try? d.write(to: url, options: .atomic)
+        storeClip(d, page: p, seg: i, tag: tag)
         learnPace(key: key, text: text, wav: d)
         refreshBuffered()
         return d

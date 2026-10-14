@@ -59,6 +59,7 @@ enum Keychain {
         lock.lock(); cache[account] = v; lock.unlock()
         return v.isEmpty ? nil : v
     }
+    @discardableResult
     static func store(_ value: String, _ account: String) -> Bool {
         let ok = set(value, account)
         lock.lock(); cache[account] = ok ? value : nil; lock.unlock()

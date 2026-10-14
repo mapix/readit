@@ -76,10 +76,86 @@ enum Settings {
         get { ConfigFile.values["narration.extra_prompt"] ?? d.string(forKey: "narrExtraPrompt") ?? "" }
         set { d.set(newValue, forKey: "narrExtraPrompt"); ConfigFile.set(["narration.extra_prompt": .str(newValue)]) }
     }
-    /// gateway TTS voice
+    /// voice of the active remote TTS provider
     static var ttsVoice: String {
-        get { ConfigFile.string("tts.voice") ?? d.string(forKey: "narrVoice") ?? "Zephyr" }
-        set { d.set(newValue, forKey: "narrVoice"); ConfigFile.set(["tts.voice": .str(newValue)]) }
+        get { ttsVoice(ttsProvider) }
+        set { setTTSVoice(newValue, ttsProvider) }
+    }
+
+    // MARK: per-provider TTS settings
+    // The main-gateway provider keeps the original keys ([tts] model / voice, `model.tts`, `narrVoice`);
+    // every other provider has its own config section, e.g. [tts.qwen] base_url / api_key… / model / voice.
+
+    static func ttsSection(_ p: TTSProvider) -> String { "tts." + p.rawValue }
+
+    static func ttsModel(_ p: TTSProvider) -> String {
+        if p == .gateway { return ModelConfig.ttsModel }
+        return ConfigFile.string(ttsSection(p) + ".model") ?? nonEmpty(d.string(forKey: "model.tts." + p.rawValue)) ?? p.defaultModel
+    }
+    static func setTTSModel(_ m: String, _ p: TTSProvider) {
+        if p == .gateway { ModelConfig.setModel("tts", m); return }
+        d.set(m, forKey: "model.tts." + p.rawValue); ConfigFile.set([ttsSection(p) + ".model": .str(m)])
+    }
+
+    static func ttsVoice(_ p: TTSProvider) -> String {
+        if p == .gateway { return ConfigFile.string("tts.voice") ?? nonEmpty(d.string(forKey: "narrVoice")) ?? p.defaultVoice }
+        return ConfigFile.string(ttsSection(p) + ".voice") ?? nonEmpty(d.string(forKey: "narrVoice." + p.rawValue)) ?? p.defaultVoice
+    }
+    static func setTTSVoice(_ v: String, _ p: TTSProvider) {
+        if p == .gateway { d.set(v, forKey: "narrVoice"); ConfigFile.set(["tts.voice": .str(v)]); return }
+        d.set(v, forKey: "narrVoice." + p.rawValue); ConfigFile.set([ttsSection(p) + ".voice": .str(v)])
+    }
+
+    /// user override only ("" = provider default)
+    static func ttsBaseURLOverride(_ p: TTSProvider) -> String {
+        ConfigFile.string(ttsSection(p) + ".base_url") ?? d.string(forKey: "tts.baseURL." + p.rawValue) ?? ""
+    }
+    static func setTTSBaseURL(_ u: String, _ p: TTSProvider) {
+        d.set(u, forKey: "tts.baseURL." + p.rawValue); ConfigFile.set([ttsSection(p) + ".base_url": .str(u)])
+    }
+    /// effective base URL, without a trailing slash
+    static func ttsBaseURL(_ p: TTSProvider) -> String {
+        if p == .gateway { return baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }
+        var u = nonEmpty(ttsBaseURLOverride(p)) ?? p.defaultBaseURL
+        if p == .azure, u.isEmpty { u = "https://\(ttsRegion.isEmpty ? "eastus" : ttsRegion).tts.speech.microsoft.com" }
+        return u.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
+
+    static func ttsKey(_ p: TTSProvider) -> String {
+        if p == .gateway { return apiKey }
+        let sec = ttsSection(p)
+        if ConfigFile.keySource(for: sec) != .none, let k = ConfigFile.apiKey(for: sec) { return k }
+        if let k = Keychain.cached(sec) { return k }
+        for e in p.envKeys { if let k = nonEmpty(env[e]) { return k } }
+        return ""
+    }
+    /// the key comes from the config file (env var / command) and can't be edited in the Settings window
+    static func ttsKeyManagedByFile(_ p: TTSProvider) -> Bool {
+        switch ConfigFile.keySource(for: ttsSection(p)) { case .env, .command: return true; default: return false }
+    }
+    static func setTTSKey(_ k: String, _ p: TTSProvider) {
+        guard p.needsOwnKey else { return }
+        let sec = ttsSection(p)
+        if ConfigFile.keySource(for: sec) == .file { ConfigFile.set([sec + ".api_key": .str(k)]); return }
+        Keychain.store(k, sec)
+    }
+
+    /// narration clip cache: "aac" (default, small) or "wav"
+    static var ttsCacheFormat: String { (ConfigFile.string("tts.cache_format") ?? d.string(forKey: "tts.cacheFormat") ?? "aac").lowercased() }
+    /// size cap for cached narration audio, in GB
+    static var ttsCacheLimitGB: Double {
+        get { ConfigFile.double("tts.cache_limit_gb") ?? (d.object(forKey: "tts.cacheLimitGB") as? Double) ?? 3 }
+        set { d.set(newValue, forKey: "tts.cacheLimitGB"); ConfigFile.set(["tts.cache_limit_gb": .num(newValue)]) }
+    }
+    /// Azure Speech region, e.g. "eastasia"
+    static var ttsRegion: String {
+        get { ConfigFile.string("tts.azure.region") ?? d.string(forKey: "tts.region") ?? "" }
+        set { d.set(newValue, forKey: "tts.region"); ConfigFile.set(["tts.azure.region": .str(newValue)]) }
+    }
+    /// Volcengine (豆包语音) application id
+    static var ttsAppId: String {
+        get { ConfigFile.string("tts.volcengine.app_id") ?? d.string(forKey: "tts.appId") ?? "" }
+        set { d.set(newValue, forKey: "tts.appId"); ConfigFile.set(["tts.volcengine.app_id": .str(newValue)]) }
     }
     static var ttsSpeed: Float {
         get { ConfigFile.double("tts.speed").map { Float($0) } ?? d.object(forKey: "narrRate2") as? Float ?? 1.5 }

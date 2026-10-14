@@ -95,7 +95,6 @@ final class NarrationExporter: ObservableObject {
         let dir = Paths.docDir(docId).appendingPathComponent("narration", isDirectory: true)
         let fm = FileManager.default
         func scriptURL(_ p: Int) -> URL { dir.appendingPathComponent(n.scriptFileName(p)) }
-        func wavURL(_ p: Int, _ s: Int) -> URL { dir.appendingPathComponent("p\(p)-s\(s)-\(voice)-v2.wav") }
         func cached(_ p: Int) -> [Narrator.Segment]? {
             guard let d = try? Data(contentsOf: scriptURL(p)),
                   let s = try? JSONDecoder().decode([Narrator.Segment].self, from: d) else { return nil }
@@ -119,10 +118,10 @@ final class NarrationExporter: ObservableObject {
         var scripts: [Int: [Narrator.Segment]] = [:]
         for p in 0..<pageCount { scripts[p] = cached(p) ?? [] }
         var missingAudio: [(Int, Int, String)] = []
-        for p in order { for (i, s) in (scripts[p] ?? []).enumerated() where !fm.fileExists(atPath: wavURL(p, i).path) { missingAudio.append((p, i, s.text)) } }
+        for p in order { for (i, s) in (scripts[p] ?? []).enumerated() where !n.hasClip(page: p, seg: i, tag: voice) { missingAudio.append((p, i, s.text)) } }
         log("missingAudio \(missingAudio.count)")
         phase = .audio; total = missingAudio.count; done = 0; detail = missingAudio.isEmpty ? "" : LF("缺 %d 段", missingAudio.count)
-        try await window(missingAudio, width: n.effectiveProvider == .gateway ? 4 : 2) { x in _ = try? await n.audio(page: x.0, seg: x.1, text: x.2) }
+        try await window(missingAudio, width: n.effectiveProvider.isRemote ? 4 : 2) { x in _ = try? await n.audio(page: x.0, seg: x.1, text: x.2) }
         try Task.checkCancellation()
 
         if prepareOnly {
@@ -141,7 +140,7 @@ final class NarrationExporter: ObservableObject {
             let segs = scripts[p] ?? []
             var items: [ExportSegment] = []
             for (i, s) in segs.enumerated() {
-                guard let d = try? Data(contentsOf: wavURL(p, i)), d.count > 1000, let pcm = PCM(wav: Narrator.cleanWAV(d)), pcm.samples.count > 0 else { skipped += 1; continue }
+                guard let d = n.clipData(page: p, seg: i, tag: voice), let pcm = PCM(wav: d), pcm.samples.count > 0 else { skipped += 1; continue }
                 items.append(ExportSegment(text: s.text, focus: Self.focusRect(ses: ses, shownDoc: doc, page: p, quote: s.focus, text: s.text), pcm: pcm))
             }
             guard !items.isEmpty, let pg = doc.safePage(p) else { continue }   // pages without segments: skipped

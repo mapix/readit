@@ -217,9 +217,9 @@ struct NarratorBar: View {
                     }
                     Divider()
                     Picker(L("语音引擎"), selection: Binding(get: { n.provider }, set: { n.provider = $0 })) {
-                        Text(L("系统语音")).tag(TTSProvider.system)
-                        Text(L("网关 TTS")).tag(TTSProvider.gateway)
+                        ForEach(TTSProvider.allCases) { Text(L($0.shortTitle)).tag($0) }
                     }
+                    Button(L("语音设置…")) { NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) }
                 } label: { Label(n.currentVoiceName, systemImage: n.effectiveProvider == .system ? "person.wave.2" : "cloud") }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help(L("音色"))
                 styleMenu
                 recordToggle
