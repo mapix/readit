@@ -19,6 +19,7 @@ struct SettingsView: View {
     @State var keyManaged = Settings.apiKeyManagedByFile
     @State var theme = AppTheme.current
     @ObservedObject var lc = LangCenter.shared
+    @ObservedObject var gpt = ChatGPTAuth.shared
     // narration + speech
     @State var narrStyle = Settings.narrationStyle
     @State var narrExtra = Settings.narrationExtraPrompt
@@ -118,14 +119,15 @@ struct SettingsView: View {
                 Text(L("API Key 保存在系统钥匙串中。也支持本机或局域网的 http:// 地址（如 Ollama、LM Studio），协议选 OpenAI Chat Completions。"))
                     .font(.caption).foregroundStyle(.secondary)
             }
+            chatGPTSection
             Section(L("翻译")) {
-                modelRow(L("模型"), $tModel, from: models, filter: { !$0.contains("tts") && !$0.contains("image") && !$0.contains("embedding") })
+                modelRow(L("模型"), $tModel, from: tStyle == .chatgpt ? gpt.models.map(\.slug) : models, filter: { !$0.contains("tts") && !$0.contains("image") && !$0.contains("embedding") })
                 Picker(L("接口协议"), selection: $tStyle) { ForEach(APIStyle.allCases) { Text($0.name).tag($0) } }
                 Picker(L("翻译目标语言"), selection: $lang) { ForEach(["简体中文", "繁體中文", "English", "日本語", "한국어"], id: \.self) { Text($0) } }
                 Stepper(LF("提前翻译 %d 页", lookahead), value: $lookahead, in: 0...10)
             }
             Section(L("AI 助手 / 解读 / 闪卡")) {
-                modelRow(L("模型"), $cModel, from: models, filter: { !$0.contains("tts") && !$0.contains("image") && !$0.contains("embedding") })
+                modelRow(L("模型"), $cModel, from: cStyle == .chatgpt ? gpt.models.map(\.slug) : models, filter: { !$0.contains("tts") && !$0.contains("image") && !$0.contains("embedding") })
                 Picker(L("接口协议"), selection: $cStyle) { ForEach(APIStyle.allCases) { Text($0.name).tag($0) } }
                 Text(L("AI 解读会把页面截图发给模型，请选择支持图片输入的模型。")).font(.caption).foregroundStyle(.secondary)
             }
@@ -149,6 +151,56 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// Sign in with ChatGPT: use the ChatGPT Plus / Pro plan instead of an API key
+    var chatGPTSection: some View {
+        Section(L("ChatGPT 账号")) {
+            if gpt.phase == .connected, gpt.profile != nil {
+                HStack {
+                    Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(gpt.accountLabel).font(.callout.weight(.semibold))
+                        Text(gpt.connected ? L("已连接 · 可使用 ChatGPT 套餐额度") : L("已登录，但没有授权使用套餐额度")).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button(L("管理用量")) { NSWorkspace.shared.open(ChatGPTAuth.usageURL) }
+                    Menu(L("账号")) {
+                        if !gpt.connected { Button(L("重新授权")) { gpt.signIn() } }
+                        ForEach(gpt.savedProfiles.filter { $0.client_id != gpt.profile?.client_id && $0.refresh_token != nil }, id: \.client_id) { p in
+                            Button(L("切换到 ") + (p.email ?? p.subject)) { gpt.select(clientId: p.client_id) }
+                        }
+                        Button(L("添加其他账号…")) { gpt.signIn(newAccount: true) }
+                        Divider()
+                        Button(L("退出登录"), role: .destructive) { gpt.signOut() }
+                    }.fixedSize()
+                }
+                if gpt.connected {
+                    HStack {
+                        Text(gpt.models.isEmpty ? L("正在获取可用模型…") : LF("可用模型 %d 个", gpt.models.count)).font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Button(L("用 ChatGPT 运行翻译和 AI 助手")) {
+                            tStyle = .chatgpt; cStyle = .chatgpt
+                            let first = gpt.models.first?.slug ?? ""
+                            if !first.isEmpty { tModel = first; cModel = first }
+                            status = L("已切换到 ChatGPT 账号，点「保存」生效")
+                        }
+                    }
+                }
+            } else {
+                HStack(spacing: 12) {
+                    Button { gpt.signIn() } label: {
+                        Label(gpt.phase == .signingIn ? L("等待浏览器授权…") : (gpt.phase == .needsReconnect ? L("重新连接 ChatGPT") : "Continue with ChatGPT"), systemImage: "person.crop.circle.badge.checkmark")
+                            .padding(.horizontal, 6)
+                    }
+                    .buttonStyle(.borderedProminent).tint(.black)
+                    .disabled(gpt.phase == .signingIn)
+                    Text(L("ChatGPT Plus / Pro 用户可直接用自己的套餐额度运行 Readit 的 AI 功能，不需要 API Key。")).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if !gpt.message.isEmpty { Text(gpt.message).font(.caption).foregroundStyle(.secondary) }
+        }
+        .task { if gpt.connected && gpt.models.isEmpty { await gpt.refreshModels() } }
     }
 
     var voiceTab: some View {
