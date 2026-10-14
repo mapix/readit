@@ -691,7 +691,9 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         let style = Settings.narrationStyle, extra = Settings.narrationExtraPrompt
         let task = Task<[Segment], Error> {
             let sys = NarrationStyle.systemPrompt(style: style, extra: extra, title: title, lang: lang)
-            let input = LLMInput(text: "这是第 \(p + 1)/\(total) 页。\n上一页结尾：\(prevText)\n\n本页文字：\n\(text)", images: [image])
+            let zh = lang.contains("中文")
+            let input = LLMInput(text: zh ? "这是第 \(p + 1)/\(total) 页。\n上一页结尾：\(prevText)\n\n本页文字：\n\(text)"
+                                          : "This is page \(p + 1) of \(total).\nEnd of the previous page: \(prevText)\n\nText of this page:\n\(text)", images: [image])
             var out = try await LLMClient.complete(role: "chat", system: sys, input: input, maxTokens: 4000, feature: "narration")
             if let items = ScriptParser.parse(out), !items.isEmpty { return items.map { Segment(text: $0.text, focus: $0.focus) } }
             // unusable reply: ask once more, then salvage whatever is there (never read raw JSON aloud)

@@ -192,7 +192,7 @@ enum TranslateError: LocalizedError {
     case noKey, http(Int, String), bad(String)
     var errorDescription: String? {
         switch self {
-        case .noKey: return "未设置 API Key（设置 → 翻译）"
+        case .noKey: return L("未设置 API Key（设置 → 通用 → 网关）")
         case .http(let c, let m): return "HTTP \(c): \(m)"
         case .bad(let m): return m
         }

@@ -19,6 +19,13 @@ struct BiReaderApp: App {
             CommandGroup(after: .appInfo) {
                 Button(L("检查更新…")) { Task { await UpdateChecker.shared.check(manual: true) } }
             }
+            CommandGroup(replacing: .help) {
+                Button(L("键盘快捷键")) { ShortcutsPanel.show() }.keyboardShortcut("/")
+                Button(L("欢迎与设置向导…")) { OnboardingPanel.show() }
+                Divider()
+                Button(L("Readit 官网")) { if let u = URL(string: "https://readit.novarock.io") { NSWorkspace.shared.open(u) } }
+                Button(L("反馈问题")) { if let u = URL(string: "https://github.com/mapix/readit/issues") { NSWorkspace.shared.open(u) } }
+            }
             CommandGroup(replacing: .newItem) {
                 Button(L("导入 PDF 或文档…")) { importPanel() }.keyboardShortcut("o")
                 Button(L("从网页导入…")) { WebImportPanel.show() }.keyboardShortcut("o", modifiers: [.command, .shift])
@@ -200,6 +207,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { MainActor.assumeIsolated { DocWindows.shared.restore() } }
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { MainActor.assumeIsolated { UpdateChecker.shared.checkOnLaunch() } }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { MainActor.assumeIsolated { OnboardingPanel.showIfNeeded() } }
     }
     func application(_ application: NSApplication, open urls: [URL]) {
         Task { @MainActor in importFiles(urls) }

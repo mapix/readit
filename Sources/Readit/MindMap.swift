@@ -162,7 +162,7 @@ struct MindMapView: View {
         HStack(spacing: 10) {
             GenMapButton()
             Divider().frame(height: 12)
-            Button { store.addChild(to: store.selectedNodeId ?? nb.root.id) } label: { Image(systemName: "plus.rectangle.on.rectangle") }.help(L("添加子主题 (Tab)"))
+            Button { store.addChild(to: store.selectedNodeId ?? nb.root.id) } label: { Image(systemName: "plus.rectangle.on.rectangle") }.help(L("添加子主题 (Tab)")).accessibilityLabel(L("添加子主题 (Tab)"))
             Button { scale = max(0.4, scale / 1.15) } label: { Image(systemName: "minus") }
             Text("\(Int(scale * 100))%").monospacedDigit().font(.system(size: 11)).frame(width: 36).onTapGesture { scale = 1 }
             Button { scale = min(2.5, scale * 1.15) } label: { Image(systemName: "plus") }

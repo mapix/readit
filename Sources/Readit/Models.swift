@@ -510,7 +510,7 @@ final class Store: ObservableObject {
 
     func nodeTitle(_ n: MindNode) -> String {
         if !n.title.isEmpty { return n.title }
-        if let c = card(n.cardId) { return c.text.isEmpty ? (c.isImage ? "［图片摘录］" : "（空）") : c.text }
+        if let c = card(n.cardId) { return c.text.isEmpty ? (c.isImage ? L("［图片摘录］") : L("（空）")) : c.text }
         return "（空）"
     }
 }

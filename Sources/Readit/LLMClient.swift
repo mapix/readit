@@ -169,7 +169,7 @@ enum LLMClient {
         }
         let (path, b) = body(style: style, model: model, system: system, history: history, input: input, maxTokens: maxTokens, stream: false)
         let req = try request(path, b, timeout: 240)
-        var last: Error = TranslateError.bad("请求失败")
+        var last: Error = TranslateError.bad(L("请求失败"))
         for attempt in 0..<3 {
             do {
                 let (data, resp) = try await URLSession.shared.data(for: req)

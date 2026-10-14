@@ -304,9 +304,9 @@ enum VideoComposer {
             AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: rate, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64000,
         ])
         aIn.expectsMediaDataInRealTime = false
-        guard writer.canAdd(vIn), writer.canAdd(aIn) else { throw TranslateError.bad("无法创建视频写入器") }
+        guard writer.canAdd(vIn), writer.canAdd(aIn) else { throw TranslateError.bad(L("无法创建视频写入器")) }
         writer.add(vIn); writer.add(aIn)
-        guard writer.startWriting() else { throw writer.error ?? TranslateError.bad("startWriting 失败") }
+        guard writer.startWriting() else { throw writer.error ?? TranslateError.bad("startWriting failed") }
         writer.startSession(atSourceTime: .zero)
 
         var asbd = AudioStreamBasicDescription(mSampleRate: Double(rate), mFormatID: kAudioFormatLinearPCM,
@@ -314,28 +314,28 @@ enum VideoComposer {
                                                mBytesPerPacket: 2, mFramesPerPacket: 1, mBytesPerFrame: 2, mChannelsPerFrame: 1, mBitsPerChannel: 16, mReserved: 0)
         var afmt: CMAudioFormatDescription?
         CMAudioFormatDescriptionCreate(allocator: nil, asbd: &asbd, layoutSize: 0, layout: nil, magicCookieSize: 0, magicCookie: nil, extensions: nil, formatDescriptionOut: &afmt)
-        guard let audioFmt = afmt else { throw TranslateError.bad("音频格式错误") }
+        guard let audioFmt = afmt else { throw TranslateError.bad(L("音频格式错误")) }
 
         func wait(_ i: AVAssetWriterInput) throws {
             while !i.isReadyForMoreMediaData {
                 if Task.isCancelled { writer.cancelWriting(); throw CancellationError() }
-                if writer.status == .failed { throw writer.error ?? TranslateError.bad("写入失败") }
+                if writer.status == .failed { throw writer.error ?? TranslateError.bad(L("写入失败")) }
                 Thread.sleep(forTimeInterval: 0.005)
             }
         }
         func appendFrame(_ img: CGImage, at t: Double) throws {
             try wait(vIn)
-            guard let pool = adaptor.pixelBufferPool else { throw TranslateError.bad("像素缓冲池不可用") }
+            guard let pool = adaptor.pixelBufferPool else { throw TranslateError.bad(L("像素缓冲池不可用")) }
             var pb: CVPixelBuffer?
             CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pb)
-            guard let buf = pb else { throw TranslateError.bad("像素缓冲创建失败") }
+            guard let buf = pb else { throw TranslateError.bad(L("像素缓冲创建失败")) }
             CVPixelBufferLockBaseAddress(buf, [])
             if let ctx = CGContext(data: CVPixelBufferGetBaseAddress(buf), width: W, height: H, bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buf),
                                    space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) {
                 ctx.draw(img, in: CGRect(x: 0, y: 0, width: W, height: H))
             }
             CVPixelBufferUnlockBaseAddress(buf, [])
-            if !adaptor.append(buf, withPresentationTime: CMTime(seconds: t, preferredTimescale: 600)) { throw writer.error ?? TranslateError.bad("视频帧写入失败") }
+            if !adaptor.append(buf, withPresentationTime: CMTime(seconds: t, preferredTimescale: 600)) { throw writer.error ?? TranslateError.bad(L("视频帧写入失败")) }
         }
         func appendAudio(_ s: ArraySlice<Int16>, at sampleOffset: Int) throws {
             guard !s.isEmpty else { return }
@@ -343,12 +343,12 @@ enum VideoComposer {
             let bytes = s.count * 2
             var block: CMBlockBuffer?
             CMBlockBufferCreateWithMemoryBlock(allocator: nil, memoryBlock: nil, blockLength: bytes, blockAllocator: nil, customBlockSource: nil, offsetToData: 0, dataLength: bytes, flags: 0, blockBufferOut: &block)
-            guard let bb = block else { throw TranslateError.bad("音频缓冲失败") }
+            guard let bb = block else { throw TranslateError.bad(L("音频缓冲失败")) }
             s.withUnsafeBytes { raw in if let b = raw.baseAddress { CMBlockBufferReplaceDataBytes(with: b, blockBuffer: bb, offsetIntoDestination: 0, dataLength: bytes) } }
             var sb: CMSampleBuffer?
             CMAudioSampleBufferCreateReadyWithPacketDescriptions(allocator: nil, dataBuffer: bb, formatDescription: audioFmt, sampleCount: s.count,
                                                                  presentationTimeStamp: CMTime(value: CMTimeValue(sampleOffset), timescale: CMTimeScale(rate)), packetDescriptions: nil, sampleBufferOut: &sb)
-            guard let buf = sb, aIn.append(buf) else { throw writer.error ?? TranslateError.bad("音频写入失败") }
+            guard let buf = sb, aIn.append(buf) else { throw writer.error ?? TranslateError.bad(L("音频写入失败")) }
         }
 
         var cursor = 0          // audio samples written so far (global timeline)
@@ -399,7 +399,7 @@ enum VideoComposer {
         let sem = DispatchSemaphore(value: 0)
         writer.finishWriting { sem.signal() }
         sem.wait()
-        if writer.status != .completed { throw writer.error ?? TranslateError.bad("视频写入未完成") }
+        if writer.status != .completed { throw writer.error ?? TranslateError.bad(L("视频写入未完成")) }
     }
 
     /// short subtitle lines (≈ one screen line each), split at sentence / clause punctuation

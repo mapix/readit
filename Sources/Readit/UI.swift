@@ -623,7 +623,7 @@ struct ReaderStatus: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Button { rc.goToPage(max(0, rc.currentPageIndex - 1)) } label: { Image(systemName: "chevron.up") }.buttonStyle(.plain).help(L("上一页"))
+            Button { rc.goToPage(max(0, rc.currentPageIndex - 1)) } label: { Image(systemName: "chevron.up") }.buttonStyle(.plain).help(L("上一页")).accessibilityLabel(L("上一页"))
             if editingPage {
                 TextField("", text: $pageDraft).textFieldStyle(.roundedBorder).frame(width: 46).focused($pageFocus)
                     .onSubmit { if let n = Int(pageDraft) { rc.goToPage(min(session.pageCount, max(1, n)) - 1) }; editingPage = false }
@@ -634,7 +634,7 @@ struct ReaderStatus: View {
                     .onTapGesture(count: 2) { editingPage = true }
                     .help(L("拖动或点击跳转 · 双击输入页码"))
             }
-            Button { rc.goToPage(min(session.pageCount - 1, rc.currentPageIndex + 1)) } label: { Image(systemName: "chevron.down") }.buttonStyle(.plain).help(L("下一页"))
+            Button { rc.goToPage(min(session.pageCount - 1, rc.currentPageIndex + 1)) } label: { Image(systemName: "chevron.down") }.buttonStyle(.plain).help(L("下一页")).accessibilityLabel(L("下一页"))
             if rc.variant == .bilingual {
                 if session.failedPages[rc.currentPageIndex] != nil {
                     Button(L("重试本页")) { Task { await session.retranslate(rc.currentPageIndex) } }.buttonStyle(.link)
@@ -648,9 +648,9 @@ struct ReaderStatus: View {
                 Text(rc.readingMode ? L("阅读模式：选中文字可复制，不会弹出标注") : (rc.areaMode ? L("框选模式：在页面上拖拽选取区域（Esc 退出）") : (rc.autoExcerpt ? L("自动摘录：选中文字即生成卡片") : L("选中文字 → 点颜色摘录 · 点击高亮打开卡片"))))
             }
             Divider().frame(height: 12)
-            Button { rc.zoom(1 / 1.15) } label: { Image(systemName: "minus") }.buttonStyle(.plain).help(L("缩小 ⌘-"))
+            Button { rc.zoom(1 / 1.15) } label: { Image(systemName: "minus") }.buttonStyle(.plain).help(L("缩小 ⌘-")).accessibilityLabel(L("缩小 ⌘-"))
             Text("\(Int(rc.scalePercent))%").monospacedDigit().frame(width: 38).onTapGesture { rc.fitWidth() }.help(L("点击适合宽度"))
-            Button { rc.zoom(1.15) } label: { Image(systemName: "plus") }.buttonStyle(.plain).help(L("放大 ⌘="))
+            Button { rc.zoom(1.15) } label: { Image(systemName: "plus") }.buttonStyle(.plain).help(L("放大 ⌘=")).accessibilityLabel(L("放大 ⌘="))
         }
         .font(.system(size: 11))
         .foregroundStyle(MN.statusText)

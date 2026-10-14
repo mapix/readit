@@ -73,7 +73,7 @@ final class FlashStore: ObservableObject {
                 if let r = t.range(of: "\\{[\\s\\S]*\\}", options: .regularExpression) { t = String(t[r]) }
                 struct R: Decodable { var title: String?; var cards: [C] }
                 struct C: Decodable { var kind: String?; var question: String; var answer: String; var explanation: String?; var page: Int? }
-                guard let d = t.data(using: .utf8), let r = try? JSONDecoder().decode(R.self, from: d), !r.cards.isEmpty else { throw TranslateError.bad("闪卡生成结果无法解析，请重试") }
+                guard let d = t.data(using: .utf8), let r = try? JSONDecoder().decode(R.self, from: d), !r.cards.isEmpty else { throw TranslateError.bad(L("闪卡生成结果无法解析，请重试")) }
                 let deck = FlashDeck(title: r.title ?? "\(title) · \(scope)", scope: scope,
                                      cards: r.cards.map { Flashcard(kind: $0.kind ?? "理解", question: $0.question, answer: $0.answer, explanation: $0.explanation, page: $0.page) })
                 var all = decks(docId); all.insert(deck, at: 0); save(docId, all)
@@ -206,7 +206,7 @@ struct StudySession: View {
                 Text(deck.title).font(.system(size: 13, weight: .semibold))
                 Spacer()
                 Toggle(L("只看未掌握"), isOn: $onlyReview).toggleStyle(.switch).controlSize(.small).onChange(of: onlyReview) { _, _ in reset() }
-                Button { order.shuffle(); pos = 0; flipped = false } label: { Image(systemName: "shuffle") }.buttonStyle(.borderless).help(L("打乱"))
+                Button { order.shuffle(); pos = 0; flipped = false } label: { Image(systemName: "shuffle") }.buttonStyle(.borderless).help(L("打乱")).accessibilityLabel(L("打乱"))
             }
             if cards.isEmpty {
                 Spacer()
@@ -354,7 +354,7 @@ final class MapGenerator: ObservableObject {
                 if let d = t.data(using: .utf8) {
                     do { root = try JSONDecoder().decode(GenNode.self, from: d) } catch { print("MAPERR", error) }
                 }
-                guard let root else { throw TranslateError.bad("脑图结果无法解析，请重试") }
+                guard let root else { throw TranslateError.bad(L("脑图结果无法解析，请重试")) }
                 self.insert(root, docId: docId, session: s)
             } catch { self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription }
             self.running = nil

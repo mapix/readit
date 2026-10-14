@@ -17,14 +17,14 @@ final class VoiceInput {
         latest = ""
         SFSpeechRecognizer.requestAuthorization { status in
             Task { @MainActor in
-                guard status == .authorized else { onPartial("（请在系统设置 → 隐私与安全 → 语音识别 中允许 BiReader）"); return }
+                guard status == .authorized else { onPartial(L("（请在系统设置 → 隐私与安全 → 语音识别 中允许 Readit）")); return }
                 self.begin(onPartial)
             }
         }
     }
 
     private func begin(_ onPartial: @escaping (String) -> Void) {
-        guard let rec = recognizer, rec.isAvailable else { onPartial("（语音识别不可用）"); return }
+        guard let rec = recognizer, rec.isAvailable else { onPartial(L("（语音识别不可用）")); return }
         let req = SFSpeechAudioBufferRecognitionRequest()
         req.shouldReportPartialResults = true
         if rec.supportsOnDeviceRecognition { req.requiresOnDeviceRecognition = true }
@@ -35,7 +35,7 @@ final class VoiceInput {
         input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 1024, format: fmt) { buf, _ in req.append(buf) }
         engine.prepare()
-        do { try engine.start() } catch { onPartial("（无法使用麦克风：\(error.localizedDescription)）"); return }
+        do { try engine.start() } catch { onPartial(LF("（无法使用麦克风：%@）", error.localizedDescription)); return }
         task = rec.recognitionTask(with: req) { [weak self] result, err in
             Task { @MainActor in
                 guard let self else { return }

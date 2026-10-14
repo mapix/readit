@@ -93,7 +93,7 @@ struct NarratorBar: View {
             Button { n.next() } label: { Image(systemName: "forward.fill") }.buttonStyle(.plain)
             MicButton().scaleEffect(0.8)
             DockPicker()
-            Button { withAnimation(.spring(response: 0.3)) { mini = false } } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }.buttonStyle(.plain).help(L("展开"))
+            Button { withAnimation(.spring(response: 0.3)) { mini = false } } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }.buttonStyle(.plain).help(L("展开")).accessibilityLabel(L("展开"))
         }
         .font(.system(size: 12))
         .padding(.horizontal, 12).padding(.vertical, 6)
@@ -177,19 +177,19 @@ struct NarratorBar: View {
                 FromHereButton(rc: Narrator.reader, compact: false)
                 Spacer(minLength: 8)
                 HStack(spacing: 16) {
-                    Button { n.previous() } label: { Image(systemName: "backward.fill") }.help(L("上一段"))
+                    Button { n.previous() } label: { Image(systemName: "backward.fill") }.help(L("上一段")).accessibilityLabel(L("上一段"))
                     Button { n.togglePause() } label: {
                         Image(systemName: n.state == .playing ? "pause.circle.fill" : "play.circle.fill").font(.system(size: 30))
                             .foregroundStyle(LinearGradient(colors: [.purple, .blue], startPoint: .top, endPoint: .bottom))
                     }
                     .disabled(n.state == .preparing).help(L("播放 / 暂停（空格）"))
-                    Button { n.next() } label: { Image(systemName: "forward.fill") }.help(L("下一段"))
+                    Button { n.next() } label: { Image(systemName: "forward.fill") }.help(L("下一段")).accessibilityLabel(L("下一段"))
                     MicButton()
                 }
                 .buttonStyle(.plain).font(.system(size: 14))
                 .fixedSize()
                 Spacer(minLength: 8)
-                Button { n.stop(); Narrator.reader.clearNarrationHighlight() } label: { Image(systemName: "xmark.circle.fill").font(.system(size: 15)).foregroundStyle(.tertiary) }.buttonStyle(.plain).help(L("退出 AI 解读"))
+                Button { n.stop(); Narrator.reader.clearNarrationHighlight() } label: { Image(systemName: "xmark.circle.fill").font(.system(size: 15)).foregroundStyle(.tertiary) }.buttonStyle(.plain).help(L("退出 AI 解读")).accessibilityLabel(L("退出 AI 解读"))
             }
             .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 6)
             // row 2: resume info + secondary controls
@@ -240,9 +240,9 @@ struct NarratorBar: View {
                 } label: { Label("MP4", systemImage: "film") }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help(L("导出 MP4"))
                 Divider().frame(height: 14)
                 DockPicker()
-                Button { showScript.toggle() } label: { Image(systemName: showScript ? "text.bubble.fill" : "text.bubble") }.buttonStyle(.plain).help(L("显示讲稿"))
-                Button { withAnimation(.spring(response: 0.3)) { mini = true } } label: { Image(systemName: "arrow.down.right.and.arrow.up.left") }.buttonStyle(.plain).help(L("最小化"))
-                Button { MiniWidget.shared.collapse() } label: { Image(systemName: "pip.enter") }.buttonStyle(.plain).help(L("收到桌面小组件（隐藏窗口）"))
+                Button { showScript.toggle() } label: { Image(systemName: showScript ? "text.bubble.fill" : "text.bubble") }.buttonStyle(.plain).help(L("显示讲稿")).accessibilityLabel(L("显示讲稿"))
+                Button { withAnimation(.spring(response: 0.3)) { mini = true } } label: { Image(systemName: "arrow.down.right.and.arrow.up.left") }.buttonStyle(.plain).help(L("最小化")).accessibilityLabel(L("最小化"))
+                Button { MiniWidget.shared.collapse() } label: { Image(systemName: "pip.enter") }.buttonStyle(.plain).help(L("收到桌面小组件（隐藏窗口）")).accessibilityLabel(L("收到桌面小组件（隐藏窗口）"))
             }
             .font(.system(size: 11.5))
             .foregroundStyle(Color(white: 0.3))

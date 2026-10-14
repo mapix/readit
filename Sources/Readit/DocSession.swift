@@ -155,7 +155,7 @@ final class DocSession: ObservableObject {
     private func updateProgress() {
         let done = translatedPages.count
         doneCount = done
-        progressText = done >= pageCount ? "全文已翻译" : "已翻译 \(done)/\(pageCount) 页"
+        progressText = done >= pageCount ? L("全文已翻译") : LF("已翻译 %d/%d 页", done, pageCount)
     }
 
     private func translatePage(_ i: Int) async {
