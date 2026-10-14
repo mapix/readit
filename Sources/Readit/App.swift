@@ -221,6 +221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ n: Notification) {
         MainActor.assumeIsolated { DocWindows.shared.terminating = true; Store.shared.saveNow() }
         TranslationCache.shared.flushSync()
+        UsageStore.shared.flush()
         if let d = try? JSONEncoder().encode(Store.shared.lib) { try? d.write(to: Paths.libraryFile, options: .atomic) }
     }
 }

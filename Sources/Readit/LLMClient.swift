@@ -232,7 +232,8 @@ enum LLMClient {
                 do {
                     let style = ModelConfig.style(role), model = ModelConfig.model(role, default: Settings.model)
                     let (path, b) = body(style: style, model: model, system: system, history: history, input: input, maxTokens: maxTokens, stream: true)
-                    let req = style == .chatgpt ? try await chatGPTRequest(path, b, timeout: 300) : try request(path, b, timeout: 300)
+                    let req: URLRequest
+                    if style == .chatgpt { req = try await chatGPTRequest(path, b, timeout: 300) } else { req = try request(path, b, timeout: 300) }
                     let (bytes, resp) = try await URLSession.shared.bytes(for: req)
                     let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
                     if code >= 400 {

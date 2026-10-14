@@ -14,7 +14,8 @@ extension RemoteTTS {
     static func isConfigError(_ e: Error) -> Bool {
         guard let t = e as? TranslateError else { return false }
         switch t {
-        case .noKey, .bad: return true
+        case .noKey: return true
+        case .bad(let m): return !m.hasPrefix("TTS:")          // local validation (URL, voice, App ID); bad audio is retried
         case .http(let c, _): return (400..<500).contains(c) && c != 429
         }
     }

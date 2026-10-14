@@ -106,7 +106,7 @@ final class WebImporter: NSObject, ObservableObject, WKNavigationDelegate {
         return window.__readit.build({ title: title, byline: author, site: "", date: "", url: source, lang: "", content: content });
         """
         let r = try await wv.callAsyncJavaScript(js, arguments: ["isMarkdown": d.markdown, "body": d.body, "title": d.title, "author": d.author, "source": d.source],
-                                                 in: nil, in: .defaultClient)
+                                                 in: nil, contentWorld: .defaultClient)
         guard let html = r as? String, !html.isEmpty else { throw ImportError.message(L("页面脚本执行失败")) }
         return html
     }
@@ -238,7 +238,7 @@ final class WebImporter: NSObject, ObservableObject, WKNavigationDelegate {
         for world in [WKContentWorld.defaultClient, WKContentWorld.page] {
             let name = world == .page ? "page" : "client"
             do {
-                let r = try await wv.callAsyncJavaScript(body, arguments: [:], in: nil, in: world)
+                let r = try await wv.callAsyncJavaScript(body, arguments: [:], in: nil, contentWorld: world)
                 guard let json = r as? String else { problems.append("\(name): result \(String(describing: type(of: r)))"); continue }
                 if let info = Extracted(json: json) {
                     WebImporter.log("extract[\(name)] ok=\(info.ok) reason=\(info.reason ?? "") title=\(info.title) chars=\(info.textLength ?? 0) images=\(info.imageURLs.count) url=\(info.url)")
@@ -375,10 +375,10 @@ final class WebImporter: NSObject, ObservableObject, WKNavigationDelegate {
         while y < h && steps < 80 {
             try Task.checkCancellation()
             y += 900; steps += 1
-            _ = try? await wv.evaluateJavaScript("window.scrollTo(0, \(Int(y)))")
+            _ = try? await wv.evaluateJavaScript("window.scrollTo(0, \(Int(y))); 0")
             try await Task.sleep(nanoseconds: 90_000_000)
         }
-        _ = try? await wv.evaluateJavaScript("window.scrollTo(0, 0)")
+        _ = try? await wv.evaluateJavaScript("window.scrollTo(0, 0); 0")
         try await Task.sleep(nanoseconds: 600_000_000)
     }
 

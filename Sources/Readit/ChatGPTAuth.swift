@@ -303,8 +303,7 @@ final class ChatGPTAuth: ObservableObject {
     }
 
     nonisolated static func formEncode(_ s: String) -> String {
-        var allowed = CharacterSet.alphanumerics
-        allowed.insert(charactersIn: "-._~")
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
         return s.addingPercentEncoding(withAllowedCharacters: allowed) ?? s
     }
     nonisolated static func base64url(_ d: Data) -> String {
@@ -394,7 +393,8 @@ enum JWTVerifier {
 final class LoopbackServer: @unchecked Sendable {
     private let listener: NWListener
     private let q = DispatchQueue(label: "readit.oauth-callback")
-    private(set) var port: UInt16 = 0
+    var port: UInt16 = 0
+    var started = false
     private var waiter: CheckedContinuation<[String: String], Error>?
     private var result: [String: String]?
 
@@ -407,17 +407,19 @@ final class LoopbackServer: @unchecked Sendable {
     private static func open(port: UInt16) async throws -> LoopbackServer {
         let params = NWParameters.tcp
         params.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port) ?? .any)
-        params.allowLocalEndpointReuse = true
+        params.allowLocalEndpointReuse = false
         let l = try NWListener(using: params)
         let s = LoopbackServer(l)
         try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
-            var done = false
             l.stateUpdateHandler = { st in
+                // runs on s.q
                 switch st {
                 case .ready:
-                    if !done { done = true; s.port = l.port?.rawValue ?? port; c.resume() }
-                case .failed(let e):
-                    if !done { done = true; c.resume(throwing: e) }
+                    if !s.started { s.started = true; s.port = l.port?.rawValue ?? port; c.resume() }
+                case .failed(let e), .waiting(let e):
+                    if !s.started { s.started = true; l.cancel(); c.resume(throwing: e) }
+                case .cancelled:
+                    if !s.started { s.started = true; c.resume(throwing: TranslateError.bad("listener cancelled")) }
                 default: break
                 }
             }
