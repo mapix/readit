@@ -80,7 +80,8 @@ final class WebImporter: NSObject, ObservableObject, WKNavigationDelegate {
     func importFromBrowser() {
         guard let wv = web, !running else { return }
         task = Task {
-            do { try await self.process(from: wv, url: wv.url ?? URL(string: self.lastURL)!) }
+            guard let u = wv.url ?? URL(string: self.lastURL) else { self.fail(L("网址无效")); return }
+            do { try await self.process(from: wv, url: u) }
             catch { self.fail(error.localizedDescription) }
         }
     }

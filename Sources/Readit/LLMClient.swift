@@ -72,7 +72,8 @@ enum LLMClient {
         let key = Settings.apiKey
         guard !key.isEmpty else { throw TranslateError.noKey }
         let base = Settings.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        var req = URLRequest(url: URL(string: base + path)!)
+        guard let url = URL(string: base + path) else { throw TranslateError.bad(L("网关地址无效：") + base) }
+        var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.timeoutInterval = timeout
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")

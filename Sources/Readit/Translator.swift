@@ -10,12 +10,20 @@ enum Settings {
     static var apiKey: String {
         get {
             if ConfigFile.keySource != .none, let k = ConfigFile.apiKey() { return k }
-            return nonEmpty(d.string(forKey: "apiKey")) ?? nonEmpty(env["ANTHROPIC_AUTH_TOKEN"]) ?? nonEmpty(env["ANTHROPIC_API_KEY"]) ?? ""
+            // a key in preferences was written by an older build or `defaults write` (we delete it after
+            // moving it), so it is newer than the Keychain copy: move it into the Keychain
+            if let k = nonEmpty(d.string(forKey: "apiKey")) {
+                if Keychain.store(k, "gateway") { d.removeObject(forKey: "apiKey") }
+                return k
+            }
+            if let k = Keychain.cached("gateway") { return k }
+            return nonEmpty(env["ANTHROPIC_AUTH_TOKEN"]) ?? nonEmpty(env["ANTHROPIC_API_KEY"]) ?? nonEmpty(env["OPENAI_API_KEY"]) ?? ""
         }
         set {
-            d.set(newValue, forKey: "apiKey")
             // only touch the file if it already stores the key in plain text
-            if ConfigFile.keySource == .file { ConfigFile.set(["gateway.api_key": .str(newValue)]) }
+            if ConfigFile.keySource == .file { ConfigFile.set(["gateway.api_key": .str(newValue)]); return }
+            if Keychain.store(newValue, "gateway") { d.removeObject(forKey: "apiKey") }
+            else { d.set(newValue, forKey: "apiKey") }          // Keychain unavailable: keep working
         }
     }
     /// the key is provided by the config file (env var / command) and cannot be edited in the Settings window

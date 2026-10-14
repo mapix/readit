@@ -16,6 +16,9 @@ struct BiReaderApp: App {
         .defaultSize(width: 1100, height: 720)
         .windowStyle(.hiddenTitleBar)
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button(L("检查更新…")) { Task { await UpdateChecker.shared.check(manual: true) } }
+            }
             CommandGroup(replacing: .newItem) {
                 Button(L("导入 PDF…")) { importPanel() }.keyboardShortcut("o")
                 Button(L("从网页导入…")) { WebImportPanel.show() }.keyboardShortcut("o", modifiers: [.command, .shift])
@@ -188,6 +191,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSApp.activate(ignoringOtherApps: true)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { MainActor.assumeIsolated { DocWindows.shared.restore() } }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { MainActor.assumeIsolated { UpdateChecker.shared.checkOnLaunch() } }
     }
     func application(_ application: NSApplication, open urls: [URL]) {
         Task { @MainActor in for u in urls where u.pathExtension.lowercased() == "pdf" { _ = Store.shared.importPDF(u, open: true) } }
