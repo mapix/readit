@@ -142,6 +142,7 @@ struct StudyToolbar: View {
                 Divider()
                 Button(L("重命名当前文档…")) { if let id = rc.docId { renameDocPrompt(id) } }
                 Button(L("添加文档到笔记本…")) { importPanel() }
+                Button(L("从网页导入…")) { WebImportPanel.show(notebook: store.currentNotebookId) }
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "doc.text")
@@ -304,6 +305,9 @@ struct LibraryView: View {
                 Spacer(minLength: 8)
                 Button { importInto(openNotebook) } label: { Label(L("导入 PDF"), systemImage: "plus") }
                     .buttonStyle(.plain).foregroundStyle(MN.barText).fixedSize()
+                Button { WebImportPanel.show(notebook: openNotebook) } label: { Label(L("从网页导入"), systemImage: "globe") }
+                    .buttonStyle(.plain).foregroundStyle(MN.barText).fixedSize()
+                    .help(L("粘贴文章链接，提取正文生成 PDF（⌘⇧O）"))
                 if tab == 0 && openNotebook == nil {
                     Button { store.newNotebook() } label: { Label(L("新建笔记本"), systemImage: "book.closed") }
                         .buttonStyle(.plain).foregroundStyle(MN.barText).fixedSize()
@@ -515,7 +519,10 @@ struct ReaderPane: View {
                 VStack(spacing: 14) {
                     Image(systemName: "doc.badge.plus").font(.system(size: 46)).foregroundStyle(.secondary)
                     Text(L("此笔记本还没有文档")).font(.title3)
-                    Button(L("添加 PDF…")) { importPanel() }.buttonStyle(.borderedProminent)
+                    HStack(spacing: 10) {
+                        Button(L("添加 PDF…")) { importPanel() }.buttonStyle(.borderedProminent)
+                        Button(L("从网页导入…")) { WebImportPanel.show(notebook: store.currentNotebookId) }
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(MN.paper)
