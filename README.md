@@ -5,7 +5,7 @@ A native macOS app (SwiftUI + PDFKit) for reading PDFs bilingually with the orig
 - Website & download: https://readit.novarock.io
 - Source: https://github.com/mapix/readit (MIT licensed)
 - Build: `./build_app.sh` (produces `build/Readit.app`, installs it into `/Applications`, and packages `dist/Readit-<version>.zip`)
-- On first launch, enter your model gateway URL and API key in **Settings**, or use a config file — see [Configuration](#configuration). Anthropic / OpenAI Chat Completions / OpenAI Responses are supported.
+- On first launch a short guide asks where AI comes from: **your ChatGPT account** (Sign in with ChatGPT), **your own gateway** (Anthropic / OpenAI Chat Completions / OpenAI Responses), a **local model** (Ollama, LM Studio), or none for now. Everything can be changed later in **Settings** or a config file — see [Configuration](#configuration).
 
 ## Interface & Windows
 
@@ -33,12 +33,17 @@ A native macOS app (SwiftUI + PDFKit) for reading PDFs bilingually with the orig
 ## Models
 
 - **Translation & AI features**: choose separate models for *Translation* and for *AI Assistant / Narration / Flashcards* in Settings.
-  - The model list is fetched from the gateway's `/v1/models`.
-  - Wire protocol: Anthropic Messages, OpenAI Chat Completions, or OpenAI Responses.
-- **Speech (TTS)**: two engines.
-  - **System voice** (default): macOS `AVSpeechSynthesizer` — free, offline, no TTS model needed. Download nicer voices in *System Settings → Accessibility → Spoken Content → System Voice → Manage Voices* (Premium / Enhanced).
-  - **Gateway TTS**: any model your gateway serves on the OpenAI-compatible `POST /v1/audio/speech` (e.g. `gemini-3.8-flash-tts`, `gpt-4o-mini-tts`). If the gateway rejects the request (missing model, 401/404…), narration switches to the system voice automatically.
-  - Settings has a **Preview** button to hear the selected engine and voice.
+  - Protocols: Anthropic Messages, OpenAI Chat Completions, OpenAI Responses, and **ChatGPT account**.
+  - The model list comes from the gateway's `/v1/models` (or your ChatGPT account's models).
+- **Sign in with ChatGPT**: ChatGPT Plus / Pro users can run Readit's AI on their plan, no API key. *Settings → General → ChatGPT Account → Continue with ChatGPT* opens the browser (OAuth + PKCE with a loopback callback); the ID token is verified against OpenAI's keys, tokens refresh automatically and are stored in `~/.config/readit/chatgpt-auth.json` (0600). Usage limits and the *Manage Usage* link follow OpenAI's guidelines.
+- **Local models**: `http://` servers on your Mac or LAN work (Ollama `http://localhost:11434`, LM Studio `http://localhost:1234`) with the OpenAI Chat Completions protocol.
+- **Keys** entered in Settings are kept in the macOS Keychain.
+- **Speech (TTS)** — pick an engine in *Settings → Voice & Narration*:
+  - **System voice** (default): macOS `AVSpeechSynthesizer` — free, offline, no model. Nicer voices: *System Settings → Accessibility → Spoken Content → System Voice → Manage Voices* (Premium / Enhanced).
+  - **Main gateway**: OpenAI-compatible `POST /v1/audio/speech` with the gateway's URL and key.
+  - **Own services, each with its own base URL and key**: OpenAI (or any `/v1/audio/speech`-compatible server), Google Gemini, **Qwen-TTS** (Alibaba Cloud Model Studio / DashScope), Microsoft Azure Speech, ElevenLabs, MiniMax, Volcengine (豆包语音).
+  - Requests that fail with a configuration error (no model, bad key, 401/404…) switch narration to the system voice; **Preview** tests the chosen voice.
+  - Clips are cached as AAC (about 1/8 of WAV) under a size limit; the least recently narrated documents are dropped first.
 
 ## AI Features
 
@@ -57,10 +62,23 @@ A native macOS app (SwiftUI + PDFKit) for reading PDFs bilingually with the orig
   - **Buffering**: scripts for the next 3 pages are written in parallel, and about 5 minutes of upcoming audio (at the current speed, 12–60 segments) is synthesized ahead with several requests in flight, so playback rarely waits. Tune with `tts.buffer_seconds` and `tts.script_pages_ahead`.
   - **Follow along**: the paragraph or figure being narrated gets a soft "breathing" outline and is smoothly scrolled to the center.
   - **Styles**: pick *Podcast* (default), *Storyteller* (评书), *Technical Deep Dive*, *Popular Science* or *Quick Summary* in Settings or from the player, and add your own extra instructions. Scripts and audio are cached per style, so switching back reuses them.
-  - **Prepare All**: one click (tray button in the player) writes the scripts and synthesizes the audio for the whole document in the background, starting at the current page, so playback never waits. Already-generated parts are skipped; it can be cancelled anytime.
+  - **Prepare All**: one click (tray button in the player) writes the scripts and synthesizes the audio for the whole document in the background, starting at the current page, so playback never waits. Before it starts you see an estimate of model calls, tokens, speech characters and — with your prices set — cost. Already-generated parts are skipped; it can be cancelled anytime.
   - **Start from here**: scroll or jump to any page while narrating and a **Narrate from page N** button appears in the player; one click continues from the top of that page.
   - **Controls**: adjustable speed and voice; hold the mic button (or ⌃Space) to interrupt with a spoken question at any time.
   - **Time left**: the player, the minimized pill, and the desktop widget show an estimate of the remaining listening time for the whole document at the current speed. It is based on the scripts already written plus the speaking pace learned from synthesized audio, and gets more accurate as you listen.
+
+## Reading Tools
+
+- **Find** (⌘F, ⌘G / ⇧⌘G): full-text search in the original or bilingual view — both languages are searchable; all matches are highlighted.
+- **Contents**: the side pane's *Contents* tab shows the PDF's own table of contents and the chapter you are in.
+- **Undo / Redo** (⌘Z / ⇧⌘Z) for deleting cards, comments, topics and notebooks and for moving topics.
+- **Keyboard shortcuts**: Help → Keyboard Shortcuts (⌘/).
+
+## Import & Export
+
+- **Files**: ⌘O imports PDFs as they are and converts **EPUB** (chapters in order, with images), **Markdown**, **Word / RTF / ODT**, saved **HTML** pages and **TXT** into clean PDFs with the same print style as web articles. Drag files onto the library or use *Open With* in Finder.
+- **Export**: File → *Export Excerpts as Markdown* (Obsidian / Logseq friendly: quotes, translations, comments, links, page numbers, colour tags) and *Export to Anki* (flashcards and excerpts as an Anki text file with tags).
+- Bilingual PDF and mind-map Markdown export as before.
 
 ## Import from the Web
 
@@ -172,6 +190,14 @@ defaults write local.bireader.app baseURL -string "https://gateway.example.com"
 defaults write local.bireader.app model.tts -string "gemini-3.8-flash-tts"
 ```
 
+## Usage & Storage
+
+*Settings → Storage & Usage* shows model calls and tokens per feature for today / 7 / 30 days (reported by the API, or estimated when a gateway doesn't report them), cost estimates at your own unit prices, and disk usage — narration audio, bilingual pages, PDFs, notes — with buttons to clear caches or compress WAV clips from older versions.
+
+## Updates
+
+Readit checks the website for a new release at most once a day (Readit → Check for Updates…; turn off with `[app] check_updates = false`).
+
 ## Data Location
 
 Data lives in `~/Library/Application Support/BiReader/`, including the library, mind maps, cards, translation cache, and bilingual page cache.
@@ -181,8 +207,18 @@ Data lives in `~/Library/Application Support/BiReader/`, including the library, 
 Requires macOS 14+ and Swift 5.9+.
 
 ```bash
-./build_app.sh   # builds and installs /Applications/Readit.app
+./build_app.sh                 # universal (Apple Silicon + Intel) when Xcode is installed, else native; installs /Applications/Readit.app
+UNIVERSAL=0 ./build_app.sh     # native only
+swift test                     # unit tests (config, TTS requests/parsing, script parser, EPUB, …)
 ```
+
+For distribution, sign with a Developer ID and notarize (needs an Apple Developer account):
+
+```bash
+DEVELOPER_ID="Developer ID Application: Your Name (TEAMID)" NOTARY_PROFILE=readit-notary ./build_app.sh
+```
+
+GitHub Actions (`.github/workflows/ci.yml`) builds, runs the tests and uploads the app zip for every push.
 
 ## License
 

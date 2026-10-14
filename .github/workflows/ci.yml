@@ -1,0 +1,22 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (release)
+        run: swift build -c release
+      - name: Unit tests
+        run: swift test
+      - name: Package app (no install)
+        run: UNIVERSAL=1 INSTALL=0 ./build_app.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Readit-app
+          path: dist/*.zip
+          retention-days: 7

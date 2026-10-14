@@ -26,7 +26,7 @@ base_url = "https://gateway.example.com"
 
 [translate]
 model = "claude-haiku-5-5"
-protocol = "anthropic"          # anthropic | chat | responses
+protocol = "anthropic"          # anthropic | chat | responses | chatgpt (Sign in with ChatGPT, see Settings)
 target_language = "简体中文"     # 简体中文 | 繁體中文 | English | 日本語 | 한국어
 lookahead_pages = 2             # pages translated ahead of the one you are reading
 
@@ -47,13 +47,17 @@ style = "podcast"
 extra_prompt = ""               # e.g. "多结合代码讲解；每页结尾用一句话总结"
 
 [tts]
-# provider = "system"  → macOS voices (AVSpeechSynthesizer): free, offline, no TTS model required. Default.
-# provider = "gateway" → OpenAI-compatible POST {base_url}/v1/audio/speech on your gateway.
-#                        If the gateway rejects the request (no such model, 401/404…), Readit falls back to "system".
+# provider = "system"     → macOS voices (AVSpeechSynthesizer): free, offline, no model. Default.
+# provider = "gateway"    → OpenAI-compatible POST {gateway base_url}/v1/audio/speech with the gateway key.
+# provider = "openai" | "gemini" | "qwen" | "azure" | "elevenlabs" | "minimax" | "volcengine"
+#                         → a speech service with its own URL and key, configured in [tts.<provider>] below.
+# If a remote service rejects the request (no such model, bad key, 401/404…), narration switches to "system".
 provider = "system"
 speed = 1.5                     # playback speed, 0.75 – 3.0
 buffer_seconds = 300            # listening time kept synthesized ahead (at the current speed)
 script_pages_ahead = 3          # pages whose narration scripts are written ahead, in parallel
+cache_limit_gb = 3.0            # narration audio cache (AAC); least recently narrated documents are removed first
+# cache_format = "aac"          # or "wav"
 
 # --- provider = "system" ---
 # Voice identifier; leave empty to pick the best installed voice for translate.target_language.
@@ -62,5 +66,53 @@ script_pages_ahead = 3          # pages whose narration scripts are written ahea
 system_voice = ""               # e.g. "com.apple.voice.premium.zh-CN.Lilian"
 
 # --- provider = "gateway" ---
-model = "gemini-3.8-flash-tts"  # any model your gateway serves on /v1/audio/speech, e.g. gpt-4o-mini-tts
-voice = "Zephyr"                # model-specific: Zephyr Leda Aoede Kore Puck Charon Fenrir Orus (Gemini) · alloy nova shimmer … (OpenAI)
+model = "gemini-3.8-flash-tts"  # any model your gateway serves on /v1/audio/speech
+voice = "Zephyr"
+
+# --- the other providers: each has its own section (only the active one is used) ---
+# Keys: api_key_command (Keychain, recommended) | api_key_env | api_key — or enter the key in Settings (stored in the Keychain).
+
+[tts.openai]                    # OpenAI, or any /v1/audio/speech-compatible server (SiliconFlow, local Kokoro…)
+base_url = "https://api.openai.com"
+model = "gpt-4o-mini-tts"
+voice = "marin"                 # marin cedar alloy ash ballad coral echo fable nova onyx sage shimmer verse
+# api_key_env = "OPENAI_API_KEY"
+
+[tts.gemini]                    # Gemini API (Interactions endpoint), key from Google AI Studio
+model = "gemini-3.8-flash-tts"
+voice = "Kore"
+
+[tts.qwen]                      # Alibaba Cloud Model Studio (DashScope)
+base_url = "https://dashscope.aliyuncs.com"   # Singapore region: https://dashscope-intl.aliyuncs.com
+model = "qwen3-tts-flash"
+voice = "Cherry"                # Cherry Serena Ethan Chelsie Momo Vivian Moon Kai Jennifer Ryan Dylan(北京话) Sunny(四川话) Rocky(粤语)…
+# api_key_command = "security find-generic-password -s readit-dashscope -w"
+
+[tts.azure]                     # Azure AI Speech
+region = "eastasia"
+voice = "zh-CN-XiaoxiaoNeural"  # full voice name
+
+[tts.elevenlabs]
+model = "eleven_multilingual_v2"
+voice = "21m00Tcm4TlvDXrnALMq"  # Voice ID from the Voice Library
+
+[tts.minimax]
+base_url = "https://api.minimaxi.com"         # international accounts: https://api.minimax.io
+model = "speech-02-hd"
+voice = "female-shaonv"
+
+[tts.volcengine]                # 火山引擎 · 豆包语音合成: App ID + Access Token (as the key)
+app_id = ""
+model = "volcano_tts"           # cluster
+voice = "zh_female_shuangkuaisisi_moon_bigtts"
+
+[pricing]
+# Your own unit prices, used only for the cost estimates in Settings → Storage & Usage and "Prepare All".
+input_per_mtok = 0              # per million input tokens (0 = don't show money)
+output_per_mtok = 0             # per million output tokens
+tts_per_mchars = 0              # per million characters of remote speech
+currency = "$"
+
+[app]
+check_updates = true            # look for a new release on launch (at most once a day)
+# update_url = "https://readit.novarock.io/download/latest.json"

@@ -188,7 +188,7 @@ enum Settings {
     }
 }
 
-enum TranslateError: LocalizedError {
+enum TranslateError: LocalizedError, Equatable {
     case noKey, http(Int, String), bad(String)
     var errorDescription: String? {
         switch self {

@@ -145,7 +145,7 @@ enum ConfigFile {
 
         [translate]
         model = \(v("translate.model", "\"claude-haiku-5-5\""))
-        protocol = \(v("translate.protocol", "\"anthropic\""))   # anthropic | chat | responses
+        protocol = \(v("translate.protocol", "\"anthropic\""))   # anthropic | chat | responses | chatgpt (Sign in with ChatGPT)
         target_language = \(v("translate.target_language", "\"简体中文\""))
         lookahead_pages = \(v("translate.lookahead_pages", "2"))
 
@@ -158,13 +158,30 @@ enum ConfigFile {
         extra_prompt = \(v("narration.extra_prompt", "\"\""))   # extra instructions, e.g. "多举代码例子"
 
         [tts]
-        provider = \(v("tts.provider", "\"system\""))   # system (macOS voices, no model needed) | gateway
+        # system (macOS voices, no model) | gateway (main gateway) | openai | gemini | qwen | azure | elevenlabs | minimax | volcengine
+        provider = \(v("tts.provider", "\"system\""))
         speed = \(v("tts.speed", "1.5"))
         # provider = "system": voice identifier, empty = best installed voice for target_language
         system_voice = \(v("tts.system_voice", "\"\""))
         # provider = "gateway": OpenAI-compatible POST {base_url}/v1/audio/speech
         model = \(v("tts.model", "\"gemini-3.8-flash-tts\""))
         voice = \(v("tts.voice", "\"Zephyr\""))   # depends on the model, e.g. Zephyr Kore Puck (Gemini) / alloy nova (OpenAI)
+        cache_limit_gb = \(v("tts.cache_limit_gb", "3.0"))   # narration audio is cached as AAC; oldest documents are removed first
+
+        # Other speech services have their own section with their own URL and key, e.g.:
+        # [tts.qwen]
+        # base_url = "https://dashscope.aliyuncs.com"      # Singapore: https://dashscope-intl.aliyuncs.com
+        # api_key_command = "security find-generic-password -s readit-dashscope -w"
+        # model = "qwen3-tts-flash"
+        # voice = "Cherry"
+        # [tts.azure]  region = "eastasia" · voice = "zh-CN-XiaoxiaoNeural"
+        # [tts.volcengine]  app_id = "…" · voice = "zh_female_shuangkuaisisi_moon_bigtts"
+
+        # [pricing]   # your own prices, used for cost estimates (per million tokens / characters)
+        # input_per_mtok = 1.0
+        # output_per_mtok = 5.0
+        # tts_per_mchars = 15.0
+        # currency = "$"
 
         """
         try text.write(to: url, atomically: true, encoding: .utf8)
