@@ -505,6 +505,7 @@ struct Thumb: View {
 struct ReaderPane: View {
     @ObservedObject var store: Store
     @ObservedObject var rc: ReaderController
+    @State private var showFind = false
     var body: some View {
         VStack(spacing: 0) {
             if let id = rc.docId, let s = store.session(id) {
@@ -513,6 +514,13 @@ struct ReaderPane: View {
                     ReaderOverlay(store: store, rc: rc)
                     if rc.variant == .bilingual { TranslateHUD(session: s, rc: rc) }
                     NarratorOverlay(docId: id)
+                }
+                .overlay(alignment: .topTrailing) {
+                    if showFind { FindBar(rc: rc) { showFind = false }.padding(10).transition(.move(edge: .top).combined(with: .opacity)) }
+                }
+                .animation(.easeOut(duration: 0.15), value: showFind)
+                .onReceive(NotificationCenter.default.publisher(for: .findInDocument)) { n in
+                    if (n.object as? UUID) == id || (n.object == nil && DocWindows.shared.activeDocId == id) { showFind = true }
                 }
                 ReaderStatus(store: store, session: s, rc: rc)
             } else {
@@ -656,18 +664,21 @@ struct ReaderStatus: View {
 
 struct OutlinePane: View {
     @ObservedObject var store: Store
-    @State private var mode = 0
+    @ObservedObject var rc: ReaderController
+    @AppStorage("outlineMode") private var mode = 0
     @State private var query = ""
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $mode) { Text(L("大纲")).tag(0); Text(L("卡片")).tag(1) }
+            Picker("", selection: $mode) { Text(L("目录")).tag(2); Text(L("大纲")).tag(0); Text(L("卡片")).tag(1) }
                 .pickerStyle(.segmented).labelsHidden().padding(8)
             TextField(L("搜索"), text: $query).textFieldStyle(.roundedBorder).padding(.horizontal, 8).padding(.bottom, 6)
             Divider()
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    if mode == 0, let nb = store.currentNotebook {
+                    if mode == 2 {
+                        TOCList(rc: rc, query: query)
+                    } else if mode == 0, let nb = store.currentNotebook {
                         ForEach(flatten(nb.root, 0), id: \.0.id) { (n, d) in outlineRow(n, d) }
                     } else {
                         let ids = Set(store.currentNotebook?.docIds ?? [])

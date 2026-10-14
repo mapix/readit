@@ -193,7 +193,7 @@ struct NotePopover: View {
                                 Image(systemName: "text.bubble.fill").font(.system(size: 10)).foregroundStyle(.orange).padding(.top, 3)
                                 Text(cm).font(.system(size: 13)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                                 Spacer(minLength: 0)
-                                Button { store.updateCard(c.id) { $0.comments.remove(at: i) } } label: { Image(systemName: "minus.circle") }
+                                Button { store.registerUndo(L("删除评论")); store.updateCard(c.id) { $0.comments.remove(at: i) } } label: { Image(systemName: "minus.circle") }
                                     .buttonStyle(.plain).foregroundStyle(.secondary).help(L("删除评论"))
                             }
                             .padding(7)

@@ -238,6 +238,7 @@ final class Store: ObservableObject {
     }
 
     func deleteNotebook(_ id: UUID) {
+        registerUndo(L("删除笔记本"))
         lib.notebooks.removeAll { $0.id == id }
         if lib.notebooks.isEmpty { lib.notebooks.append(Notebook(name: L("我的笔记本"), root: MindNode(title: L("我的笔记本")))) }
         if currentNotebookId == id { currentNotebookId = lib.notebooks.first?.id; currentDocId = currentNotebook?.docIds.first }
@@ -285,6 +286,7 @@ final class Store: ObservableObject {
     }
 
     func removeDocFromNotebook(_ docId: UUID) {
+        registerUndo(L("从笔记本移除"))
         updateNotebook { $0.docIds.removeAll { $0 == docId } }
         if currentDocId == docId { currentDocId = currentNotebook?.docIds.first }
     }
@@ -346,6 +348,7 @@ final class Store: ObservableObject {
 
     func deleteCard(_ id: UUID) {
         guard let c = card(id) else { return }
+        registerUndo(L("删除卡片"))
         lib.cards.removeAll { $0.id == id }
         lib.links.removeAll { $0.a == id || $0.b == id }
         for i in lib.notebooks.indices { removeNodes(forCard: id, in: &lib.notebooks[i].root) }
@@ -422,6 +425,7 @@ final class Store: ObservableObject {
 
     func deleteNode(_ id: UUID) {
         guard let nb = currentNotebook, id != nb.root.id else { return }
+        registerUndo(L("删除主题"))
         let parent = nb.root.parentOf(id)
         updateNotebook { nb in _ = nb.root.remove(id) }
         selectedNodeId = parent?.id
@@ -432,6 +436,7 @@ final class Store: ObservableObject {
     func moveNode(_ id: UUID, under newParent: UUID) {
         guard let nb = currentNotebook, id != nb.root.id, id != newParent,
               let node = nb.root.find(id), !node.contains(newParent) else { return }
+        registerUndo(L("移动主题"))
         updateNotebook { nb in
             if let n = nb.root.remove(id) { nb.root.mutate(newParent) { $0.children.append(n); $0.collapsed = false } }
         }
@@ -439,6 +444,7 @@ final class Store: ObservableObject {
 
     func shift(_ id: UUID, by delta: Int) {
         guard let nb = currentNotebook, let parent = nb.root.parentOf(id) else { return }
+        registerUndo(L("移动主题"))
         updateNotebook { nb in
             nb.root.mutate(parent.id) { p in
                 guard let i = p.children.firstIndex(where: { $0.id == id }) else { return }
@@ -457,6 +463,7 @@ final class Store: ObservableObject {
 
     func outdent(_ id: UUID) {
         guard let nb = currentNotebook, let parent = nb.root.parentOf(id), let grand = nb.root.parentOf(parent.id) else { return }
+        registerUndo(L("移动主题"))
         updateNotebook { nb in
             guard let n = nb.root.remove(id) else { return }
             nb.root.mutate(grand.id) { g in
@@ -464,6 +471,34 @@ final class Store: ObservableObject {
                 g.children.insert(n, at: i)
             }
         }
+    }
+
+    // MARK: undo — snapshot of the whole library (cheap value copy), registered on the key window
+
+    private let fallbackUndo = UndoManager()
+    private var undoManager: UndoManager { NSApp.keyWindow?.undoManager ?? fallbackUndo }
+
+    /// call before a user-initiated destructive edit; ⌘Z restores the library as it was
+    func registerUndo(_ name: String) {
+        let before = lib
+        let um = undoManager
+        um.registerUndo(withTarget: self) { s in MainActor.assumeIsolated { s.restore(before, name: name, um: um) } }
+        um.setActionName(name)
+    }
+
+    private func restore(_ snapshot: Library, name: String, um: UndoManager) {
+        let current = lib
+        um.registerUndo(withTarget: self) { s in MainActor.assumeIsolated { s.restore(current, name: name, um: um) } }
+        um.setActionName(name)
+        let gone = Set(current.cards.map(\.id)).subtracting(snapshot.cards.map(\.id))
+        lib = snapshot
+        for ses in sessions.values {
+            for id in gone { ses.removeAnnotations(cardId: id) }
+            ses.applyAnnotations()
+        }
+        if let sel = selectedCardId, card(sel) == nil { selectedCardId = nil }
+        if let n = selectedNodeId, !(currentNotebook?.root.contains(n) ?? false) { selectedNodeId = nil }
+        save()
     }
 
     /// put an existing card into the mind map (e.g. dragged from the card list)

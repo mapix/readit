@@ -27,6 +27,12 @@ struct BiReaderApp: App {
                 Button(L("导出双语 PDF…")) { exportBilingual() }.keyboardShortcut("e", modifiers: [.command, .shift])
                 Button(L("导出脑图为 Markdown…")) { exportMarkdown() }
             }
+            CommandGroup(after: .textEditing) {
+                Divider()
+                Button(L("在文档中查找…")) { NotificationCenter.default.post(name: .findInDocument, object: DocWindows.shared.activeDocId) }.keyboardShortcut("f")
+                Button(L("查找下一个")) { NotificationCenter.default.post(name: .findNext, object: nil) }.keyboardShortcut("g")
+                Button(L("查找上一个")) { NotificationCenter.default.post(name: .findPrevious, object: nil) }.keyboardShortcut("g", modifiers: [.command, .shift])
+            }
             CommandMenu(L("阅读")) {
                 Button(L("原文")) { ReaderController.shared.setVariant(.original) }.keyboardShortcut("1")
                 Button(L("双语")) { ReaderController.shared.setVariant(.bilingual) }.keyboardShortcut("2")

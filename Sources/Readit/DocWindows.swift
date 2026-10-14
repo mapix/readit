@@ -109,7 +109,7 @@ struct DocWindowView: View {
             StudyToolbar(store: store, rc: rc, layoutRaw: $layoutRaw, showOutline: $showOutline, showCopilot: $showCopilot)
             HStack(spacing: 0) {
                 if showOutline {
-                    OutlinePane(store: store).frame(width: 260)
+                    OutlinePane(store: store, rc: rc).frame(width: 260)
                     Divider()
                 }
                 Group {
