@@ -31,6 +31,12 @@ struct SettingsView: View {
     @State var usage: StorageManager.Usage?
     @State var cacheLimit = Settings.ttsCacheLimitGB
     @State var busy = ""
+    @State var usageDays = 7
+    @State var usageTick = 0
+    @State var priceIn = Pricing.inputPerMTok
+    @State var priceOut = Pricing.outputPerMTok
+    @State var priceTTS = Pricing.ttsPerMChars
+    @State var currency = Pricing.currency
 
     @State private var settingsWindow: NSWindow?
 
@@ -299,8 +305,43 @@ struct SettingsView: View {
         }
     }
 
+    static let featureNames: [String: String] = ["translate": "翻译", "narration": "AI 解读", "assistant": "AI 助手", "flashcards": "闪卡", "mindmap": "AI 脑图", "tts": "语音合成"]
+
+    var usageSection: some View {
+        let _ = usageTick
+        let sum = UsageStore.shared.summary(days: usageDays)
+        return Section(L("模型用量")) {
+            Picker(L("时间范围"), selection: $usageDays) {
+                Text(L("今天")).tag(1); Text(L("最近 7 天")).tag(7); Text(L("最近 30 天")).tag(30)
+            }.pickerStyle(.segmented)
+            LabeledContent(L("模型调用"), value: LF("%d 次", sum.calls))
+            LabeledContent(L("输入 / 输出 token"), value: sum.input.compact + " / " + sum.output.compact)
+            if sum.ttsChars > 0 { LabeledContent(L("在线语音合成"), value: LF("%@ 字", sum.ttsChars.compact)) }
+            if Pricing.enabled { LabeledContent(L("估算费用"), value: Pricing.format(sum.cost)) }
+            ForEach(UsageStore.shared.byFeature(days: usageDays), id: \.feature) { f in
+                LabeledContent(L(SettingsView.featureNames[f.feature] ?? f.feature),
+                               value: f.feature == "tts" ? LF("%@ 字", f.input.compact) : LF("%d 次 · %@ token", f.calls, (f.input + f.output).compact))
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            if sum.estimated > 0 { Text(LF("其中 %d 次调用的网关没有返回用量，按字数估算。", sum.estimated)).font(.caption).foregroundStyle(.secondary) }
+            HStack {
+                Text(L("单价（每百万）")).font(.callout)
+                TextField(L("输入"), value: $priceIn, format: .number).frame(width: 64)
+                TextField(L("输出"), value: $priceOut, format: .number).frame(width: 64)
+                TextField(L("语音字"), value: $priceTTS, format: .number).frame(width: 64)
+                TextField(L("货币"), text: $currency).frame(width: 36)
+            }
+            Text(L("填写你的网关价格（每百万 token、每百万字），用于估算费用；留 0 不显示金额。ChatGPT 账号使用套餐额度，不计费。")).font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button(L("清空统计")) { UsageStore.shared.reset(); usageTick += 1 }
+            }
+        }
+    }
+
     var storageTab: some View {
         Form {
+            usageSection
             Section(L("存储")) {
                 if let u = usage {
                     LabeledContent(L("讲解语音缓存"), value: StorageManager.format(u.audio))
@@ -415,6 +456,10 @@ struct SettingsView: View {
         Narrator.shared.systemVoice = sysVoice
         Settings.lookahead = lookahead
         if cacheLimit != Settings.ttsCacheLimitGB { Settings.ttsCacheLimitGB = cacheLimit }
+        if priceIn != Pricing.inputPerMTok { Pricing.inputPerMTok = priceIn }
+        if priceOut != Pricing.outputPerMTok { Pricing.outputPerMTok = priceOut }
+        if priceTTS != Pricing.ttsPerMChars { Pricing.ttsPerMChars = priceTTS }
+        if currency != Pricing.currency { Pricing.currency = currency }
         ThemeCenter.shared.set(theme)
     }
 }

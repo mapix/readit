@@ -28,6 +28,7 @@ extension RemoteTTS {
         let pieces = chunks(text, max: maxChars(c.provider))
         var wavs: [Data] = []
         for piece in pieces { wavs.append(try await one(piece, c, attempts: attempts)) }
+        UsageStore.shared.record(feature: "tts", model: c.provider.rawValue + "/" + c.model, input: text.count, output: 0, estimated: false)
         return wavs.count == 1 ? wavs[0] : concat(wavs)
     }
 

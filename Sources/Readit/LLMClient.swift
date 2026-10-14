@@ -159,12 +159,12 @@ enum LLMClient {
     }
 
     /// one-shot completion
-    static func complete(role: String, system: String, input: LLMInput, history: [Msg] = [], maxTokens: Int = 4096) async throws -> String {
+    static func complete(role: String, system: String, input: LLMInput, history: [Msg] = [], maxTokens: Int = 4096, feature: String? = nil) async throws -> String {
         let style = ModelConfig.style(role), model = ModelConfig.model(role, default: Settings.model)
         if style == .chatgpt {
             // the ChatGPT plan route only streams: collect the deltas
             var out = ""
-            for try await t in stream(role: role, system: system, input: input, history: history, maxTokens: maxTokens) { out += t }
+            for try await t in stream(role: role, system: system, input: input, history: history, maxTokens: maxTokens, feature: feature) { out += t }
             return out
         }
         let (path, b) = body(style: style, model: model, system: system, history: history, input: input, maxTokens: maxTokens, stream: false)
@@ -177,10 +177,34 @@ enum LLMClient {
                 if code == 429 || code >= 500 { last = TranslateError.http(code, errorMessage(data)); try await Task.sleep(nanoseconds: UInt64(1_500_000_000 * (attempt + 1))); continue }
                 if code >= 400 { throw TranslateError.http(code, errorMessage(data)) }
                 let j = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
-                return extractText(style, j)
+                let text = extractText(style, j)
+                let u = usage(style, j)
+                recordUsage(role: role, feature: feature, model: model, reported: u, system: system, input: input, history: history, output: text, style: style)
+                return text
             } catch let e as TranslateError { throw e } catch { last = error; try? await Task.sleep(nanoseconds: UInt64(1_000_000_000 * (attempt + 1))) }
         }
         throw last
+    }
+
+    /// (input, output) tokens reported by the API, if any
+    static func usage(_ style: APIStyle, _ j: [String: Any]) -> (Int, Int)? {
+        guard let u = j["usage"] as? [String: Any] else { return nil }
+        func n(_ k: String) -> Int? { (u[k] as? NSNumber)?.intValue }
+        switch style {
+        case .anthropic: return n("input_tokens").map { ($0 + (n("cache_read_input_tokens") ?? 0) + (n("cache_creation_input_tokens") ?? 0), n("output_tokens") ?? 0) }
+        case .chat: return n("prompt_tokens").map { ($0, n("completion_tokens") ?? 0) }
+        case .responses, .chatgpt: return n("input_tokens").map { ($0, n("output_tokens") ?? 0) }
+        }
+    }
+
+    static func recordUsage(role: String, feature f: String?, model: String, reported: (Int, Int)?, system: String, input: LLMInput, history: [Msg], output: String, style: APIStyle) {
+        let feature = f ?? UsageContext.feature ?? (role == "translate" ? "translate" : "assistant")
+        if let r = reported {
+            UsageStore.shared.record(feature: feature, model: model, input: r.0, output: r.1, estimated: false, plan: style == .chatgpt)
+        } else {
+            let inTok = UsageStore.estimateTokens(system + input.text + history.map(\.text).joined(), images: input.images.count)
+            UsageStore.shared.record(feature: feature, model: model, input: inTok, output: UsageStore.estimateTokens(output), estimated: true, plan: style == .chatgpt)
+        }
     }
 
     static func extractText(_ style: APIStyle, _ j: [String: Any]) -> String {
@@ -202,7 +226,7 @@ enum LLMClient {
     }
 
     /// streaming completion (yields text deltas)
-    static func stream(role: String, system: String, input: LLMInput, history: [Msg] = [], maxTokens: Int = 4096) -> AsyncThrowingStream<String, Error> {
+    static func stream(role: String, system: String, input: LLMInput, history: [Msg] = [], maxTokens: Int = 4096, feature: String? = nil) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { cont in
             let task = Task {
                 do {
@@ -223,6 +247,8 @@ enum LLMClient {
                         throw TranslateError.http(code, errorMessage(data))
                     }
                     var completed = false
+                    var reportedIn: Int?, reportedOut: Int?
+                    var produced = ""
                     for try await line in bytes.lines {
                         if Task.isCancelled { break }
                         guard line.hasPrefix("data:") else { continue }
@@ -232,23 +258,33 @@ enum LLMClient {
                         switch style {
                         case .anthropic:
                             let type = j["type"] as? String
-                            if type == "content_block_delta", let delta = j["delta"] as? [String: Any], delta["type"] as? String == "text_delta", let t = delta["text"] as? String { cont.yield(t) }
+                            if type == "message_start", let u = (j["message"] as? [String: Any])?["usage"] as? [String: Any] {
+                                reportedIn = ((u["input_tokens"] as? NSNumber)?.intValue ?? 0) + ((u["cache_read_input_tokens"] as? NSNumber)?.intValue ?? 0) + ((u["cache_creation_input_tokens"] as? NSNumber)?.intValue ?? 0)
+                            }
+                            if type == "message_delta", let o = ((j["usage"] as? [String: Any])?["output_tokens"] as? NSNumber)?.intValue { reportedOut = o }
+                            if type == "content_block_delta", let delta = j["delta"] as? [String: Any], delta["type"] as? String == "text_delta", let t = delta["text"] as? String { produced += t; cont.yield(t) }
                             else if type == "error", let e = j["error"] as? [String: Any] { throw TranslateError.bad(e["message"] as? String ?? "stream error") }
                         case .chat:
-                            if let ch = (j["choices"] as? [[String: Any]])?.first, let delta = ch["delta"] as? [String: Any], let t = delta["content"] as? String, !t.isEmpty { cont.yield(t) }
+                            if let u = usage(.chat, j) { reportedIn = u.0; reportedOut = u.1 }
+                            if let ch = (j["choices"] as? [[String: Any]])?.first, let delta = ch["delta"] as? [String: Any], let t = delta["content"] as? String, !t.isEmpty { produced += t; cont.yield(t) }
                         case .responses, .chatgpt:
                             let type = j["type"] as? String
-                            if type == "response.output_text.delta", let t = j["delta"] as? String { cont.yield(t) }
+                            if type == "response.output_text.delta", let t = j["delta"] as? String { produced += t; cont.yield(t) }
                             else if type == "error" || type == "response.failed" || type == "response.incomplete" {
                                 let e = (j["error"] as? [String: Any]) ?? ((j["response"] as? [String: Any])?["error"] as? [String: Any])
                                 let msg = (e?["message"] as? String) ?? (type == "response.incomplete" ? L("回答不完整") : "stream error")
                                 throw TranslateError.bad(style == .chatgpt ? chatGPTMessage(e?["code"] as? String ?? "", msg) : msg)
                             }
-                            else if type == "response.completed" { completed = true }
+                            else if type == "response.completed" {
+                                completed = true
+                                if let r = j["response"] as? [String: Any], let u = usage(.responses, r) { reportedIn = u.0; reportedOut = u.1 }
+                            }
                         }
                         if completed { break }
                     }
                     if style == .chatgpt && !completed && !Task.isCancelled { throw TranslateError.bad(L("ChatGPT 回答中断，请重试")) }
+                    let rep: (Int, Int)? = reportedIn.map { ($0, reportedOut ?? UsageStore.estimateTokens(produced)) }
+                    recordUsage(role: role, feature: feature, model: model, reported: rep, system: system, input: input, history: history, output: produced, style: style)
                     cont.finish()
                 } catch { cont.finish(throwing: error) }
             }

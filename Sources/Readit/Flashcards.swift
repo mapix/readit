@@ -68,7 +68,7 @@ final class FlashStore: ObservableObject {
                 题型 kind 取值：概念 / 理解 / 应用 / 数据。
                 只输出 JSON：{"title":"卡组标题（≤16字）","cards":[{"kind":"概念","question":"…","answer":"…","explanation":"…","page":3}]}
                 """
-                let out = try await LLMClient.complete(role: "chat", system: sys, input: LLMInput(text: "文档《\(title)》（\(scope)），请生成 \(count) 张闪卡。\n\(text)"), maxTokens: 8000)
+                let out = try await LLMClient.complete(role: "chat", system: sys, input: LLMInput(text: "文档《\(title)》（\(scope)），请生成 \(count) 张闪卡。\n\(text)"), maxTokens: 8000, feature: "flashcards")
                 var t = out
                 if let r = t.range(of: "\\{[\\s\\S]*\\}", options: .regularExpression) { t = String(t[r]) }
                 struct R: Decodable { var title: String?; var cards: [C] }
@@ -345,7 +345,7 @@ final class MapGenerator: ObservableObject {
                 每个节点 title 简短（≤20字）；需要时给 note（一句话解释）；能定位到原文的节点给 page（页码）和 quote（原文中逐字出现的 6–15 个连续单词，用于定位高亮）。
                 只输出 JSON：{"title":"…","children":[{"title":"…","note":"…","page":3,"quote":"…","children":[…]}]}
                 """
-                let out = try await LLMClient.complete(role: "chat", system: sys, input: LLMInput(text: "文档《\(title)》：\n\(text)"), maxTokens: 16000)
+                let out = try await LLMClient.complete(role: "chat", system: sys, input: LLMInput(text: "文档《\(title)》：\n\(text)"), maxTokens: 16000, feature: "mindmap")
                 try? out.write(to: Paths.docDir(docId).appendingPathComponent("mindmap-raw.txt"), atomically: true, encoding: .utf8)
                 var t = out
                 if let r = t.range(of: "\\{[\\s\\S]*\\}", options: .regularExpression) { t = String(t[r]) }

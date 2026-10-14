@@ -54,6 +54,7 @@ struct NarratorBar: View {
     @AppStorage("narrMini") private var mini = false
     @AppStorage("narratorDock") private var dockRaw = NarratorDock.bottomCenter.rawValue
     @State private var confirmPrepare = false
+    @State private var prepareEstimate = ""
     @State private var styleTick = 0
 
     var body: some View {
@@ -223,14 +224,14 @@ struct NarratorBar: View {
                 } label: { Label(n.currentVoiceName, systemImage: n.effectiveProvider == .system ? "person.wave.2" : "cloud") }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help(L("音色"))
                 styleMenu
                 recordToggle
-                Button { confirmPrepare = true } label: { Image(systemName: "tray.and.arrow.down") }
+                Button { prepareEstimate = estimateText(n.preparePlan()); confirmPrepare = true } label: { Image(systemName: "tray.and.arrow.down") }
                     .buttonStyle(.plain).disabled(ex.running)
                     .help(L("一键生成整本文档的讲解词和语音，之后播放无需等待"))
                     .confirmationDialog(LF("为全部 %d 页生成讲解和语音？", n.pageCount), isPresented: $confirmPrepare) {
                         Button(L("开始准备")) { ex.start(prepareOnly: true) }
                         Button(L("取消"), role: .cancel) {}
                     } message: {
-                        Text(L("会从当前页开始，在后台逐页调用模型写讲稿，再合成全部语音；已生成的部分会跳过。页数多时需要较长时间并产生相应的模型费用，可以随时取消。"))
+                        Text(L("会从当前页开始，在后台逐页调用模型写讲稿，再合成全部语音；已生成的部分会跳过。页数多时需要较长时间并产生相应的模型费用，可以随时取消。") + "\n\n" + prepareEstimate)
                     }
                 Menu {
                     Button(L("导出 MP4（第 1 页到最后一页完整一遍）")) { ex.start() }.disabled(ex.running)
@@ -251,6 +252,22 @@ struct NarratorBar: View {
         .background(RoundedRectangle(cornerRadius: 14).fill(.regularMaterial))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.purple.opacity(0.25)))
         .shadow(color: .black.opacity(0.18), radius: 14, y: 4)
+    }
+
+    /// "约调用模型 120 次（约 31万 输入 / 8.4万 输出 token · $0.42），合成约 5.0万 字语音"
+    func estimateText(_ plan: Narrator.PreparePlan) -> String {
+        let avg = UsageStore.shared.average(feature: "narration") ?? (input: 2600, output: 700)
+        let calls = plan.missingScripts
+        let inTok = calls * avg.input, outTok = calls * avg.output
+        var s = calls == 0 ? L("讲稿已全部生成。") : LF("预计调用模型约 %d 次（约 %@ 输入 / %@ 输出 token）", calls, inTok.compact, outTok.compact)
+        let remote = n.effectiveProvider.isRemote
+        var cost = ChatGPTAuth.shared.connected && ModelConfig.style("chat") == .chatgpt ? 0 : Pricing.cost(model: ModelConfig.chatModel, input: inTok, output: outTok)
+        if plan.missingChars > 0 {
+            s += remote ? "；" + LF("语音约 %@ 字", plan.missingChars.compact) : "；" + L("语音用系统声音合成，免费")
+            if remote { cost += Pricing.ttsCost(chars: plan.missingChars) }
+        }
+        if Pricing.enabled, cost > 0 { s += "\n" + L("按你设置的单价估算约 ") + Pricing.format(cost) }
+        return s
     }
 
     /// quick switch of the narration style (applies to pages not generated yet in that style)

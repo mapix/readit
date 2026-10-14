@@ -374,7 +374,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         let img = Narrator.jpeg(of: pg)
         Task {
             do {
-                let a = try await LLMClient.complete(role: "chat", system: sys, input: LLMInput(text: ctx, images: [img]), maxTokens: 800)
+                let a = try await LLMClient.complete(role: "chat", system: sys, input: LLMInput(text: ctx, images: [img]), maxTokens: 800, feature: "narration")
                 lastQA = (q, a)
                 if let id = docId { CopilotStore.shared.record(docId: id, question: q, answer: a, page: page) }
                 let wav = try await synth(a)
@@ -528,6 +528,23 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     static var bufferAhead: Int { maxBufferSegments }
     private var prefetchToken = UUID()
 
+    /// what "全部准备" still has to generate (for the confirmation estimate)
+    struct PreparePlan { var pages = 0; var missingScripts = 0; var missingChars = 0 }
+    func preparePlan() -> PreparePlan {
+        var plan = PreparePlan(pages: pageCount)
+        let tag = voiceTag
+        let scripted = pageChars.values
+        let avg = scripted.isEmpty ? 420 : scripted.reduce(0, +) / scripted.count
+        for p in 0..<pageCount {
+            if let segs = cachedScript(p) {
+                for (i, sg) in segs.enumerated() where !hasClip(page: p, seg: i, tag: tag) { plan.missingChars += sg.text.count }
+            } else {
+                plan.missingScripts += 1; plan.missingChars += avg
+            }
+        }
+        return plan
+    }
+
     private func cachedScript(_ p: Int) -> [Segment]? {
         guard let d = try? Data(contentsOf: scriptURL(p)) else { return nil }
         return try? JSONDecoder().decode([Segment].self, from: d)
@@ -675,10 +692,10 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         let task = Task<[Segment], Error> {
             let sys = NarrationStyle.systemPrompt(style: style, extra: extra, title: title, lang: lang)
             let input = LLMInput(text: "这是第 \(p + 1)/\(total) 页。\n上一页结尾：\(prevText)\n\n本页文字：\n\(text)", images: [image])
-            var out = try await LLMClient.complete(role: "chat", system: sys, input: input, maxTokens: 4000)
+            var out = try await LLMClient.complete(role: "chat", system: sys, input: input, maxTokens: 4000, feature: "narration")
             if let items = ScriptParser.parse(out), !items.isEmpty { return items.map { Segment(text: $0.text, focus: $0.focus) } }
             // unusable reply: ask once more, then salvage whatever is there (never read raw JSON aloud)
-            if let again = try? await LLMClient.complete(role: "chat", system: sys + "\n上一次的输出不是合法 JSON，请严格按格式重新输出。", input: input, maxTokens: 4000) { out = again }
+            if let again = try? await LLMClient.complete(role: "chat", system: sys + "\n上一次的输出不是合法 JSON，请严格按格式重新输出。", input: input, maxTokens: 4000, feature: "narration") { out = again }
             return ScriptParser.salvage(out).map { Segment(text: $0.text, focus: $0.focus) }
         }
         scriptTasks[taskKey] = task
