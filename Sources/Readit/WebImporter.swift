@@ -160,15 +160,53 @@ final class WebImporter: NSObject, ObservableObject, WKNavigationDelegate {
 
     private func extract(_ wv: WKWebView) async throws -> Extracted {
         try await primeLazyImages(wv)
-        // isolated content world: shares the DOM but not the page's JS, and is not subject to the page's
-        // Trusted Types / CSP rules (innerHTML would throw on such sites)
         let body = WebImporter.extractorJS + "\nreturn window.__readitExtract();"
-        guard let json = try await wv.callAsyncJavaScript(body, arguments: [:], in: nil, in: .defaultClient) as? String,
-              let data = json.data(using: .utf8),
-              let info = try? JSONDecoder().decode(Extracted.self, from: data) else {
-            throw ImportError.message(L("页面脚本执行失败"))
+        guard !WebImporter.extractorJS.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix(";") else {
+            throw ImportError.message(L("页面脚本执行失败") + "：readit-extract.js not found")
         }
-        return info
+        // isolated content world first: shares the DOM but not the page's JS and is not subject to its
+        // Trusted Types / CSP rules; the page world is the fallback
+        var problems: [String] = []
+        for world in [WKContentWorld.defaultClient, WKContentWorld.page] {
+            let name = world == .page ? "page" : "client"
+            do {
+                let r = try await wv.callAsyncJavaScript(body, arguments: [:], in: nil, in: world)
+                guard let json = r as? String else { problems.append("\(name): result \(String(describing: type(of: r)))"); continue }
+                if let info = Extracted(json: json) {
+                    WebImporter.log("extract[\(name)] ok=\(info.ok) reason=\(info.reason ?? "") title=\(info.title) chars=\(info.textLength ?? 0) images=\(info.imageURLs.count) url=\(info.url)")
+                    if info.ok || world == .page { return info }
+                    problems.append("\(name): \(info.reason ?? "not ok")")
+                    continue
+                }
+                problems.append("\(name): bad JSON (\(json.count) chars) \(json.prefix(120))")
+            } catch {
+                problems.append("\(name): \(error.localizedDescription) \((error as NSError).userInfo["WKJavaScriptExceptionMessage"] ?? "")")
+            }
+        }
+        // last resort: classic evaluateJavaScript in the page world
+        do {
+            let r = try await wv.evaluateJavaScript(WebImporter.extractorJS + "\nwindow.__readitExtract();")
+            if let json = r as? String, let info = Extracted(json: json) {
+                WebImporter.log("extract[eval] ok=\(info.ok) reason=\(info.reason ?? "") title=\(info.title)")
+                return info
+            }
+            problems.append("eval: result \(String(describing: type(of: r)))")
+        } catch {
+            problems.append("eval: \(error.localizedDescription) \((error as NSError).userInfo["WKJavaScriptExceptionMessage"] ?? "")")
+        }
+        WebImporter.log("extract failed: " + problems.joined(separator: " ; "))
+        throw ImportError.message(L("页面脚本执行失败") + "：" + (problems.last ?? ""))
+    }
+
+    /// ~/Library/Logs/Readit/web-import.log — what happened on the last imports (for bug reports)
+    static func log(_ s: String) {
+        let dir = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0].appendingPathComponent("Logs/Readit", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let f = dir.appendingPathComponent("web-import.log")
+        let line = ISO8601DateFormatter().string(from: Date()) + " " + s + "\n"
+        if let h = try? FileHandle(forWritingTo: f) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() }
+        else { try? Data(line.utf8).write(to: f) }
+        print("WEBIMPORT", s)
     }
 
     private func importPDFLink(_ url: URL) async throws {
@@ -369,6 +407,22 @@ final class WebImporter: NSObject, ObservableObject, WKNavigationDelegate {
         var textLength: Int?
         var imageURLs: [String]
         var html: String
+
+        /// lenient: JSONSerialization accepts what strict decoders reject; missing fields get defaults
+        init?(json: String) {
+            guard let d = json.data(using: .utf8),
+                  let o = (try? JSONSerialization.jsonObject(with: d, options: [.fragmentsAllowed])) as? [String: Any] else { return nil }
+            ok = o["ok"] as? Bool ?? false
+            reason = o["reason"] as? String
+            title = o["title"] as? String ?? ""
+            byline = o["byline"] as? String
+            site = o["site"] as? String
+            date = o["date"] as? String
+            url = o["url"] as? String ?? ""
+            textLength = (o["textLength"] as? NSNumber)?.intValue
+            imageURLs = o["imageURLs"] as? [String] ?? []
+            html = o["html"] as? String ?? ""
+        }
 
         enum CodingKeys: String, CodingKey { case ok, reason, title, byline, site, date, url, textLength, imageURLs, html }
         init(from d: Decoder) throws {

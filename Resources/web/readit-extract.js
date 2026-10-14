@@ -245,6 +245,15 @@
     return t;
   }
 
+  /** JSON for the app: lone UTF-16 surrogates (cut emoji) would make strict JSON decoders reject everything */
+  function out(o) {
+    return JSON.stringify(o, function (k, v) {
+      if (typeof v !== "string") return v;
+      if (v.toWellFormed) return v.toWellFormed();
+      return v.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "$1\uFFFD");
+    });
+  }
+
   function fmtDate(s) {
     if (!s) return "";
     var d = new Date(s);
@@ -283,7 +292,7 @@
     } else {
       // 2) common article containers on the un-pre-cleaned clone (Readability can be too strict on short posts)
       var el = fallbackContent(clone);
-      if (!el) return JSON.stringify({ ok: false, reason: "no-article", title: title0, url: url });
+      if (!el) return out({ ok: false, reason: "no-article", title: title0, url: url });
       holder.innerHTML = el.innerHTML;
       preClean(holder);
       how = "container";
@@ -327,7 +336,7 @@
     info.content = holder.innerHTML;
     info.html = build(info);
     delete info.content;
-    return JSON.stringify(info);
+    return out(info);
   }
 
   /** scroll through the page so lazy loaders fire; resolves after reaching the bottom (max ~8 s) */
@@ -346,7 +355,13 @@
   var api = { extract: extract, build: build, primeLazy: primeLazy, css: CSS };
   if (typeof window !== "undefined") {
     window.__readit = api;
-    window.__readitExtract = function () { return extract(document, location.href); };
+    window.__readitExtract = function () {
+      try { return extract(document, location.href); }
+      catch (e) {
+        var where = String((e && e.stack) || "").split("\n").slice(0, 2).join(" | ");
+        return out({ ok: false, reason: "exception: " + (e && e.message) + (where ? " @ " + where : ""), title: document.title || "", url: location.href });
+      }
+    };
   }
   if (typeof module === "object" && module.exports) module.exports = api;
 })();
