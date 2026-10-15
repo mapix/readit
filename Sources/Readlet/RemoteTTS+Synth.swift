@@ -23,6 +23,7 @@ extension RemoteTTS {
     /// text → clean 16-bit mono WAV; long text is split per provider limits and the pieces joined
     static func synthesize(_ text: String, _ c: TTSConfig, attempts: Int = 1) async throws -> Data {
         guard c.provider.isRemote else { throw TranslateError.bad("system voice is local") }
+        try await MainActor.run { try AIConsent.ensure() }
         if c.key.isEmpty { throw TranslateError.noKey }
         if c.provider == .volcengine, c.appId.isEmpty { throw TranslateError.bad(L("火山引擎需要填写 App ID")) }
         if c.voice.isEmpty { throw TranslateError.bad(L("请填写音色")) }

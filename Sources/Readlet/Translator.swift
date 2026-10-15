@@ -195,7 +195,18 @@ enum TranslateError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .noKey: return L("未设置 API Key（设置 → 通用 → 网关）")
-        case .http(let c, let m): return "HTTP \(c): \(m)"
+        case .http(let c, let m):
+            let hint: String
+            switch c {
+            case 401, 403: hint = L("请检查 API Key 和账号权限")
+            case 404: hint = L("请检查 Base URL 和模型名称")
+            case 408, 504: hint = L("请求超时，稍后再试")
+            case 413: hint = L("内容太长，请减少页数后重试")
+            case 429: hint = L("请求太多或额度不足，稍后再试")
+            case 500...599: hint = L("服务暂时不可用，稍后再试")
+            default: hint = ""
+            }
+            return "HTTP \(c)" + (hint.isEmpty ? "" : " · " + hint) + (m.isEmpty ? "" : "\n" + String(m.prefix(240)))
         case .bad(let m): return m
         }
     }

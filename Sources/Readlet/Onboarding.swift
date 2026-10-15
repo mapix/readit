@@ -37,6 +37,8 @@ struct OnboardingView: View {
                 Text(L("⌘O 导入 PDF / EPUB / Markdown / Word · ⌘⇧O 从网页导入 · ⌘2 双语对照 · ⌘⇧L AI 讲解 · ⌘/ 全部快捷键"))
                     .font(.caption).foregroundStyle(.secondary)
                 Text(L("语音讲解默认使用 macOS 系统声音，不需要另外配置。")).font(.caption).foregroundStyle(.secondary)
+                Text(L("使用 AI 功能时，相关页面的文字和截图会发送给你选择的 AI 服务；Readlet 本身不收集任何数据。继续即表示同意。"))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             HStack {
                 Text(status).font(.caption).foregroundStyle(.secondary).lineLimit(2)
@@ -124,6 +126,7 @@ struct OnboardingView: View {
             if let first = gpt.models.first?.slug { ModelConfig.setModel("translate", first); ModelConfig.setModel("chat", first) }
             finish()
         case .gateway, .local:
+            AIConsent.grant()          // the notice above was shown; don't ask again for the connection test
             if choice == .gateway {
                 Settings.baseURL = base.isEmpty ? "https://api.anthropic.com" : base
                 Settings.apiKey = key
@@ -150,6 +153,7 @@ struct OnboardingView: View {
     }
 
     func finish() {
+        if choice != .skip { AIConsent.grant() }
         UserDefaults.standard.set(true, forKey: "onboarded")
         close()
     }

@@ -84,6 +84,15 @@ struct SettingsView: View {
 
     var generalTab: some View {
         Form {
+            Section {
+                HStack {
+                    Image(systemName: "sparkles").foregroundStyle(.purple)
+                    Text(L("不确定怎么配？用向导一步步选好 AI 和语音。")).font(.callout)
+                    Spacer()
+                    Button(L("打开设置向导")) { OnboardingPanel.show() }
+                    Link(L("配置说明"), destination: AppInfo.supportURL).font(.callout)
+                }
+            }
             Section(L("界面语言") + " / Interface Language") {
                 Picker(L("界面语言"), selection: Binding(get: { lc.lang }, set: { lc.set($0) })) { ForEach(UILang.allCases) { Text($0.name).tag($0) } }.pickerStyle(.segmented)
             }
@@ -297,7 +306,11 @@ struct SettingsView: View {
                 }.fixedSize()
             }
         }
-        Text(providerNote(p)).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        HStack(alignment: .top) {
+            Text(providerNote(p)).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Spacer()
+            if let u = URL(string: AppInfo.supportURL.absoluteString + "#tts-" + p.rawValue) { Link(L("详细步骤"), destination: u).font(.caption) }
+        }
     }
 
     func providerNote(_ p: TTSProvider) -> String {

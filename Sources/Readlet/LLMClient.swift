@@ -162,6 +162,7 @@ enum LLMClient {
 
     /// one-shot completion
     static func complete(role: String, system: String, input: LLMInput, history: [Msg] = [], maxTokens: Int = 4096, feature: String? = nil) async throws -> String {
+        try await MainActor.run { try AIConsent.ensure() }
         let style = ModelConfig.style(role), model = ModelConfig.model(role, default: Settings.model)
         if style == .chatgpt {
             // the ChatGPT plan route only streams: collect the deltas
@@ -232,6 +233,7 @@ enum LLMClient {
         AsyncThrowingStream { cont in
             let task = Task {
                 do {
+                    try await MainActor.run { try AIConsent.ensure() }
                     let style = ModelConfig.style(role), model = ModelConfig.model(role, default: Settings.model)
                     let (path, b) = body(style: style, model: model, system: system, history: history, input: input, maxTokens: maxTokens, stream: true)
                     let req: URLRequest

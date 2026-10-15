@@ -16,7 +16,8 @@ struct ReadletApp: App {
         .defaultSize(width: 1100, height: 720)
         .windowStyle(.hiddenTitleBar)
         .commands {
-            CommandGroup(after: .appInfo) {
+            CommandGroup(replacing: .appInfo) {
+                Button(LF("关于 %@", AppInfo.name)) { showAboutPanel() }
                 if AppInfo.selfUpdates { Button(L("检查更新…")) { Task { await UpdateChecker.shared.check(manual: true) } } }
             }
             CommandGroup(replacing: .help) {
@@ -232,6 +233,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// file types Readlet can open: PDFs directly, other documents are converted to PDF
 @MainActor var importableTypes: [UTType] {
     [.pdf] + DocConverter.supportedExtensions.compactMap { UTType(filenameExtension: $0) }
+}
+
+/// standard About panel with edition, links and open-source acknowledgements
+@MainActor func showAboutPanel() {
+    let credits = NSMutableAttributedString()
+    let small: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor]
+    credits.append(NSAttributedString(string: (AppInfo.isAppStore ? L("Mac App Store 版") : L("直接下载版")) + "\n\n", attributes: small))
+    for (title, url) in [(L("官网"), AppInfo.website), (L("支持与常见问题"), AppInfo.supportURL), (L("隐私政策"), AppInfo.privacyURL)] {
+        credits.append(NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 11), .link: url]))
+        credits.append(NSAttributedString(string: "   ", attributes: small))
+    }
+    credits.append(NSAttributedString(string: "\n\n" + L("开源组件") + "\nMozilla Readability — Apache License 2.0\nmarked — MIT License\n", attributes: small))
+    NSApp.orderFrontStandardAboutPanel(options: [
+        .applicationName: AppInfo.name,
+        .applicationVersion: AppInfo.version,
+        .version: AppInfo.build,
+        .credits: credits,
+    ])
+    NSApp.activate(ignoringOtherApps: true)
 }
 
 @MainActor func importPanel(notebook: UUID? = nil) {
