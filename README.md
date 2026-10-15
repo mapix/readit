@@ -2,7 +2,7 @@
 
 A native macOS app (SwiftUI + PDFKit) for reading PDFs, EPUBs and web articles bilingually with the original layout preserved, listening to an AI explain every page, and taking MarginNote-style notes — excerpts, mind maps and links across documents. Bring your own AI: any Anthropic / OpenAI-compatible gateway, a local model, or your ChatGPT plan.
 
-- **Get it** (free, open source): [Mac App Store](https://readit.novarock.io/#download) (sandboxed, updates through the store) or the direct download from <https://readit.novarock.io>. Both editions have the same features apart from the [differences listed here](AppStore/README.md#7-differences-of-the-app-store-edition).
+- **Get it** (free, open source): [Mac App Store](https://readlet.novarock.io/#download) (sandboxed, updates through the store) or the direct download from <https://readlet.novarock.io>. Both editions have the same features apart from the [differences listed here](AppStore/README.md#7-differences-of-the-app-store-edition).
 - **Set up**: the first launch opens a short guide; details in [docs/setup.md](docs/setup.md) and [docs/tts-providers.md](docs/tts-providers.md).
 - **Source**: https://github.com/mapix/readit (MIT licensed).
 - **Build**: `./build_app.sh` (direct edition → `/Applications/Readlet.app`, `dist/Readlet-<version>.zip`) · `./build_mas.sh` (App Store package) — see [Building](#building).
@@ -200,7 +200,7 @@ Readlet checks the website for a new release at most once a day (Readlet → Che
 
 ## Data Location
 
-Data lives in `~/Library/Application Support/BiReader/`, including the library, mind maps, cards, translation cache, and bilingual page cache.
+Data lives in `~/Library/Application Support/Readlet/` (automatically migrated from `~/Library/Application Support/BiReader/`), including the library, mind maps, cards, translation cache, and bilingual page cache.
 
 ## Building
 

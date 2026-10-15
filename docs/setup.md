@@ -86,4 +86,4 @@ voice = "Cherry"
 
 ## Privacy
 
-Readlet has no account, no analytics and no tracking. Page text (and, for narration, page images) goes only to the AI service you configure; online speech sends script text only to the voice service you choose. See the [privacy policy](https://readit.novarock.io/privacy.html).
+Readlet has no account, no analytics and no tracking. Page text (and, for narration, page images) goes only to the AI service you configure; online speech sends script text only to the voice service you choose. See the [privacy policy](https://readlet.novarock.io/privacy.html).

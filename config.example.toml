@@ -115,4 +115,4 @@ currency = "$"
 
 [app]
 check_updates = true            # look for a new release on launch (at most once a day)
-# update_url = "https://readit.novarock.io/download/latest.json"
+# update_url = "https://readlet.novarock.io/download/latest.json"

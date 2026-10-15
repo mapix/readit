@@ -94,12 +94,31 @@ func cardFill(_ i: Int) -> NSColor { highlightColors[i % highlightColors.count].
 
 enum Paths {
     static let base: URL = {
-        // BIREADER_DATA lets tests use a throwaway directory instead of the user's real library
-        let u = ProcessInfo.processInfo.environment["BIREADER_DATA"].map { URL(fileURLWithPath: $0, isDirectory: true) }
-            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent(AppInfo.isAppStore ? AppInfo.name : "BiReader", isDirectory: true)   // direct edition keeps the original folder
-        try? FileManager.default.createDirectory(at: u, withIntermediateDirectories: true)
-        return u
+        let env = ProcessInfo.processInfo.environment
+        if let custom = env["READLET_DATA"] ?? env["BIREADER_DATA"], !custom.isEmpty {
+            let u = URL(fileURLWithPath: custom, isDirectory: true)
+            try? FileManager.default.createDirectory(at: u, withIntermediateDirectories: true)
+            return u
+        }
+        let fm = FileManager.default
+        let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let newDir = appSupport.appendingPathComponent("Readlet", isDirectory: true)
+        if !AppInfo.isAppStore {
+            for oldName in ["Readit", "BiReader"] {
+                let oldDir = appSupport.appendingPathComponent(oldName, isDirectory: true)
+                if fm.fileExists(atPath: oldDir.appendingPathComponent("library.json").path) {
+                    if !fm.fileExists(atPath: newDir.appendingPathComponent("library.json").path) {
+                        try? fm.moveItem(at: oldDir, to: newDir)
+                    }
+                    if fm.fileExists(atPath: oldDir.appendingPathComponent("library.json").path),
+                       !fm.fileExists(atPath: newDir.appendingPathComponent("library.json").path) {
+                        return oldDir
+                    }
+                }
+            }
+        }
+        try? fm.createDirectory(at: newDir, withIntermediateDirectories: true)
+        return newDir
     }()
     static var libraryFile: URL { base.appendingPathComponent("library.json") }
     static func docDir(_ id: UUID) -> URL {

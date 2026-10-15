@@ -4,12 +4,22 @@ import Security
 /// Secrets (API keys) live in the login Keychain, not in preferences.
 /// Accounts: "gateway" (main model gateway), "tts" (speech provider).
 enum Keychain {
-    static let service = "io.novarock.readit"
+    static let service = "io.novarock.readlet"
+    static let legacyService = "io.novarock.readit"
 
     static func get(_ account: String) -> String? {
+        if let v = get(account, service: service) { return v }
+        if let old = get(account, service: legacyService) {
+            _ = set(old, account)
+            return old
+        }
+        return nil
+    }
+
+    private static func get(_ account: String, service svc: String) -> String? {
         let q: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: svc,
             kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,

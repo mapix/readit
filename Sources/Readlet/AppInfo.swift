@@ -8,7 +8,8 @@ enum AppInfo {
     #else
     static let isAppStore = false
     #endif
-    static let website = URL(string: "https://readit.novarock.io")!
+    static let website = URL(string: "https://readlet.novarock.io")!
+    static let legacyWebsite = URL(string: "https://readit.novarock.io")!
     static var privacyURL: URL { website.appendingPathComponent("privacy.html") }
     static var supportURL: URL { website.appendingPathComponent("support.html") }
     static let issuesURL = URL(string: "https://github.com/mapix/readit/issues")!

@@ -9,12 +9,22 @@ import Foundation
 /// The API key is never written into the file by the app: it stays in preferences unless the file itself
 /// defines `api_key`, `api_key_env` or `api_key_command`.
 enum ConfigFile {
-    /// ~/.config/readlet (or the pre-rename ~/.config/readit when only that one exists)
+    /// ~/.config/readlet (automatically migrates files from ~/.config/readit if present; falls back if needed)
     static var configDir: URL {
-        let home = FileManager.default.homeDirectoryForCurrentUser
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser
         let new = home.appendingPathComponent(".config/readlet", isDirectory: true)
         let old = home.appendingPathComponent(".config/readit", isDirectory: true)
-        if !FileManager.default.fileExists(atPath: new.path), FileManager.default.fileExists(atPath: old.path) { return old }
+        if fm.fileExists(atPath: old.path) {
+            try? fm.createDirectory(at: new, withIntermediateDirectories: true)
+            for name in ["config.toml", "chatgpt-auth.json"] {
+                let src = old.appendingPathComponent(name)
+                let dst = new.appendingPathComponent(name)
+                if fm.fileExists(atPath: src.path), !fm.fileExists(atPath: dst.path) {
+                    try? fm.copyItem(at: src, to: dst)
+                }
+            }
+        }
         return new
     }
     static var url: URL {
@@ -22,7 +32,12 @@ enum ConfigFile {
         if let p = env["READLET_CONFIG"] ?? env["READIT_CONFIG"], !p.isEmpty {
             return URL(fileURLWithPath: (p as NSString).expandingTildeInPath)
         }
-        return configDir.appendingPathComponent("config.toml")
+        let fm = FileManager.default
+        let newFile = configDir.appendingPathComponent("config.toml")
+        if fm.fileExists(atPath: newFile.path) { return newFile }
+        let oldFile = fm.homeDirectoryForCurrentUser.appendingPathComponent(".config/readit/config.toml")
+        if fm.fileExists(atPath: oldFile.path) { return oldFile }
+        return newFile
     }
     static var displayPath: String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path

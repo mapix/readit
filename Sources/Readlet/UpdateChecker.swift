@@ -9,9 +9,10 @@ final class UpdateChecker {
     struct Release: Decodable { var version: String; var file: String?; var size: String?; var date: String?; var notes: String? }
 
     static var feedURL: URL {
-        URL(string: ConfigFile.string("app.update_url") ?? "https://readit.novarock.io/download/latest.json")
+        URL(string: ConfigFile.string("app.update_url") ?? "https://readlet.novarock.io/download/latest.json")
             ?? URL(fileURLWithPath: "/")
     }
+    static let fallbackFeedURL = URL(string: "https://readit.novarock.io/download/latest.json")!
     static var currentVersion: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0" }
     private var d: UserDefaults { .standard }
 
@@ -23,13 +24,22 @@ final class UpdateChecker {
         Task { await check(manual: false) }
     }
 
-    func check(manual: Bool) async {
-        d.set(Date(), forKey: "updateCheckedAt")
-        var req = URLRequest(url: UpdateChecker.feedURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+    private func fetchRelease(from url: URL) async -> (Release, URL)? {
+        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
         req.setValue("Readlet/\(UpdateChecker.currentVersion)", forHTTPHeaderField: "User-Agent")
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200,
-              let rel = try? JSONDecoder().decode(Release.self, from: data) else {
+              let rel = try? JSONDecoder().decode(Release.self, from: data) else { return nil }
+        return (rel, url)
+    }
+
+    func check(manual: Bool) async {
+        d.set(Date(), forKey: "updateCheckedAt")
+        var fetched = await fetchRelease(from: UpdateChecker.feedURL)
+        if fetched == nil, ConfigFile.string("app.update_url") == nil {
+            fetched = await fetchRelease(from: UpdateChecker.fallbackFeedURL)
+        }
+        guard let (rel, usedURL) = fetched else {
             if manual { alert(L("检查更新失败"), L("暂时无法连接更新服务器，请稍后再试。"), buttons: [L("好")]) }
             return
         }
@@ -45,8 +55,8 @@ final class UpdateChecker {
                       buttons: [L("下载新版本"), L("稍后"), L("跳过这个版本")])
         switch r {
         case .alertFirstButtonReturn:
-            let base = UpdateChecker.feedURL.deletingLastPathComponent()
-            let u = rel.file.map { base.appendingPathComponent($0) } ?? URL(string: "https://readit.novarock.io/#download")!
+            let base = usedURL.deletingLastPathComponent()
+            let u = rel.file.map { base.appendingPathComponent($0) } ?? URL(string: "https://readlet.novarock.io/#download")!
             NSWorkspace.shared.open(u)
         case .alertThirdButtonReturn:
             d.set(rel.version, forKey: "updateSkipVersion")

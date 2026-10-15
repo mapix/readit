@@ -15,8 +15,8 @@ Everything in this folder is ready to paste into App Store Connect. Steps marked
 | Age rating | 4+ (no objectionable content; user-generated web content is the user's own import — answer "No" to all content questions; "Unrestricted web access": No — the app does not browse the web freely, it imports pages the user links) |
 | Minimum macOS | 14.0, universal binary (Apple Silicon + Intel) |
 | Encryption | Exempt (HTTPS only) — `ITSAppUsesNonExemptEncryption = false` in Info.plist |
-| Privacy | "Data Not Collected" — see `app_privacy.md`; policy page `https://readit.novarock.io/privacy.html` |
-| Support / marketing URL | `https://readit.novarock.io/support.html` · `https://readit.novarock.io` |
+| Privacy | "Data Not Collected" — see `app_privacy.md`; policy page `https://readlet.novarock.io/privacy.html` |
+| Support / marketing URL | `https://readlet.novarock.io/support.html` · `https://readlet.novarock.io` |
 
 ## 1. Apple Developer Program (you)
 
@@ -96,7 +96,7 @@ App Review must be able to try AI features. Edit `review_notes.txt`: replace `<R
 
 | | Direct download | Mac App Store |
 |---|---|---|
-| Sandbox | no | yes (data in `~/Library/Containers/io.novarock.readlet`) |
+| Sandbox | no (`~/Library/Application Support/Readlet`) | yes (data in `~/Library/Containers/io.novarock.readlet`) |
 | Update check | built in | through the App Store |
 | Sign in with ChatGPT | yes | yes (free + open source; a paid edition would need OpenAI approval: <https://openai.com/form/sign-in-with-chatgpt-interest/>) |
 | `api_key_command` in config | yes | no (sandbox can't run shell commands) — keys go in the Keychain via Settings |
