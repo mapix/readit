@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Mac App Store: sandbox is mandatory -->
+  <key>com.apple.security.app-sandbox</key><true/>
+  <key>com.apple.application-identifier</key><string>__TEAM_ID__.__BUNDLE_ID__</string>
+  <key>com.apple.developer.team-identifier</key><string>__TEAM_ID__</string>
+  <!-- model gateways, speech services, web import, update-free -->
+  <key>com.apple.security.network.client</key><true/>
+  <!-- loopback listener for OAuth callbacks (Sign in with ChatGPT, when enabled) -->
+  <key>com.apple.security.network.server</key><true/>
+  <!-- importing PDFs / documents chosen by the user, exporting PDFs / Markdown / Anki / MP4 -->
+  <key>com.apple.security.files.user-selected.read-write</key><true/>
+  <!-- MP4 export defaults to ~/Movies/Readlet -->
+  <key>com.apple.security.assets.movies.read-write</key><true/>
+  <!-- printing web articles to PDF uses the print system -->
+  <key>com.apple.security.print</key><true/>
+  <!-- hold-to-ask voice questions during narration -->
+  <key>com.apple.security.device.audio-input</key><true/>
+  <!-- keychain items for API keys -->
+  <key>keychain-access-groups</key><array><string>__TEAM_ID__.__BUNDLE_ID__</string></array>
+</dict>
+</plist>

@@ -1,10 +1,10 @@
 // swift-tools-version:5.9
 import PackageDescription
 let package = Package(
-  name: "Readit",
+  name: "Readlet",
   platforms: [.macOS(.v14)],
   targets: [
-    .executableTarget(name: "Readit", path: "Sources/Readit"),
-    .testTarget(name: "ReaditTests", dependencies: ["Readit"], path: "Tests/ReaditTests"),
+    .executableTarget(name: "Readlet", path: "Sources/Readlet"),
+    .testTarget(name: "ReadletTests", dependencies: ["Readlet"], path: "Tests/ReadletTests"),
   ]
 )
