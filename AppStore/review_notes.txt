@@ -1,0 +1,16 @@
+Readlet is a reader for PDFs, EPUB and web articles with bilingual translation, AI page-by-page narration and MarginNote-style notes.
+
+HOW TO TEST
+• Without any setup: File → Import PDF or Document… (⌘O), or drag a PDF onto the library. Reading, excerpts (select text → pick a colour), the mind map, search (⌘F) and narration with the macOS system voice work offline.
+• AI features (bilingual translation ⌘2, AI Narration ⇧⌘L, AI Assistant ⌘J, flashcards ⇧⌘K) use the user's own AI service. For review we provide a test gateway:
+    Settings (⌘,) → General → Gateway
+    Base URL:  <REVIEW_GATEWAY_URL>
+    API Key:   <REVIEW_API_KEY>
+    Protocol:  Anthropic Messages   ·   Model: claude-haiku-5-5
+  Then press "Test Connection". Sample document: File → Import from Web… → https://jvns.ca/blog/2024/11/26/terminal-rules/
+
+NOTES
+• Bring-your-own-AI app: the user enters their own API endpoint and key, or uses a local model (Ollama / LM Studio on localhost). This is why NSAllowsArbitraryLoads / NSAllowsLocalNetworking are set — the servers are chosen by the user and local servers use http://.
+• Before the first AI request the app asks for consent and explains which content is sent to the AI service the user configured (guideline 5.1.2). The app has no accounts, analytics or tracking.
+• Entitlements: network.client (AI / speech services, web import), network.server (loopback only, reserved for an optional OAuth sign-in that is disabled in this edition), user-selected files (import/export), movies folder (MP4 export of narration), print (web articles are printed to PDF), audio-input (hold-to-ask voice questions).
+• Microphone and speech recognition are used only while the user holds the mic button during narration.

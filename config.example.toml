@@ -1,25 +1,25 @@
-# Readit configuration example.
-# Copy to ~/.config/readit/config.toml (or point READIT_CONFIG at another path):
+# Readlet configuration example.
+# Copy to ~/.config/readlet/config.toml (or point READLET_CONFIG at another path):
 #
-#   mkdir -p ~/.config/readit && cp config.example.toml ~/.config/readit/config.toml && chmod 600 ~/.config/readit/config.toml
+#   mkdir -p ~/.config/readlet && cp config.example.toml ~/.config/readlet/config.toml && chmod 600 ~/.config/readlet/config.toml
 #
 # Values here take precedence over the Settings window and legacy `defaults write local.bireader.app …`
 # preferences; anything you leave out falls back to those. Changes are picked up without restarting.
 
 [gateway]
-# Your model gateway. Readit appends /v1/messages, /v1/chat/completions, /v1/responses,
+# Your model gateway. Readlet appends /v1/messages, /v1/chat/completions, /v1/responses,
 # /v1/models and /v1/audio/speech itself, so do not include a trailing /v1.
 base_url = "https://gateway.example.com"
 
 # API key — choose ONE of the options below. If none is set, the key saved in the Settings window is used.
 #
 # 1) macOS Keychain (recommended). Store it once with:
-#      security add-generic-password -s readit -a "$USER" -w
+#      security add-generic-password -s readlet -a "$USER" -w
 #    then:
-# api_key_command = "security find-generic-password -s readit -w"
+# api_key_command = "security find-generic-password -s readlet -w"
 #
-# 2) Environment variable — only works when Readit is launched from a shell that exports it:
-# api_key_env = "READIT_API_KEY"
+# 2) Environment variable — only works when Readlet is launched from a shell that exports it:
+# api_key_env = "READLET_API_KEY"
 #
 # 3) Plain text in this file (keep the file chmod 600; never commit it):
 # api_key = "<your-api-key>"
@@ -62,7 +62,7 @@ cache_limit_gb = 3.0            # narration audio cache (AAC); least recently na
 # --- provider = "system" ---
 # Voice identifier; leave empty to pick the best installed voice for translate.target_language.
 # More natural voices: System Settings → Accessibility → Spoken Content → System Voice → Manage Voices
-# (choose a "Premium" or "Enhanced" voice). The voice picker in Readit → Settings lists what is installed.
+# (choose a "Premium" or "Enhanced" voice). The voice picker in Readlet → Settings lists what is installed.
 system_voice = ""               # e.g. "com.apple.voice.premium.zh-CN.Lilian"
 
 # --- provider = "gateway" ---
@@ -86,7 +86,7 @@ voice = "Kore"
 base_url = "https://dashscope.aliyuncs.com"   # Singapore region: https://dashscope-intl.aliyuncs.com
 model = "qwen3-tts-flash"
 voice = "Cherry"                # Cherry Serena Ethan Chelsie Momo Vivian Moon Kai Jennifer Ryan Dylan(北京话) Sunny(四川话) Rocky(粤语)…
-# api_key_command = "security find-generic-password -s readit-dashscope -w"
+# api_key_command = "security find-generic-password -s readlet-dashscope -w"
 
 [tts.azure]                     # Azure AI Speech
 region = "eastasia"

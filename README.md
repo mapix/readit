@@ -1,11 +1,11 @@
-# Readit
+# Readlet
 
-A native macOS app (SwiftUI + PDFKit) for reading PDFs bilingually with the original layout preserved. Like MarginNote, it lets you excerpt, annotate, build mind maps, and link notes across multiple PDFs. Translation is powered by Claude Haiku 5.5.
+A native macOS app (SwiftUI + PDFKit) for reading PDFs, EPUBs and web articles bilingually with the original layout preserved, listening to an AI explain every page, and taking MarginNote-style notes — excerpts, mind maps and links across documents. Bring your own AI: any Anthropic / OpenAI-compatible gateway, a local model, or (direct edition) your ChatGPT plan.
 
-- Website & download: https://readit.novarock.io
-- Source: https://github.com/mapix/readit (MIT licensed)
-- Build: `./build_app.sh` (produces `build/Readit.app`, installs it into `/Applications`, and packages `dist/Readit-<version>.zip`)
-- On first launch a short guide asks where AI comes from: **your ChatGPT account** (Sign in with ChatGPT), **your own gateway** (Anthropic / OpenAI Chat Completions / OpenAI Responses), a **local model** (Ollama, LM Studio), or none for now. Everything can be changed later in **Settings** or a config file — see [Configuration](#configuration).
+- **Get it**: [Mac App Store](https://readit.novarock.io/#download) (paid, sandboxed, updates through the store) or the free direct download from <https://readit.novarock.io>. Both editions have the same features apart from the [differences listed here](AppStore/README.md#7-differences-of-the-app-store-edition).
+- **Set up**: the first launch opens a short guide; details in [docs/setup.md](docs/setup.md) and [docs/tts-providers.md](docs/tts-providers.md).
+- **Source**: https://github.com/mapix/readit (MIT licensed).
+- **Build**: `./build_app.sh` (direct edition → `/Applications/Readlet.app`, `dist/Readlet-<version>.zip`) · `./build_mas.sh` (App Store package) — see [Building](#building).
 
 ## Interface & Windows
 
@@ -24,18 +24,18 @@ A native macOS app (SwiftUI + PDFKit) for reading PDFs bilingually with the orig
   - Three themes: Light, Sepia (warm paper), and Dark (inverted). Switch from the Library top bar or the ⋯ menu in a document window.
   - PDF pages are tinted to match the theme while text stays crisp vector.
 - **Desktop widget** (⌘⇧M)
-  - Hides all Readit windows and leaves a floating, always-on-top, draggable player on the desktop.
+  - Hides all Readlet windows and leaves a floating, always-on-top, draggable player on the desktop.
   - Compact mode looks like a music player: progress, previous / play / next segment, and a mic button for questions.
   - Expand the transcript to see every segment; click one to jump to it.
   - ⤢ restores the real PDF window.
-- **Data**: imported PDFs are copied into Readit's own data directory, so moving or deleting the original file has no effect.
+- **Data**: imported PDFs are copied into Readlet's own data directory, so moving or deleting the original file has no effect.
 
 ## Models
 
 - **Translation & AI features**: choose separate models for *Translation* and for *AI Assistant / Narration / Flashcards* in Settings.
   - Protocols: Anthropic Messages, OpenAI Chat Completions, OpenAI Responses, and **ChatGPT account**.
   - The model list comes from the gateway's `/v1/models` (or your ChatGPT account's models).
-- **Sign in with ChatGPT**: ChatGPT Plus / Pro users can run Readit's AI on their plan, no API key. *Settings → General → ChatGPT Account → Continue with ChatGPT* opens the browser (OAuth + PKCE with a loopback callback); the ID token is verified against OpenAI's keys, tokens refresh automatically and are stored in `~/.config/readit/chatgpt-auth.json` (0600). Usage limits and the *Manage Usage* link follow OpenAI's guidelines.
+- **Sign in with ChatGPT**: ChatGPT Plus / Pro users can run Readlet's AI on their plan, no API key. *Settings → General → ChatGPT Account → Continue with ChatGPT* opens the browser (OAuth + PKCE with a loopback callback); the ID token is verified against OpenAI's keys, tokens refresh automatically and are stored in `~/.config/readlet/chatgpt-auth.json` (0600). Usage limits and the *Manage Usage* link follow OpenAI's guidelines.
 - **Local models**: `http://` servers on your Mac or LAN work (Ollama `http://localhost:11434`, LM Studio `http://localhost:1234`) with the OpenAI Chat Completions protocol.
 - **Keys** entered in Settings are kept in the macOS Keychain.
 - **Speech (TTS)** — pick an engine in *Settings → Voice & Narration*:
@@ -85,9 +85,9 @@ A native macOS app (SwiftUI + PDFKit) for reading PDFs bilingually with the orig
 Many sources are web pages, not PDFs. **File → Import from Web…** (⌘⇧O), or the *Import from Web* tile in the library, takes a link and adds a clean PDF of the article:
 
 - The page is opened in a real (hidden) WebKit view, so JavaScript-rendered sites work, and logins in that view persist between imports.
-- Readit scrolls through the page so lazy images load, then keeps only the main content using [Mozilla Readability](https://github.com/mozilla/readability) plus its own clean-up: navigation, sidebars, comments, share and subscribe bars, cookie banners, related posts, ads, avatars and similar chrome are dropped.
+- Readlet scrolls through the page so lazy images load, then keeps only the main content using [Mozilla Readability](https://github.com/mozilla/readability) plus its own clean-up: navigation, sidebars, comments, share and subscribe bars, cookie banners, related posts, ads, avatars and similar chrome are dropped.
 - Images are downloaded with the article as Referer, so hotlink-protected CDNs work. KaTeX and MathJax formulas are kept as native MathML, code blocks keep their formatting, and embedded videos become links.
-- The article is laid out with Readit's print style (title, author, site, date, source URL) and printed to A4. Bilingual view, narration and notes then work as with any PDF.
+- The article is laid out with Readlet's print style (title, author, site, date, source URL) and printed to A4. Bilingual view, narration and notes then work as with any PDF.
 - Direct links to `.pdf` files are downloaded as they are.
 - If a site asks for a login or a human check, choose **Open in a window**: sign in or verify there, then click **Extract & Import**.
 - The source URL is remembered: right-click the document for **Open Original Page** or **Re-import from Web**.
@@ -124,12 +124,12 @@ The extractor lives in `Resources/web/readit-extract.js`. `Tests/webimport/e2e.p
 
 ## Configuration
 
-Readit can be configured either in the **Settings** window (⌘,) or with a plain-text file at `~/.config/readit/config.toml` (override the path with the `READIT_CONFIG` environment variable). The file is optional — start from [`config.example.toml`](config.example.toml):
+Readlet can be configured either in the **Settings** window (⌘,) or with a plain-text file at `~/.config/readlet/config.toml` (override the path with the `READLET_CONFIG` environment variable). The file is optional — start from [`config.example.toml`](config.example.toml):
 
 ```bash
-mkdir -p ~/.config/readit
-cp config.example.toml ~/.config/readit/config.toml
-chmod 600 ~/.config/readit/config.toml
+mkdir -p ~/.config/readlet
+cp config.example.toml ~/.config/readlet/config.toml
+chmod 600 ~/.config/readlet/config.toml
 ```
 
 or click **Create Config File** in Settings, which writes your current settings (without the API key).
@@ -137,7 +137,7 @@ or click **Create Config File** in Settings, which writes your current settings 
 ```toml
 [gateway]
 base_url = "https://gateway.example.com"      # no trailing /v1
-api_key_command = "security find-generic-password -s readit -w"
+api_key_command = "security find-generic-password -s readlet -w"
 
 [translate]
 model = "claude-haiku-5-5"
@@ -166,12 +166,12 @@ speed = 1.5
 
 **API key**: the app never writes your key into the file. Choose one of:
 
-- `api_key_command` — run a command and use its output; recommended with the macOS Keychain. Store the key once with `security add-generic-password -s readit -a "$USER" -w`.
-- `api_key_env` — read an environment variable. This only works when Readit is launched from a shell that exports it; apps opened from Finder or the Dock don't inherit shell variables.
+- `api_key_command` — run a command and use its output; recommended with the macOS Keychain. Store the key once with `security add-generic-password -s readlet -a "$USER" -w`.
+- `api_key_env` — read an environment variable. This only works when Readlet is launched from a shell that exports it; apps opened from Finder or the Dock don't inherit shell variables.
 - `api_key` — plain text in the file; keep the file `chmod 600` and never commit it.
 - none of the above — the key entered in the Settings window is used, as before.
 
-**Gateway TTS request** — Readit sends a standard OpenAI Audio Speech request, so any compatible gateway works:
+**Gateway TTS request** — Readlet sends a standard OpenAI Audio Speech request, so any compatible gateway works:
 
 ```http
 POST {base_url}/v1/audio/speech
@@ -196,7 +196,7 @@ defaults write local.bireader.app model.tts -string "gemini-3.8-flash-tts"
 
 ## Updates
 
-Readit checks the website for a new release at most once a day (Readit → Check for Updates…; turn off with `[app] check_updates = false`).
+Readlet checks the website for a new release at most once a day (Readlet → Check for Updates…; turn off with `[app] check_updates = false`).
 
 ## Data Location
 
@@ -207,7 +207,7 @@ Data lives in `~/Library/Application Support/BiReader/`, including the library, 
 Requires macOS 14+ and Swift 5.9+.
 
 ```bash
-./build_app.sh                 # universal (Apple Silicon + Intel) when Xcode is installed, else native; installs /Applications/Readit.app
+./build_app.sh                 # universal (Apple Silicon + Intel) when Xcode is installed, else native; installs /Applications/Readlet.app
 UNIVERSAL=0 ./build_app.sh     # native only
 swift test                     # unit tests (config, TTS requests/parsing, script parser, EPUB, …)
 ```
@@ -215,7 +215,7 @@ swift test                     # unit tests (config, TTS requests/parsing, scrip
 For distribution, sign with a Developer ID and notarize (needs an Apple Developer account):
 
 ```bash
-DEVELOPER_ID="Developer ID Application: Your Name (TEAMID)" NOTARY_PROFILE=readit-notary ./build_app.sh
+DEVELOPER_ID="Developer ID Application: Your Name (TEAMID)" NOTARY_PROFILE=readlet-notary ./build_app.sh
 ```
 
 GitHub Actions (`.github/workflows/ci.yml`) builds, runs the tests and uploads the app zip for every push.

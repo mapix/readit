@@ -1,0 +1,1 @@
+Read any PDF, EPUB or web article side by side in two languages, and let AI explain it page by page, out loud. Use your own AI: a gateway, OpenAI, Qwen or a local model.

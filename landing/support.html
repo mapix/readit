@@ -1,0 +1,129 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>支持 Support · Readlet</title><link rel="icon" href="/assets/favicon.png">
+<style>
+:root{color-scheme:light} body{margin:0;font:16px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif;color:#1d1d1f;background:#fafafa}
+header{position:sticky;top:0;background:rgba(255,255,255,.9);backdrop-filter:blur(12px);border-bottom:1px solid #eee}
+header .in{max-width:860px;margin:0 auto;padding:14px 24px;display:flex;gap:18px;align-items:center}
+header a{color:#1d1d1f;text-decoration:none} header b{font-size:18px} header .sp{flex:1}
+.tabs button{border:1px solid #ddd;background:#fff;border-radius:8px;padding:4px 12px;cursor:pointer;font:inherit;font-size:13px} .tabs button.on{background:#1d1d1f;color:#fff;border-color:#1d1d1f}
+main{max-width:860px;margin:0 auto;padding:30px 24px 80px} h1{font-size:34px;letter-spacing:-.02em} h2{margin-top:2em} h3{margin-top:1.6em}
+code{font:13.5px "SF Mono",Menlo,monospace;background:#f0f0f2;padding:1px 5px;border-radius:5px} a{color:#0b57d0}
+table{border-collapse:collapse} td,th{border:1px solid #ddd;padding:6px 10px} [data-l]{display:none} [data-l].on{display:block}
+</style></head><body>
+<header><div class="in"><a href="/"><b>Readlet</b></a><a href="/support.html">Support</a><a href="/privacy.html">Privacy</a><span class="sp"></span>
+<span class="tabs"><button data-t="zh">中文</button><button data-t="en">English</button></span></div></header>
+<main><section data-l="zh"><h1>Readlet 支持</h1>
+<h2>快速开始</h2>
+<ol>
+<li>按 <strong>⌘O</strong> 导入 PDF、EPUB、Markdown、Word、HTML 或 TXT，或拖到文档库；按 <strong>⇧⌘O</strong> 从网页导入文章。</li>
+<li>阅读、摘录、脑图、全文搜索（⌘F）和系统语音讲解无需配置即可使用。</li>
+<li>使用 AI 功能：打开 <strong>设置 → 通用</strong>（或「帮助 → 欢迎与设置向导」）连接一个 AI 服务。</li>
+</ol>
+<h2>连接 AI 服务</h2>
+<ul>
+<li><strong>自己的网关 / API</strong>：Base URL <strong>不要带</strong> <code>/v1</code>（如 <code>https://api.anthropic.com</code>、<code>https://api.openai.com</code>、<code>https://openrouter.ai/api</code>、<code>https://dashscope.aliyuncs.com/compatible-mode</code>），填 API Key、选协议，然后「刷新可用模型」「测试连接」。</li>
+<li><strong>本机模型</strong>：先启动 Ollama 或 LM Studio，再点「设置 → 通用 → 本地模型」。AI 解读需要能看图的模型。</li>
+<li>常见错误：<code>401/403</code> Key 或权限问题 · <code>404</code> 地址或模型名不对 · <code>429</code> 频率或额度限制。</li>
+</ul>
+<h2>语音</h2>
+<ul>
+<li><strong>系统语音</strong> 免费、离线。想要自然的声音，请下载「高级」版：系统设置 → 辅助功能 → 朗读内容 → 系统声音 → 管理声音。</li>
+<li><strong>在线语音</strong> 各家的获取 Key 步骤见下方英文部分（与 App 里「详细步骤」链接对应）：OpenAI、Gemini、通义千问 Qwen-TTS（阿里云百炼，北京地域默认，新加坡用 dashscope-intl）、Azure、ElevenLabs、MiniMax、火山引擎（需要 App ID 和 Access Token）。</li>
+</ul>
+<h2>常见问题</h2>
+<ul>
+<li><strong>数据在哪里？</strong> 直接下载版：<code>~/Library/Application Support/BiReader/</code>；App Store 版：<code>~/Library/Containers/io.novarock.readlet/</code>。「设置 → 存储与用量」可查看和清理缓存。</li>
+<li><strong>讲解卡顿、要等？</strong> 在播放条点「全部准备」提前生成，或在配置文件里调大 <code>buffer_seconds</code>。</li>
+<li><strong>网页导入失败？</strong> 需要登录或人机验证的网站请选「在窗口中打开」，登录后点「提取正文并导入」；日志在 <code>~/Library/Logs/Readlet/web-import.log</code>。</li>
+<li><strong>App Store 版退款</strong> 由苹果处理：<a href="https://reportaproblem.apple.com">https://reportaproblem.apple.com</a>。</li>
+</ul>
+<h2>联系</h2>
+<p>问题反馈与建议：<a href="https://github.com/mapix/readit/issues">https://github.com/mapix/readit/issues</a>。</p></section><section data-l="en"><h1>Readlet Support</h1>
+<h2>Getting started</h2>
+<ol>
+<li>Import a PDF, EPUB, Markdown, Word, HTML or text file with <strong>⌘O</strong>, drag it onto the library, or import a web article with <strong>⇧⌘O</strong>.</li>
+<li>Reading, excerpts, mind maps, search (⌘F) and narration with the system voice work right away.</li>
+<li>For AI features open <strong>Settings → General</strong> (or Help → Welcome &amp; Setup Guide) and connect an AI service. Full guide: <a href="https://github.com/mapix/readit/blob/main/docs/setup.md">setup</a>.</li>
+</ol>
+<h2>Connecting an AI service</h2>
+<ul>
+<li><strong>Your gateway / API</strong>: Base URL <strong>without</strong> <code>/v1</code> (e.g. <code>https://api.anthropic.com</code>, <code>https://api.openai.com</code>, <code>https://openrouter.ai/api</code>, <code>https://dashscope.aliyuncs.com/compatible-mode</code>), API key, protocol, then <em>Refresh Models</em> and <em>Test Connection</em>.</li>
+<li><strong>Local model</strong>: start Ollama or LM Studio, then <em>Settings → General → Local Models</em>. AI Narration needs a model that understands images.</li>
+<li>Errors: <code>401/403</code> key or permission · <code>404</code> URL or model name · <code>429</code> rate limit or quota.</li>
+</ul>
+<h2>Voices</h2>
+<ul>
+<li>The <strong>system voice</strong> is free and offline. For a natural sound download a <strong>Premium</strong> voice: System Settings → Accessibility → Spoken Content → System Voice → Manage Voices.</li>
+</ul>
+<h2>Online voices</h2>
+<p>Each service has its own section in <em>Settings → Voice &amp; Narration</em> (and <code>[tts.&lt;provider&gt;]</code> in the config file). Leave <strong>Base URL</strong> empty to use the default shown. Keys are stored in the macOS Keychain. <strong>Preview</strong> tests the voice.</p>
+<p><a id="tts-openai"></a></p>
+<h3>OpenAI (or any compatible server)</h3>
+<ol>
+<li>Create a key at <a href="https://platform.openai.com/api-keys">https://platform.openai.com/api-keys</a>.</li>
+<li>Model <code>gpt-4o-mini-tts</code>; voices <code>marin</code> and <code>cedar</code> sound best (also alloy, ash, ballad, coral, echo, fable, nova, onyx, sage, shimmer, verse).</li>
+<li>Any server implementing <code>POST /v1/audio/speech</code> works with its own Base URL — e.g. SiliconFlow or a local Kokoro server.</li>
+</ol>
+<p><a id="tts-gemini"></a></p>
+<h3>Google Gemini</h3>
+<ol>
+<li>Get a key at <a href="https://aistudio.google.com/apikey">https://aistudio.google.com/apikey</a>.</li>
+<li>Model <code>gemini-3.8-flash-tts</code> (or <code>gemini-3.8-flash-lite-tts</code>); voices such as Kore, Zephyr, Puck, Charon, Leda, Aoede, Fenrir, Orus.</li>
+<li>Readlet uses the Interactions API and passes the narration's speaking style.</li>
+</ol>
+<p><a id="tts-qwen"></a></p>
+<h3>Qwen‑TTS (Alibaba Cloud Model Studio / 阿里云百炼)</h3>
+<ol>
+<li>Create an API key in the Model Studio console (<a href="https://bailian.console.aliyun.com/?apiKey=1">https://bailian.console.aliyun.com/?apiKey=1</a>). Keys are per region.</li>
+<li>Base URL: leave empty for the <strong>Beijing</strong> region (<code>https://dashscope.aliyuncs.com</code>); for <strong>Singapore</strong> use <code>https://dashscope-intl.aliyuncs.com</code>.</li>
+<li>Model <code>qwen3-tts-flash</code>; voices include Cherry, Serena, Ethan, Chelsie, Momo, Vivian, Moon, Kai, Jennifer, Ryan and dialect voices Dylan (Beijing), Sunny (Sichuan), Rocky (Cantonese).</li>
+<li>Text longer than the API limit (600 characters) is split automatically; the language is set from the translation target language.</li>
+</ol>
+<p><a id="tts-azure"></a></p>
+<h3>Microsoft Azure AI Speech</h3>
+<ol>
+<li>Create a <em>Speech</em> resource in the Azure portal; copy <strong>Key 1</strong> and the <strong>Region</strong> (e.g. <code>eastasia</code>).</li>
+<li>Enter the key and region; the endpoint <code>https://&lt;region&gt;.tts.speech.microsoft.com</code> is derived automatically.</li>
+<li>Voice: the full name, e.g. <code>zh-CN-XiaoxiaoNeural</code>, <code>zh-CN-YunxiNeural</code>, <code>en-US-AvaMultilingualNeural</code>, <code>ja-JP-NanamiNeural</code>.</li>
+</ol>
+<p><a id="tts-elevenlabs"></a></p>
+<h3>ElevenLabs</h3>
+<ol>
+<li>Create a key at <a href="https://elevenlabs.io/app/settings/api-keys">https://elevenlabs.io/app/settings/api-keys</a>.</li>
+<li>Model <code>eleven_multilingual_v2</code>; voice = a <strong>Voice ID</strong> copied from the Voice Library (e.g. <code>21m00Tcm4TlvDXrnALMq</code>).</li>
+</ol>
+<p><a id="tts-minimax"></a></p>
+<h3>MiniMax</h3>
+<ol>
+<li>Create a key on the MiniMax platform.</li>
+<li>Base URL: empty for mainland-China accounts (<code>https://api.minimaxi.com</code>), <code>https://api.minimax.io</code> for international accounts.</li>
+<li>Model <code>speech-02-hd</code>; voices such as <code>female-shaonv</code>, <code>male-qn-jingying</code>, <code>presenter_female</code>.</li>
+</ol>
+<p><a id="tts-volcengine"></a></p>
+<h3>Volcengine · Doubao speech (火山引擎 · 豆包语音)</h3>
+<ol>
+<li>In the Volcengine console create a speech-synthesis application; note its <strong>App ID</strong> and <strong>Access Token</strong>.</li>
+<li>Enter the token as the key and fill in <strong>App ID</strong>; the cluster (model field) is <code>volcano_tts</code>.</li>
+<li>Voices such as <code>zh_female_shuangkuaisisi_moon_bigtts</code>, <code>zh_male_wennuanahu_moon_bigtts</code>, <code>BV700_streaming</code>.</li>
+</ol>
+<p><a id="tts-gateway"></a></p>
+<h3>Main gateway</h3>
+<p>Uses the gateway from <em>Settings → General</em> (same URL and key) with <code>POST /v1/audio/speech</code>. Fill in the model and voice your gateway supports.</p>
+<p><a id="tts-system"></a></p>
+<h3>System voice</h3>
+<p>Free and offline. Download a Premium or Enhanced voice for a natural sound: System Settings → Accessibility → Spoken Content → System Voice → Manage Voices. Readlet synthesizes at the narration speed for natural prosody (<code>tts.system_native_rate = false</code> restores playback-rate speed changes).</p>
+<h2>Common questions</h2>
+<p><strong>Where is my data?</strong> Direct edition: <code>~/Library/Application Support/BiReader/</code>; App Store edition: <code>~/Library/Containers/io.novarock.readlet/</code>. Settings → Storage &amp; Usage shows sizes and clears caches.</p>
+<p><strong>Narration waits or stutters.</strong> Use <em>Prepare All</em> in the player to generate everything in advance, or raise <code>buffer_seconds</code> in the config file.</p>
+<p><strong>How much does AI cost?</strong> Settings → Storage &amp; Usage shows tokens per feature; enter your provider's prices to see an estimate.</p>
+<p><strong>A web page doesn't import.</strong> If the site needs a login or a human check, choose <em>Open in a window</em>, sign in, then <em>Extract &amp; Import</em>. The log is at <code>~/Library/Logs/Readlet/web-import.log</code>.</p>
+<p><strong>Refunds (App Store edition)</strong> are handled by Apple: <a href="https://reportaproblem.apple.com">https://reportaproblem.apple.com</a>.</p>
+<h2>Contact</h2>
+<p>Bug reports and feature requests: <a href="https://github.com/mapix/readit/issues">https://github.com/mapix/readit/issues</a>.</p></section></main>
+<script>
+function set(l){document.querySelectorAll('[data-l]').forEach(e=>e.classList.toggle('on',e.dataset.l===l));document.querySelectorAll('[data-t]').forEach(b=>b.classList.toggle('on',b.dataset.t===l));document.documentElement.lang=l==='zh'?'zh-CN':'en'}
+document.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>set(b.dataset.t));
+var q=new URLSearchParams(location.search).get('lang');var l=q||((navigator.language||'').startsWith('zh')?'zh':'en');
+if(location.hash.indexOf('#tts-')===0) l='en';
+set(l==='zh'?'zh':'en'); if(location.hash){var t=document.getElementById(location.hash.slice(1)); if(t) setTimeout(()=>t.scrollIntoView(),50);}
+</script></body></html>

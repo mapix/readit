@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-End-to-end check of Readit's web import pipeline in headless Chromium.
+End-to-end check of Readlet's web import pipeline in headless Chromium.
 
 It mirrors what WebImporter.swift does in WKWebView:
   live page → scroll (lazy images) → Readability + readit-extract.js → download images with Referer
