@@ -14,4 +14,13 @@ Capture with a 2880×1800 window (⌘⇧5 → window, or `screencapture -l<windo
 | 7 | Settings → Voice & Narration with provider list | Your AI, your voice | 模型与声音自由选择 |
 | 8 | Desktop mini player | Listen while you work | 收成桌面小组件边听边做事 |
 
+## Ready-to-upload assets in this folder
+
+- **App Store Icon**: `AppStore/AppIcon-1024.png` (1024×1024 RGB PNG, no alpha channel).
+- **2880×1800 Screenshots (RGB PNG, 16:10)**:
+  - `AppStore/screenshots/en-US/01-bilingual-split.png` … `04-ai-copilot-mindmap.png`
+  - `AppStore/screenshots/zh-Hans/01-bilingual-split.png` … `04-ai-copilot-mindmap.png`
+  - `AppStore/screenshots/ja/01-bilingual-split.png` … `04-ai-copilot-mindmap.png`
+- Regenerate anytime with: `swift AppStore/generate_screenshots.swift`
+
 App preview video (optional, 15–30 s): record narration of one page with ⌘⇧5, export H.264 1920×1080.

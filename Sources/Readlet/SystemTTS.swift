@@ -284,7 +284,7 @@ enum SystemTTS {
 }
 
 /// One utterance written to buffers. Keeps itself alive until finished; resumes the continuation exactly once.
-private final class SystemTTSJob: NSObject, AVSpeechSynthesizerDelegate {
+private final class SystemTTSJob: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
     private let synth = AVSpeechSynthesizer()
     private let q = DispatchQueue(label: "readit.system-tts")
     private var samples: [Int16] = []

@@ -76,7 +76,7 @@ enum ScriptParser {
                 focus = fv.0.isEmpty ? nil : fv.0
             }
             let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !t.isEmpty && (closed || t.count >= 20) { items.append(Item(text: t, focus: focus)) }
+            if !t.isEmpty && (closed || t.count >= 12) { items.append(Item(text: t, focus: focus)) }
             i = max(after, k + 6)
         }
         return items

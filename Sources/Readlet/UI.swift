@@ -247,7 +247,7 @@ struct StudyToolbar: View {
 
     func showLibrary() {
         if let w = NSApp.windows.first(where: { $0.identifier?.rawValue == "library" }) { w.makeKeyAndOrderFront(nil) }
-        else { NSApp.sendAction(Selector(("newWindowForTab:")), to: nil, from: nil) }
+        else { NSApp.sendAction(#selector(NSWindow.newWindowForTab(_:)), to: nil, from: nil) }
     }
 
     func seg(_ t: String, _ on: Bool, _ a: @escaping () -> Void) -> some View {

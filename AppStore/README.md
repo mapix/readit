@@ -53,9 +53,9 @@ Then fill in, per language (en-US, zh-Hans, ja — add the localizations under *
 | Keywords | `keywords.txt` |
 | What's New | `release_notes.txt` |
 
-Also: support URL, marketing URL, privacy policy URL (above), category, age rating, price (**Pricing and Availability → Free**), **App Privacy** (from `app_privacy.md`), copyright `© 2026 Novarock`.
+Also: support URL, marketing URL, privacy policy URL (above), category, age rating, price (**Pricing and Availability → Free**), **App Privacy** (from `app_privacy.md`), copyright `© 2026 Novarock`, and App Icon (`AppStore/AppIcon-1024.png` — 1024×1024 RGB PNG without alpha).
 
-Screenshots: see `screenshots.md` (at least one 2880×1800 per language; English can be reused).
+Screenshots: ready-to-upload 2880×1800 PNGs for `en-US`, `zh-Hans`, and `ja` are generated in `AppStore/screenshots/<locale>/` (see `screenshots.md`).
 
 ## 4. Build and upload
 
