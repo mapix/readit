@@ -115,17 +115,61 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 mkdir -p dist
 if [ "$MAS" = "1" ]; then
   # ---------------------------------------------------------------- Mac App Store
-  : "${MAS_APP_IDENTITY:?set MAS_APP_IDENTITY, e.g. \"Apple Distribution: Your Name (TEAMID)\"}"
-  : "${MAS_INSTALLER_IDENTITY:?set MAS_INSTALLER_IDENTITY, e.g. \"3rd Party Mac Developer Installer: Your Name (TEAMID)\"}"
-  : "${MAS_PROFILE:?set MAS_PROFILE to the Mac App Store provisioning profile (.provisionprofile) for $BUNDLE_ID}"
-  : "${TEAM_ID:?set TEAM_ID (10 characters)}"
-  cp "$MAS_PROFILE" "$APP/Contents/embedded.provisionprofile"
+  TEAM_ID="${TEAM_ID:-BDH2HLQA9V}"
   sed -e "s/__TEAM_ID__/$TEAM_ID/g" -e "s/__BUNDLE_ID__/$BUNDLE_ID/g" Resources/Readlet-MAS.entitlements > build/mas/readlet.entitlements
-  codesign --force --options runtime --timestamp --entitlements build/mas/readlet.entitlements -s "$MAS_APP_IDENTITY" "$APP"
-  codesign --verify --strict --verbose=2 "$APP"
   PKG="dist/$NAME-$VERSION-AppStore.pkg"
   rm -f "$PKG"
-  productbuild --component "$APP" /Applications --sign "$MAS_INSTALLER_IDENTITY" "$PKG"
+
+  if [ -n "${MAS_APP_IDENTITY:-}" ] && [ -n "${MAS_INSTALLER_IDENTITY:-}" ] && [ -n "${MAS_PROFILE:-}" ] && [ -f "${MAS_PROFILE:-}" ]; then
+    cp "$MAS_PROFILE" "$APP/Contents/embedded.provisionprofile"
+    codesign --force --options runtime --timestamp --entitlements build/mas/readlet.entitlements -s "$MAS_APP_IDENTITY" "$APP"
+    codesign --verify --strict --verbose=2 "$APP"
+    productbuild --component "$APP" /Applications --sign "$MAS_INSTALLER_IDENTITY" "$PKG"
+  else
+    echo "packaging via Xcode Cloud-Managed Distribution for Team $TEAM_ID…"
+    DEV_SIGN=$(security find-identity -v -p codesigning | sed -n 's/.*"\(Apple Development: Weifeng Luo[^"]*\)"/\1/p' | head -1)
+    : "${DEV_SIGN:?no Apple Development certificate found for Weifeng Luo}"
+    PROFILE=$(grep -l "$TEAM_ID.$BUNDLE_ID" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/"*.provisionprofile 2>/dev/null | head -1 || true)
+    [ -n "$PROFILE" ] && cp "$PROFILE" "$APP/Contents/embedded.provisionprofile"
+    codesign --force --options runtime --entitlements build/mas/readlet.entitlements --generate-entitlement-der -s "$DEV_SIGN" "$APP"
+
+    ARCHIVE="build/mas/$NAME.xcarchive"
+    rm -rf "$ARCHIVE" "build/mas/export"
+    mkdir -p "$ARCHIVE/Products/Applications" "$ARCHIVE/dSYMs"
+    cp -R "$APP" "$ARCHIVE/Products/Applications/$NAME.app"
+    if [ -d ".build/apple/Products/Release/$NAME.dSYM" ]; then
+      cp -R ".build/apple/Products/Release/$NAME.dSYM" "$ARCHIVE/dSYMs/$NAME.app.dSYM"
+    fi
+    cat > "$ARCHIVE/Info.plist" <<A
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>ApplicationProperties</key><dict>
+    <key>ApplicationPath</key><string>Applications/$NAME.app</string>
+    <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
+    <key>CFBundleShortVersionString</key><string>$VERSION</string>
+    <key>CFBundleVersion</key><string>$BUILD</string>
+    <key>SigningIdentity</key><string>$DEV_SIGN</string>
+    <key>Team</key><string>$TEAM_ID</string>
+  </dict>
+  <key>ArchiveVersion</key><integer>2</integer>
+  <key>CreationDate</key><date>$(date -u +%Y-%m-%dT%H:%M:%SZ)</date>
+  <key>Name</key><string>$NAME</string>
+  <key>SchemeName</key><string>$NAME</string>
+</dict></plist>
+A
+    cat > build/mas/ExportOptions.plist <<X
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>method</key><string>app-store-connect</string>
+  <key>teamID</key><string>$TEAM_ID</string>
+  <key>signingStyle</key><string>automatic</string>
+</dict></plist>
+X
+    xcodebuild -exportArchive -archivePath "$ARCHIVE" -exportOptionsPlist build/mas/ExportOptions.plist -exportPath build/mas/export -allowProvisioningUpdates
+    cp "build/mas/export/$NAME.pkg" "$PKG"
+  fi
   echo "packaged $PKG"
   echo "next: ./upload_mas.sh $PKG    (or drag it into Transporter)"
   exit 0
@@ -143,7 +187,13 @@ if [ -n "${DEVELOPER_ID:-}" ]; then
   echo "signing with: $DEVELOPER_ID (hardened runtime)"
   codesign --force --deep --options runtime --timestamp --entitlements build/readlet.entitlements -s "$DEVELOPER_ID" "$APP"
 else
-  codesign --force --deep -s - "$APP"     # ad-hoc: fine locally, Gatekeeper asks on other Macs
+  LOCAL_SIGN=$(security find-identity -v -p codesigning | sed -n 's/.*"\(Apple Development: Weifeng Luo[^"]*\)"/\1/p' | head -1)
+  if [ -n "$LOCAL_SIGN" ]; then
+    echo "signing with: $LOCAL_SIGN"
+    codesign --force --deep --options runtime --entitlements build/readlet.entitlements -s "$LOCAL_SIGN" "$APP"
+  else
+    codesign --force --deep -s - "$APP"     # ad-hoc: fine locally, Gatekeeper asks on other Macs
+  fi
 fi
 
 rm -f "dist/$NAME-$VERSION.zip"

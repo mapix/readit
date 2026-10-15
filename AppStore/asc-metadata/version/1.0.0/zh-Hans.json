@@ -1,0 +1,8 @@
+{
+  "description": "Readlet 让难读的东西变好读。打开一篇论文、一本书或一篇网页文章，保留原排版逐段双语对照；再让 AI 逐页讲给你听，你边听边看。\n\n保留原排版的双语对照\n• 每页按原 PDF 的矢量内容绘制，公式、图表、字体、分栏都不变。\n• 译文就在每段原文下方；公式、代码、表格、参考文献自动跳过。\n• 读到哪里就翻译到哪里，并提前翻译后面几页；⌘1 / ⌘2 一键切换原文与双语。\n\n逐页讲解的 AI\n• AI 解读用口语讲解每一页，图表也会讲到，并自动翻页。\n• 五种讲解风格：播客、评书、技术深度、科普、精简速览，还能写自己的补充要求。\n• 按住麦克风随时语音提问，回答完自动继续讲。\n• 「全部准备」在后台把整本书的讲稿和语音一次做好，开始前先给出时间和费用预估。\n• 按当前语速显示剩余收听时间；翻到任意一页即可从那里开始讲。\n\n像 MarginNote 一样学习\n• 八色摘录、评论、标题，框选公式和图表生成图片卡片。\n• 每张卡片自动进入脑图，可拖拽整理，还能跨文档关联。\n• AI 助手总结本页或全文、回答问题，页码可点击跳转。\n• AI 闪卡与 AI 脑图帮你检验和梳理所学。\n\n什么都能导入\n• PDF、EPUB、Markdown、Word、RTF、HTML、TXT。\n• 网页文章：粘贴链接，只保留正文（去掉广告、侧栏、Cookie 提示），生成干净的 PDF。\n\n模型和声音你来选\n• 自带模型：Anthropic、OpenAI、OpenRouter、DeepSeek、通义千问等任意兼容接口，或用 Ollama / LM Studio 跑本机模型。\n• 有 ChatGPT Plus / Pro？用 ChatGPT 登录即可使用你的套餐额度，无需 API Key。\n• 语音：免费的 macOS 系统声音，或 OpenAI、Google Gemini、Qwen-TTS、Azure、ElevenLabs、MiniMax、火山引擎在线语音。\n• Key 保存在系统钥匙串；无需注册、没有追踪，内容只发送给你配置的服务。\n\n导出\n• 双语 PDF、脑图与摘录 Markdown（适配 Obsidian）、闪卡导出到 Anki、讲解导出为 MP4 视频。\n\n需要 macOS 14 或更高版本。AI 功能需要可用的 AI 模型（你的 API Key、网关、ChatGPT 套餐或本机模型）；阅读、笔记和系统语音讲解无需配置即可使用。",
+  "keywords": "PDF,翻译,双语,阅读器,AI,朗读,讲解,论文,EPUB,笔记,脑图,闪卡,学习,网页,文献,对照",
+  "promotionalText": "打开任何 PDF、EPUB 或网页文章，保留原排版逐段双语对照，再让 AI 一页一页讲给你听。模型自由选择：你的网关、OpenAI、Anthropic、通义千问，或本机模型。",
+  "whatsNew": "首次登陆 Mac App Store。",
+  "marketingUrl": "https://readlet.novarock.io/",
+  "supportUrl": "https://readlet.novarock.io/support.html"
+}
