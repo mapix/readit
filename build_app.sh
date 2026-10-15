@@ -111,6 +111,8 @@ cat > "$APP/Contents/Info.plist" <<P
 </dict></plist>
 P
 printf 'APPL????' > "$APP/Contents/PkgInfo"
+chmod -R u+rwX,go+rX "$APP"
+xattr -cr "$APP" 2>/dev/null || true
 
 mkdir -p dist
 if [ "$MAS" = "1" ]; then
