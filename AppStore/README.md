@@ -10,7 +10,7 @@ Everything in this folder is ready to paste into App Store Connect. Steps marked
 | Name check | No app named "Readlet" on the Mac or iOS App Store (checked 2026-10-16 via the iTunes Search API). "Readit" is taken, hence the rename. |
 | Bundle ID | `io.novarock.readlet` (also used by the direct-download edition) |
 | SKU | `readlet-mac` |
-| Price | USD 9.99 (Price tier "$9.99"; other storefronts follow Apple's equalization) |
+| Price | **Free** (no in-app purchases). Keeping it free and open source is what allows *Sign in with ChatGPT* without OpenAI approval — a paid price or IAP would require applying first. |
 | Category | Primary: Education · Secondary: Productivity |
 | Age rating | 4+ (no objectionable content; user-generated web content is the user's own import — answer "No" to all content questions; "Unrestricted web access": No — the app does not browse the web freely, it imports pages the user links) |
 | Minimum macOS | 14.0, universal binary (Apple Silicon + Intel) |
@@ -21,7 +21,7 @@ Everything in this folder is ready to paste into App Store Connect. Steps marked
 ## 1. Apple Developer Program (you)
 
 1. Enroll at <https://developer.apple.com/programs/> (USD 99/year). An organization account shows "Novarock" as the seller; an individual account shows your name.
-2. App Store Connect → **Business**: accept the **Paid Apps** agreement, fill in banking and tax forms (required before a paid app can go on sale).
+2. App Store Connect → **Business**: the **Free Apps** agreement is accepted with the membership; no banking or tax forms are needed for a free app.
 
 ## 2. Identifiers, certificates, profile (you, ~15 min)
 
@@ -53,7 +53,7 @@ Then fill in, per language (en-US, zh-Hans, ja — add the localizations under *
 | Keywords | `keywords.txt` |
 | What's New | `release_notes.txt` |
 
-Also: support URL, marketing URL, privacy policy URL (above), category, age rating, price (**Pricing and Availability → $9.99**), **App Privacy** (from `app_privacy.md`), copyright `© 2026 Novarock`.
+Also: support URL, marketing URL, privacy policy URL (above), category, age rating, price (**Pricing and Availability → Free**), **App Privacy** (from `app_privacy.md`), copyright `© 2026 Novarock`.
 
 Screenshots: see `screenshots.md` (at least one 2880×1800 per language; English can be reused).
 
@@ -90,6 +90,7 @@ App Review must be able to try AI features. Edit `review_notes.txt`: replace `<R
    - *5.1.2 data sharing with AI* → consent notice before the first AI request, privacy policy.
    - *2.4.5 (self-updating)* → the App Store edition has no updater (compiled with `-DMAS`).
    - *ATS exceptions* → explained in the notes (user-chosen and local servers).
+   - *4.8 Login services* → not applicable: there is no app account; ChatGPT sign-in is only an optional AI provider, like entering an API key.
 
 ## 7. Differences of the App Store edition
 
@@ -97,7 +98,7 @@ App Review must be able to try AI features. Edit `review_notes.txt`: replace `<R
 |---|---|---|
 | Sandbox | no | yes (data in `~/Library/Containers/io.novarock.readlet`) |
 | Update check | built in | through the App Store |
-| Sign in with ChatGPT | yes | hidden until OpenAI approves plan usage for a paid app (apply: <https://openai.com/form/sign-in-with-chatgpt-interest/>) — then build with the flag removed in `AppInfo.chatGPTAvailable` |
+| Sign in with ChatGPT | yes | yes (free + open source; a paid edition would need OpenAI approval: <https://openai.com/form/sign-in-with-chatgpt-interest/>) |
 | `api_key_command` in config | yes | no (sandbox can't run shell commands) — keys go in the Keychain via Settings |
 | Markdown images next to the file | yes | only if they are inside the imported file's folder permission (sandbox) |
 

@@ -24,10 +24,11 @@ MarginNote のように学ぶ
 
 AI と声は自由に選択
 • Anthropic・OpenAI・OpenRouter・DeepSeek・Qwen など互換 API、または Ollama / LM Studio のローカルモデル。
+• ChatGPT Plus / Pro をお持ちなら、ChatGPT でサインインしてプランをそのまま利用。API キーは不要です。
 • 音声：無料の macOS システム音声、または OpenAI・Gemini・Qwen-TTS・Azure・ElevenLabs・MiniMax・Volcengine。
 • キーはキーチェーンに保存。アカウント不要・トラッキングなし。内容は設定したサービスにだけ送信されます。
 
 書き出し
 • 対訳 PDF、マインドマップと抜粋の Markdown（Obsidian 向け）、Anki 用フラッシュカード、解説の MP4 動画。
 
-macOS 14 以降が必要です。AI 機能には AI モデル（API キー、ゲートウェイ、またはローカルモデル）が必要です。閲覧・ノート・システム音声での解説は設定なしで使えます。
+macOS 14 以降が必要です。AI 機能には AI モデル（API キー、ゲートウェイ、ChatGPT プラン、またはローカルモデル）が必要です。閲覧・ノート・システム音声での解説は設定なしで使えます。

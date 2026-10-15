@@ -24,10 +24,11 @@ Readlet 让难读的东西变好读。打开一篇论文、一本书或一篇网
 
 模型和声音你来选
 • 自带模型：Anthropic、OpenAI、OpenRouter、DeepSeek、通义千问等任意兼容接口，或用 Ollama / LM Studio 跑本机模型。
+• 有 ChatGPT Plus / Pro？用 ChatGPT 登录即可使用你的套餐额度，无需 API Key。
 • 语音：免费的 macOS 系统声音，或 OpenAI、Google Gemini、Qwen-TTS、Azure、ElevenLabs、MiniMax、火山引擎在线语音。
 • Key 保存在系统钥匙串；无需注册、没有追踪，内容只发送给你配置的服务。
 
 导出
 • 双语 PDF、脑图与摘录 Markdown（适配 Obsidian）、闪卡导出到 Anki、讲解导出为 MP4 视频。
 
-需要 macOS 14 或更高版本。AI 功能需要可用的 AI 模型（你的 API Key、网关或本机模型）；阅读、笔记和系统语音讲解无需配置即可使用。
+需要 macOS 14 或更高版本。AI 功能需要可用的 AI 模型（你的 API Key、网关、ChatGPT 套餐或本机模型）；阅读、笔记和系统语音讲解无需配置即可使用。

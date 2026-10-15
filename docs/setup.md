@@ -10,7 +10,7 @@ The first launch opens a **setup guide** (Help → Welcome & Setup Guide… reop
 |---|---|---|
 | **Your own gateway / API** | Anthropic, OpenAI or any compatible API, or a company gateway | Base URL + API key |
 | **Local model** | Offline use, privacy | [Ollama](https://ollama.com) or [LM Studio](https://lmstudio.ai) running on your Mac |
-| **ChatGPT account** *(direct-download edition)* | ChatGPT Plus / Pro subscribers | A ChatGPT account — no API key |
+| **ChatGPT account** | ChatGPT Plus / Pro subscribers | A ChatGPT account — no API key |
 
 ### Your own gateway
 
@@ -36,9 +36,7 @@ Errors explain themselves: `401/403` → key or permission; `404` → URL or mod
 
 ### ChatGPT account (Sign in with ChatGPT)
 
-Available in the direct-download edition. *Settings → General → ChatGPT Account → Continue with ChatGPT* opens your browser; sign in and allow Readlet to use your plan. Then choose *ChatGPT account* as the protocol (or click **Use ChatGPT for Translation & Assistant**). Usage counts toward your plan; *Manage Usage* opens ChatGPT's usage page.
-
-> The Mac App Store edition doesn't offer this option yet: OpenAI currently allows plan usage in open-source and personal apps, and in paid apps only after approval.
+*Settings → General → ChatGPT Account → Continue with ChatGPT* opens your browser; sign in and allow Readlet to use your plan. Then choose *ChatGPT account* as the protocol (or click **Use ChatGPT for Translation & Assistant**). Usage counts toward your plan; *Manage Usage* opens ChatGPT's usage page.
 
 ## 2. Voice for AI Narration
 

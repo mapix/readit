@@ -1,8 +1,8 @@
 # Readlet
 
-A native macOS app (SwiftUI + PDFKit) for reading PDFs, EPUBs and web articles bilingually with the original layout preserved, listening to an AI explain every page, and taking MarginNote-style notes — excerpts, mind maps and links across documents. Bring your own AI: any Anthropic / OpenAI-compatible gateway, a local model, or (direct edition) your ChatGPT plan.
+A native macOS app (SwiftUI + PDFKit) for reading PDFs, EPUBs and web articles bilingually with the original layout preserved, listening to an AI explain every page, and taking MarginNote-style notes — excerpts, mind maps and links across documents. Bring your own AI: any Anthropic / OpenAI-compatible gateway, a local model, or your ChatGPT plan.
 
-- **Get it**: [Mac App Store](https://readit.novarock.io/#download) (paid, sandboxed, updates through the store) or the free direct download from <https://readit.novarock.io>. Both editions have the same features apart from the [differences listed here](AppStore/README.md#7-differences-of-the-app-store-edition).
+- **Get it** (free, open source): [Mac App Store](https://readit.novarock.io/#download) (sandboxed, updates through the store) or the direct download from <https://readit.novarock.io>. Both editions have the same features apart from the [differences listed here](AppStore/README.md#7-differences-of-the-app-store-edition).
 - **Set up**: the first launch opens a short guide; details in [docs/setup.md](docs/setup.md) and [docs/tts-providers.md](docs/tts-providers.md).
 - **Source**: https://github.com/mapix/readit (MIT licensed).
 - **Build**: `./build_app.sh` (direct edition → `/Applications/Readlet.app`, `dist/Readlet-<version>.zip`) · `./build_mas.sh` (App Store package) — see [Building](#building).

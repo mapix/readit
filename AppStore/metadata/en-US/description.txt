@@ -24,10 +24,11 @@ IMPORT ANYTHING
 
 YOUR AI, YOUR CHOICE
 • Bring your own model: Anthropic, OpenAI, OpenRouter, DeepSeek, Qwen or any compatible gateway, or a local model with Ollama or LM Studio.
+• Have ChatGPT Plus or Pro? Sign in with ChatGPT and use your plan — no API key needed.
 • Voices: the free macOS system voice, or online voices from OpenAI, Google Gemini, Qwen-TTS, Azure, ElevenLabs, MiniMax and Volcengine.
 • Keys stay in your Keychain. No account, no tracking: content goes only to the services you configure.
 
 EXPORT
 • Bilingual PDF, mind map and excerpts as Markdown (Obsidian-friendly), flashcards to Anki, narration as MP4 video.
 
-Readlet requires macOS 14 or later. AI features need access to an AI model (your API key, gateway or a local model); reading, notes and system-voice narration work without one.
+Readlet requires macOS 14 or later. AI features need access to an AI model (your API key, gateway, ChatGPT plan or a local model); reading, notes and system-voice narration work without one.
