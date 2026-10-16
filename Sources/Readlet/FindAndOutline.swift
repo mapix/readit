@@ -110,7 +110,13 @@ struct FindBar: View {
             TextField(L("在文档中查找"), text: $find.query)
                 .textFieldStyle(.plain).frame(width: 220)
                 .focused($focused)
-                .onSubmit { NSEvent.modifierFlags.contains(.shift) ? find.previous() : (find.results.isEmpty ? find.search() : find.next()) }
+                .onSubmit {
+                    #if os(macOS)
+                    NSEvent.modifierFlags.contains(.shift) ? find.previous() : (find.results.isEmpty ? find.search() : find.next())
+                    #else
+                    find.results.isEmpty ? find.search() : find.next()
+                    #endif
+                }
             if find.searching { ProgressView().controlSize(.small) }
             Text(find.results.isEmpty ? (find.query.isEmpty || find.searching ? "" : L("无结果")) : "\(find.index + 1)/\(find.results.count)")
                 .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)

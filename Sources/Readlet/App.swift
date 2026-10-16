@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 import PDFKit
 import UniformTypeIdentifiers
@@ -18,7 +19,7 @@ struct ReadletApp: App {
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button(LF("关于 %@", AppInfo.name)) { showAboutPanel() }
-                if AppInfo.selfUpdates { Button(L("检查更新…")) { Task { await UpdateChecker.shared.check(manual: true) } } }
+                Button(L("检查更新…")) { Task { await UpdateChecker.shared.check(manual: true) } }
             }
             CommandGroup(replacing: .help) {
                 Button(L("键盘快捷键")) { ShortcutsPanel.show() }.keyboardShortcut("/")
@@ -33,6 +34,8 @@ struct ReadletApp: App {
                 Button(L("导入 PDF 或文档…")) { importPanel() }.keyboardShortcut("o")
                 Button(L("从网页导入…")) { WebImportPanel.show() }.keyboardShortcut("o", modifiers: [.command, .shift])
                 Button(L("新建笔记本")) { store.newNotebook() }.keyboardShortcut("n", modifiers: [.command, .shift])
+                Divider()
+                Button(L("立即同步 iCloud")) { CloudSync.shared.syncNow() }
                 Divider()
                 Button(L("导出双语 PDF…")) { exportBilingual() }.keyboardShortcut("e", modifiers: [.command, .shift])
                 Button(L("导出脑图为 Markdown…")) { exportMarkdown() }
@@ -209,6 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         NSApp.activate(ignoringOtherApps: true)
+        CloudSync.shared.start()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { MainActor.assumeIsolated { DocWindows.shared.restore() } }
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { MainActor.assumeIsolated { UpdateChecker.shared.checkOnLaunch() } }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { MainActor.assumeIsolated { OnboardingPanel.showIfNeeded() } }
@@ -348,3 +352,4 @@ struct WindowFinder: NSViewRepresentable {
     }
     func updateNSView(_ v: NSView, context: Context) { DispatchQueue.main.async { found(v.window) } }
 }
+#endif

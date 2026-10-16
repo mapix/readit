@@ -1,7 +1,11 @@
 import Foundation
 import AVFoundation
 import PDFKit
+#if os(macOS)
 import AppKit
+#elseif os(iOS)
+import UIKit
+#endif
 import CoreText
 
 /// Exports the AI narration of the current document as ONE clean MP4 pass (page 0 → last page, every segment
@@ -151,8 +155,9 @@ final class NarrationExporter: ObservableObject {
         if skipped > 0 { log("skipped segments without audio: \(skipped)") }
         guard !pages.isEmpty else { throw TranslateError.bad(L("没有可导出的讲解内容")) }
 
+        let homeDir = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
         let base = ProcessInfo.processInfo.environment["EXPORT_DIR"].map { URL(fileURLWithPath: $0) }
-            ?? fm.homeDirectoryForCurrentUser.appendingPathComponent("Movies/Readlet", isDirectory: true)
+            ?? homeDir.appendingPathComponent("Movies/Readlet", isDirectory: true)
         try fm.createDirectory(at: base, withIntermediateDirectories: true)
         let safeTitle = title.replacingOccurrences(of: "[/:\\\\]", with: "-", options: .regularExpression).trimmingCharacters(in: .whitespaces)
         let out = base.appendingPathComponent("\(safeTitle.isEmpty ? "narration" : safeTitle)-AI解读.mp4")
@@ -175,7 +180,9 @@ final class NarrationExporter: ObservableObject {
         outputURL = out
         phase = .done; detail = ""
         log("done \(out.path)")
+        #if os(macOS)
         if ProcessInfo.processInfo.environment["BIREADER_SCRIPT"] == nil { NSWorkspace.shared.activateFileViewerSelecting([out]) }
+        #endif
     }
 
     // MARK: focus region (same idea as ReaderController.highlightNarration, in page coordinates of the shown doc)
@@ -235,8 +242,7 @@ final class NarrationExporter: ObservableObject {
         let pw = rotated ? b.height : b.width, ph = rotated ? b.width : b.height
         let s = min(availW / pw, availH / ph) * 2      // 2x for crisp text
         guard s.isSane, s > 0 else { return nil }
-        let img = pg.thumbnail(of: NSSize(width: pw * s, height: ph * s), for: .cropBox)
-        return img.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        return PlatformPDF.thumbnailCGImage(pg, size: CGSize(width: pw * s, height: ph * s), for: .cropBox)
     }
 }
 
@@ -462,7 +468,7 @@ enum VideoComposer {
         let s = min(area.width / max(1, iw), area.height / max(1, ih))
         let dst = CGRect(x: area.midX - iw * s / 2, y: area.maxY - ih * s, width: iw * s, height: ih * s)
         if dst.isSane {
-            ctx.setFillColor(.white); ctx.fill(dst)
+            ctx.setFillColor(CGColor(gray: 1, alpha: 1)); ctx.fill(dst)
             ctx.interpolationQuality = .high
             ctx.draw(page.image, in: dst)
             if !page.rotated, let r = seg.focus, page.box.isSane {

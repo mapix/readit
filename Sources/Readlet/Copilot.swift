@@ -394,7 +394,7 @@ struct MessageView: View {
                 if !streaming && !message.text.isEmpty {
                     // always laid out (fixed height) and only faded in, so hovering never shifts the list
                     HStack(spacing: 10) {
-                        Button { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(message.text, forType: .string) } label: { Label(L("复制"), systemImage: "doc.on.doc") }
+                        Button { PlatformClipboard.copy(message.text) } label: { Label(L("复制"), systemImage: "doc.on.doc") }
                     }
                     .buttonStyle(.borderless).font(.system(size: 10.5)).foregroundStyle(.secondary)
                     .frame(height: 16)

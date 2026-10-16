@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 
 /// Where the floating narration player docks inside the reader.
@@ -194,7 +195,7 @@ struct NarratorBar: View {
             }
             .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 6)
             // row 2: resume info + secondary controls
-            HStack(spacing: 14) {
+            HStack(spacing: 10) {
                 if n.effectiveProvider == .system, !compactHintDismissed, SystemTTS.hasOnlyCompactVoices {
                     Button { NSWorkspace.shared.open(SystemTTS.spokenContentSettingsURL); compactHintDismissed = true } label: {
                         Label(L("声音太机械？下载「高级」系统声音"), systemImage: "arrow.down.circle")
@@ -213,7 +214,7 @@ struct NarratorBar: View {
                     }
                     .buttonStyle(.plain).foregroundStyle(.purple).help(L("从当前页重新开始"))
                 }
-                Spacer(minLength: 6)
+                Spacer(minLength: 4)
                 Menu {
                     ForEach([0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0] as [Float], id: \.self) { r in
                         Button { n.rate = r } label: { if n.rate == r { Label(rateText(r), systemImage: "checkmark") } else { Text(rateText(r)) } }
@@ -229,7 +230,7 @@ struct NarratorBar: View {
                         ForEach(TTSProvider.allCases) { Text(L($0.shortTitle)).tag($0) }
                     }
                     Button(L("语音设置…")) { NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) }
-                } label: { Label(n.currentVoiceName, systemImage: n.effectiveProvider == .system ? "person.wave.2" : "cloud") }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help(L("音色"))
+                } label: { Label(n.currentVoiceName, systemImage: n.effectiveProvider == .system ? "person.wave.2" : "cloud").lineLimit(1) }.menuStyle(.borderlessButton).menuIndicator(.hidden).help(L("音色"))
                 styleMenu
                 recordToggle
                 Button { prepareEstimate = estimateText(n.preparePlan()); confirmPrepare = true } label: { Image(systemName: "tray.and.arrow.down") }
@@ -256,7 +257,7 @@ struct NarratorBar: View {
             .foregroundStyle(Color(white: 0.3))
             .padding(.horizontal, 14).padding(.bottom, 10)
         }
-        .frame(width: 640)
+        .frame(minWidth: 320, idealWidth: 620, maxWidth: 640)
         .background(RoundedRectangle(cornerRadius: 14).fill(.regularMaterial))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.purple.opacity(0.25)))
         .shadow(color: .black.opacity(0.18), radius: 14, y: 4)
@@ -410,3 +411,4 @@ struct FromHereButton: View {
             .transition(.opacity.combined(with: .scale(scale: 0.9)))
     }
 }
+#endif

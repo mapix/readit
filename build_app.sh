@@ -12,7 +12,7 @@
 set -e
 cd "$(dirname "$0")"
 VERSION=$(cat VERSION)
-BUILD=$(git rev-list --count HEAD 2>/dev/null || echo 1)
+BUILD=${BUILD:-$(git rev-list --count HEAD 2>/dev/null || echo 1)}
 MAS=${MAS:-0}
 NAME=Readlet
 BUNDLE_ID=io.novarock.readlet
@@ -178,9 +178,10 @@ X
 fi
 
 # -------------------------------------------------------------------- direct download
+TEAM_ID="${TEAM_ID:-BDH2HLQA9V}"
 cat > build/readlet.entitlements <<E
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0//EN">
 <plist version="1.0"><dict>
   <key>com.apple.security.device.audio-input</key><true/>
 </dict></plist>
@@ -191,8 +192,44 @@ if [ -n "${DEVELOPER_ID:-}" ]; then
 else
   LOCAL_SIGN=$(security find-identity -v -p codesigning | sed -n 's/.*"\(Apple Development: Weifeng Luo[^"]*\)"/\1/p' | head -1)
   if [ -n "$LOCAL_SIGN" ]; then
-    echo "signing with: $LOCAL_SIGN"
-    codesign --force --deep --options runtime --entitlements build/readlet.entitlements -s "$LOCAL_SIGN" "$APP"
+    echo "signing with: $LOCAL_SIGN + Xcode Cloud-Managed Developer ID (Team $TEAM_ID)"
+    codesign --force --deep --options runtime --entitlements build/readlet.entitlements --generate-entitlement-der -s "$LOCAL_SIGN" "$APP"
+    DEV_ARCHIVE="build/$NAME-devid.xcarchive"
+    rm -rf "$DEV_ARCHIVE" "build/export-devid"
+    mkdir -p "$DEV_ARCHIVE/Products/Applications"
+    cp -R "$APP" "$DEV_ARCHIVE/Products/Applications/$NAME.app"
+    cat > "$DEV_ARCHIVE/Info.plist" <<A
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>ApplicationProperties</key><dict>
+    <key>ApplicationPath</key><string>Applications/$NAME.app</string>
+    <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
+    <key>CFBundleShortVersionString</key><string>$VERSION</string>
+    <key>CFBundleVersion</key><string>$BUILD</string>
+    <key>SigningIdentity</key><string>$LOCAL_SIGN</string>
+    <key>Team</key><string>$TEAM_ID</string>
+  </dict>
+  <key>ArchiveVersion</key><integer>2</integer>
+  <key>CreationDate</key><date>$(date -u +%Y-%m-%dT%H:%M:%SZ)</date>
+  <key>Name</key><string>$NAME</string>
+  <key>SchemeName</key><string>$NAME</string>
+</dict></plist>
+A
+    cat > build/ExportDevID.plist <<X
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>method</key><string>developer-id</string>
+  <key>teamID</key><string>$TEAM_ID</string>
+  <key>signingStyle</key><string>automatic</string>
+</dict></plist>
+X
+    if xcodebuild -exportArchive -archivePath "$DEV_ARCHIVE" -exportOptionsPlist build/ExportDevID.plist -exportPath build/export-devid -allowProvisioningUpdates 2>/dev/null && [ -d "build/export-devid/$NAME.app" ]; then
+      rm -rf "$APP"
+      cp -R "build/export-devid/$NAME.app" "$APP"
+      echo "signed with Cloud-Managed Developer ID Application ($TEAM_ID)"
+    fi
   else
     codesign --force --deep -s - "$APP"     # ad-hoc: fine locally, Gatekeeper asks on other Macs
   fi
@@ -200,14 +237,6 @@ fi
 
 rm -f "dist/$NAME-$VERSION.zip"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/$NAME-$VERSION.zip"
-if [ -n "${DEVELOPER_ID:-}" ] && [ -n "${NOTARY_PROFILE:-}" ]; then
-  echo "notarizing (this takes a few minutes)…"
-  xcrun notarytool submit "dist/$NAME-$VERSION.zip" --keychain-profile "$NOTARY_PROFILE" --wait
-  xcrun stapler staple "$APP"
-  rm -f "dist/$NAME-$VERSION.zip"
-  ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/$NAME-$VERSION.zip"
-  spctl --assess --type execute -v "$APP" || true
-fi
 echo "packaged dist/$NAME-$VERSION.zip"
 
 if [ "${INSTALL:-1}" = "1" ]; then

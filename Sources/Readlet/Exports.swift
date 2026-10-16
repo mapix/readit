@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import AppKit
 import UniformTypeIdentifiers
@@ -90,3 +91,4 @@ enum Exports {
     }
     Exports.save(r.text, name: nb.name + " – Anki", ext: "txt")
 }
+#endif

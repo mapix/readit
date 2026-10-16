@@ -32,6 +32,7 @@ enum MN {
     static var scheme: ColorScheme { t.isDark ? .dark : .light }
 }
 
+#if os(macOS)
 /// Page tint for the themes: a non-interactive overlay view above the PDF content using a compositing
 /// filter (multiply for 护眼, difference for 夜间). Text stays vector-sharp, PDFKit is untouched.
 final class TintOverlay: NSView {
@@ -156,6 +157,10 @@ struct StudyToolbar: View {
             .layoutPriority(0)
             .help(rc.docId.flatMap { store.doc($0)?.title } ?? "")
 
+            if let docId = rc.docId, let d = store.doc(docId) {
+                DocTagMenuBadge(store: store, doc: d)
+            }
+
             Spacer(minLength: 8)
 
             // reading mode
@@ -187,6 +192,60 @@ struct StudyToolbar: View {
                     .overlay(Circle().stroke(Color.white.opacity(0.6)))
                     .help(L("当前摘录颜色"))
             }
+            // PDF Editing menu (truncate from position, erase region, delete pages, restore)
+            Menu {
+                Button {
+                    rc.truncateMode.toggle()
+                } label: {
+                    Label(rc.truncateMode ? L("退出截断模式 (Esc)") : L("点击页面位置截断后面…"), systemImage: "scissors")
+                }
+                Button {
+                    rc.eraseMode.toggle()
+                } label: {
+                    Label(rc.eraseMode ? L("退出框选擦除 (Esc)") : L("框选擦除页面区域…"), systemImage: "rectangle.dashed.and.paperclip")
+                }
+                if let docId = rc.docId, let ses = store.sessions[docId] {
+                    Divider()
+                    if ses.pageCount > 1 {
+                        Button(role: .destructive) {
+                            PDFEditor.deletePage(session: ses, pageIndex: rc.currentPageIndex)
+                        } label: {
+                            Label(LF("删除当前页 (p.%d)", rc.currentPageIndex + 1), systemImage: "trash")
+                        }
+                        if rc.currentPageIndex + 1 < ses.pageCount {
+                            Button(role: .destructive) {
+                                PDFEditor.deletePagesAfter(session: ses, pageIndex: rc.currentPageIndex)
+                            } label: {
+                                Label(L("删除当前页之后的所有页"), systemImage: "arrow.down.to.line")
+                            }
+                        }
+                        if rc.currentPageIndex > 0 {
+                            Button(role: .destructive) {
+                                PDFEditor.deletePagesBefore(session: ses, pageIndex: rc.currentPageIndex)
+                            } label: {
+                                Label(L("删除当前页之前的所有页"), systemImage: "arrow.up.to.line")
+                            }
+                        }
+                    }
+                    if PDFEditor.hasBackup(docId) {
+                        Divider()
+                        Button {
+                            PDFEditor.restoreOriginal(session: ses)
+                        } label: {
+                            Label(L("恢复原始未编辑 PDF"), systemImage: "arrow.uturn.backward")
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "scissors")
+                    .font(.system(size: 13))
+                    .foregroundStyle((rc.truncateMode || rc.eraseMode) ? Color.white : MN.barDim)
+                    .frame(width: 28, height: 26)
+                    .background(RoundedRectangle(cornerRadius: 5).fill((rc.truncateMode || rc.eraseMode) ? Color.red.opacity(0.75) : Color.clear))
+            }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .help(L("编辑 PDF：从指定位置截断后面、擦除区域或删除多余页"))
+
             Divider().frame(height: 18).overlay(Color.white.opacity(0.2))
             // layout: reader | split | map
             HStack(spacing: 2) {
@@ -278,15 +337,104 @@ struct TB: View {
     }
 }
 
+// MARK: - Tag Helpers & Badges
+
+func statusTagColor(_ st: DocStatusTag) -> Color {
+    switch st {
+    case .todo: return Color(nsColor: NSColor(srgbRed: 0.23, green: 0.51, blue: 0.96, alpha: 1))   // Blue
+    case .doing: return Color(nsColor: NSColor(srgbRed: 0.90, green: 0.36, blue: 0.14, alpha: 1))  // Warm Orange
+    case .done: return Color(nsColor: NSColor(srgbRed: 0.08, green: 0.68, blue: 0.44, alpha: 1))   // Emerald Green
+    }
+}
+
+@MainActor func addCustomTagPrompt(_ docId: UUID) {
+    let a = NSAlert()
+    a.messageText = L("添加标签")
+    a.informativeText = L("输入标签名称（如 TODO、DOING、DONE、Paper、精读 等）：")
+    a.addButton(withTitle: L("确定"))
+    a.addButton(withTitle: L("取消"))
+    let f = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+    f.placeholderString = "Paper / LLM / 必读"
+    a.accessoryView = f
+    a.window.initialFirstResponder = f
+    if a.runModal() == .alertFirstButtonReturn {
+        let parts = f.stringValue.split(whereSeparator: { $0 == "," || $0 == "，" }).map { String($0) }
+        for p in parts { Store.shared.addTag(docId, p) }
+    }
+}
+
+struct DocTagMenuBadge: View {
+    @ObservedObject var store: Store
+    let doc: Doc
+    var body: some View {
+        Menu {
+            Section(L("阅读状态标签")) {
+                ForEach(DocStatusTag.allCases) { st in
+                    Button {
+                        store.setStatusTag(doc.id, doc.statusTag == st ? nil : st)
+                    } label: {
+                        if doc.statusTag == st {
+                            Label(st.label, systemImage: "checkmark")
+                        } else {
+                            Label(st.label, systemImage: st.icon)
+                        }
+                    }
+                }
+                if doc.statusTag != nil {
+                    Button(L("清除状态标签")) { store.setStatusTag(doc.id, nil) }
+                }
+            }
+            let allCustom = store.allCustomTags
+            if !allCustom.isEmpty {
+                Divider()
+                Section(L("自定义标签")) {
+                    ForEach(allCustom, id: \.self) { t in
+                        let has = doc.customTags.contains { $0.caseInsensitiveCompare(t) == .orderedSame }
+                        Button {
+                            store.toggleTag(doc.id, t)
+                        } label: {
+                            if has { Label("#" + t, systemImage: "checkmark") }
+                            else { Text("#" + t) }
+                        }
+                    }
+                }
+            }
+            Divider()
+            Button(L("添加新标签…")) { addCustomTagPrompt(doc.id) }
+        } label: {
+            HStack(spacing: 4) {
+                if let st = doc.statusTag {
+                    Circle().fill(statusTagColor(st)).frame(width: 7, height: 7)
+                    Text(st.label).font(.system(size: 10.5, weight: .bold))
+                } else {
+                    Image(systemName: "tag").font(.system(size: 10))
+                    Text(L("标签")).font(.system(size: 10.5))
+                }
+                if let firstCustom = doc.customTags.first {
+                    Text("#" + firstCustom).font(.system(size: 10)).opacity(0.85)
+                }
+            }
+            .foregroundStyle(MN.barText)
+            .padding(.horizontal, 7).padding(.vertical, 3)
+            .background(Capsule().fill(Color.white.opacity(0.12)))
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .help(L("点击设置文档标签（TODO / DOING / DONE 或自定义标签）"))
+    }
+}
+
 // MARK: - library (MarginNote "文档 / 学习" home)
 
 struct LibraryView: View {
     @ObservedObject var store: Store
     @ObservedObject var wins = DocWindows.shared
+    @ObservedObject var updater = UpdateChecker.shared
+    @ObservedObject var cloud = CloudSync.shared
     @State private var tab = 0
     @State private var openNotebook: UUID?
     @State private var renaming: UUID?
     @State private var draft = ""
+    @State private var selectedTagFilter: String = "ALL"
 
     var body: some View {
         VStack(spacing: 0) {
@@ -303,6 +451,33 @@ struct LibraryView: View {
                         .fixedSize()
                 }
                 Spacer(minLength: 8)
+                Button { cloud.syncNow() } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: cloud.state.isSyncing ? "arrow.triangle.2.circlepath.icloud.fill" : (cloud.isEnabled ? "checkmark.icloud.fill" : "icloud.slash"))
+                            .font(.system(size: 11.5))
+                        Text(cloud.state.isSyncing ? L("同步中…") : "iCloud")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundStyle(cloud.isEnabled ? Color.cyan : MN.barDim)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Capsule().fill(Color.white.opacity(0.08)))
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
+                .help(cloud.cloudLocationDescription.isEmpty ? L("点击立即同步 iCloud（Mac 与 iPhone 自动同步）") : "iCloud: \(cloud.cloudLocationDescription)")
+                if let rel = updater.availableRelease {
+                    Button { updater.openDownload(for: rel) } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.up.circle.fill")
+                            Text(LF("新版本 %@", rel.version)).font(.system(size: 11.5, weight: .semibold))
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 9).padding(.vertical, 3)
+                        .background(Capsule().fill(Color.green.opacity(0.85)))
+                    }
+                    .buttonStyle(.plain)
+                    .fixedSize()
+                }
                 Button { importInto(openNotebook) } label: { Label(L("导入 PDF"), systemImage: "plus") }
                     .buttonStyle(.plain).foregroundStyle(MN.barText).fixedSize()
                 Button { WebImportPanel.show(notebook: openNotebook) } label: { Label(L("从网页导入"), systemImage: "globe") }
@@ -314,11 +489,28 @@ struct LibraryView: View {
                 }
                 LangMenu()
                 ThemeMenu()
+                Button { OnboardingPanel.show() } label: {
+                    Image(systemName: "sparkles").foregroundStyle(MN.barText)
+                }
+                .buttonStyle(.plain)
+                .help(L("打开设置向导"))
                 SettingsLink { Image(systemName: "gearshape").foregroundStyle(MN.barText) }.buttonStyle(.plain)
             }
             .padding(.horizontal, 14)
             .frame(height: 40)
             .background(MN.bar)
+
+            if (tab == 1 || openNotebook != nil) && !store.lib.docs.isEmpty {
+                let scopeDocs: [Doc] = {
+                    if let id = openNotebook, let nb = store.lib.notebooks.first(where: { $0.id == id }) {
+                        return nb.docIds.compactMap { store.doc($0) }
+                    }
+                    return store.lib.docs
+                }()
+                if !scopeDocs.isEmpty {
+                    tagFilterAndRatioBar(docs: scopeDocs)
+                }
+            }
 
             ScrollView {
                 if let id = openNotebook, let nb = store.lib.notebooks.first(where: { $0.id == id }) {
@@ -328,7 +520,7 @@ struct LibraryView: View {
                         if tab == 0 {
                             ForEach(store.lib.notebooks) { nb in notebookTile(nb) }
                         } else {
-                            ForEach(store.lib.docs) { d in docTile(d, notebook: nil) }
+                            ForEach(filteredDocs(store.lib.docs)) { d in docTile(d, notebook: nil) }
                             importTile(nil)
                             webImportTile(nil)
                         }
@@ -339,6 +531,121 @@ struct LibraryView: View {
             .background(MN.shelf)
         }
         .onReceive(NotificationCenter.default.publisher(for: .showNotebook)) { n in if let id = n.object as? UUID { openNotebook = id; tab = 0 } }
+    }
+
+    func filteredDocs(_ docs: [Doc]) -> [Doc] {
+        switch selectedTagFilter {
+        case "ALL":
+            return docs
+        case "UNTAGGED":
+            return docs.filter { $0.tags.isEmpty }
+        default:
+            return docs.filter { d in
+                d.tags.contains { $0.caseInsensitiveCompare(selectedTagFilter) == .orderedSame }
+            }
+        }
+    }
+
+    @ViewBuilder
+    func tagFilterAndRatioBar(docs: [Doc]) -> some View {
+        let total = max(1, docs.count)
+        let todoCount = docs.filter { $0.statusTag == .todo }.count
+        let doingCount = docs.filter { $0.statusTag == .doing }.count
+        let doneCount = docs.filter { $0.statusTag == .done }.count
+        let untaggedCount = docs.filter { $0.statusTag == nil }.count
+        let todoPct = Int((Double(todoCount) / Double(total) * 100).rounded())
+        let doingPct = Int((Double(doingCount) / Double(total) * 100).rounded())
+        let donePct = Int((Double(doneCount) / Double(total) * 100).rounded())
+        let avgReadPct = Int((docs.map(\.progressFraction).reduce(0, +) / Double(total) * 100).rounded())
+
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        filterPill(id: "ALL", title: L("全部"), count: docs.count, pct: nil, color: .secondary)
+                        filterPill(id: "TODO", title: "TODO", count: todoCount, pct: todoPct, color: statusTagColor(.todo))
+                        filterPill(id: "DOING", title: "DOING", count: doingCount, pct: doingPct, color: statusTagColor(.doing))
+                        filterPill(id: "DONE", title: "DONE", count: doneCount, pct: donePct, color: statusTagColor(.done))
+                        if untaggedCount > 0 {
+                            filterPill(id: "UNTAGGED", title: L("未标记"), count: untaggedCount, pct: Int((Double(untaggedCount) / Double(total) * 100).rounded()), color: .gray)
+                        }
+                        ForEach(store.allCustomTags, id: \.self) { ct in
+                            let c = docs.filter { d in d.customTags.contains { $0.caseInsensitiveCompare(ct) == .orderedSame } }.count
+                            if c > 0 {
+                                filterPill(id: ct, title: "#" + ct, count: c, pct: Int((Double(c) / Double(total) * 100).rounded()), color: .purple)
+                            }
+                        }
+                    }
+                }
+                Spacer(minLength: 8)
+                HStack(spacing: 6) {
+                    Image(systemName: "chart.bar.fill").font(.system(size: 11)).foregroundStyle(MN.accent)
+                    Text(LF("平均阅读 %d%%", avgReadPct))
+                        .font(.system(size: 11.5, weight: .medium))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            // Proportional visual ratio bar for TODO / DOING / DONE / Untagged
+            HStack(spacing: 10) {
+                GeometryReader { g in
+                    let w = g.size.width
+                    let wTodo = w * CGFloat(todoCount) / CGFloat(total)
+                    let wDoing = w * CGFloat(doingCount) / CGFloat(total)
+                    let wDone = w * CGFloat(doneCount) / CGFloat(total)
+                    HStack(spacing: 0) {
+                        if todoCount > 0 { Rectangle().fill(statusTagColor(.todo)).frame(width: wTodo) }
+                        if doingCount > 0 { Rectangle().fill(statusTagColor(.doing)).frame(width: wDoing) }
+                        if doneCount > 0 { Rectangle().fill(statusTagColor(.done)).frame(width: wDone) }
+                        if untaggedCount > 0 { Rectangle().fill(Color.secondary.opacity(0.25)) }
+                    }
+                    .clipShape(Capsule())
+                }
+                .frame(height: 6)
+
+                Text("TODO \(todoPct)% · DOING \(doingPct)% · DONE \(donePct)%")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 10)
+        .background(Color.primary.opacity(0.03))
+        .overlay(Rectangle().fill(Color.primary.opacity(0.07)).frame(height: 0.5), alignment: .bottom)
+    }
+
+    private func filterPill(id: String, title: String, count: Int, pct: Int?, color: Color) -> some View {
+        let active = selectedTagFilter.caseInsensitiveCompare(id) == .orderedSame
+        return Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                selectedTagFilter = (active && id != "ALL") ? "ALL" : id
+            }
+        } label: {
+            HStack(spacing: 5) {
+                if id != "ALL" {
+                    Circle().fill(active ? .white : color).frame(width: 6.5, height: 6.5)
+                }
+                Text(title).font(.system(size: 11.5, weight: active ? .bold : .medium))
+                if let pct {
+                    Text("\(count) · \(pct)%")
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .opacity(active ? 0.92 : 0.72)
+                } else {
+                    Text("\(count)")
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .opacity(active ? 0.92 : 0.72)
+                }
+            }
+            .foregroundStyle(active ? Color.white : Color.primary.opacity(0.85))
+            .padding(.horizontal, 10).padding(.vertical, 4)
+            .background(
+                Capsule()
+                    .fill(active ? (id == "ALL" ? MN.accent : color) : Color.primary.opacity(0.06))
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     func importInto(_ nb: UUID?) {
@@ -362,12 +669,13 @@ struct LibraryView: View {
 
     // notebook detail: its PDFs (click → open window) + a summary of cards
     func notebookPage(_ nb: Notebook) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
+        let docs = filteredDocs(nb.docIds.compactMap { store.doc($0) })
+        return VStack(alignment: .leading, spacing: 18) {
             let cards = store.lib.cards.filter { nb.docIds.contains($0.docId) }.count
             Text(LF("%d 个文档 · %d 张卡片 · 点击文档在新窗口中打开（可同时打开多个）", nb.docIds.count, cards))
                 .font(.system(size: 12)).foregroundStyle(.secondary)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 150, maximum: 180), spacing: 26)], spacing: 30) {
-                ForEach(nb.docIds, id: \.self) { id in if let d = store.doc(id) { docTile(d, notebook: nb.id) } }
+                ForEach(docs) { d in docTile(d, notebook: nb.id) }
                 importTile(nb.id)
                 webImportTile(nb.id)
             }
@@ -378,6 +686,8 @@ struct LibraryView: View {
     func notebookTile(_ nb: Notebook) -> some View {
         let first = nb.docIds.first.flatMap { store.doc($0) }
         let cards = store.lib.cards.filter { nb.docIds.contains($0.docId) }.count
+        let nbDocs = nb.docIds.compactMap { store.doc($0) }
+        let avgPct = nbDocs.isEmpty ? 0 : Int((nbDocs.map(\.progressFraction).reduce(0, +) / Double(nbDocs.count) * 100).rounded())
         return VStack(spacing: 8) {
             ZStack(alignment: .bottomLeading) {
                 RoundedRectangle(cornerRadius: 4).fill(Color.white).frame(width: 140, height: 186).offset(x: 6, y: -6).shadow(color: .black.opacity(0.08), radius: 2)
@@ -398,7 +708,8 @@ struct LibraryView: View {
             } else {
                 Text(nb.name).font(.system(size: 13, weight: .medium)).lineLimit(2).multilineTextAlignment(.center)
             }
-            Text(LF("%d 个文档 · %d 张卡片", nb.docIds.count, cards)).font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(LF("%d 个文档 · %d 张卡片", nb.docIds.count, cards) + (nbDocs.isEmpty ? "" : " · \(avgPct)%"))
+                .font(.system(size: 11)).foregroundStyle(.secondary)
         }
         .frame(width: 160)
         .contentShape(Rectangle())
@@ -414,15 +725,87 @@ struct LibraryView: View {
     func docTile(_ d: Doc, notebook: UUID?) -> some View {
         let n = store.lib.cards.filter { $0.docId == d.id }.count
         let isOpen = wins.entries[d.id] != nil
-        return VStack(spacing: 8) {
+        let pct = d.progressPercent
+        let frac = CGFloat(d.progressFraction)
+        let totalPages = d.pageCount ?? 0
+        let readP = d.resolvedReadPage.map { min(max(1, $0 + 1), max(1, totalPages)) } ?? 0
+
+        return VStack(spacing: 6) {
             Thumb(docId: d.id)
                 .frame(width: 140, height: 186)
-                .clipShape(RoundedRectangle(cornerRadius: 3))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
                 .shadow(color: .black.opacity(0.2), radius: 3, y: 2)
-                .overlay(RoundedRectangle(cornerRadius: 3).stroke(MN.accent, lineWidth: isOpen ? 2.5 : 0))
-                .overlay(alignment: .topTrailing) {
-                    if n > 0 { Text("\(n)").font(.system(size: 10, weight: .bold)).foregroundStyle(.white).padding(.horizontal, 5).padding(.vertical, 1).background(Capsule().fill(Color.red)).offset(x: 6, y: -6) }
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(MN.accent, lineWidth: isOpen ? 2.5 : 0))
+                // Top-left: Status tag badge (click to cycle TODO -> DOING -> DONE)
+                .overlay(alignment: .topLeading) {
+                    Button {
+                        store.cycleStatusTag(d.id)
+                    } label: {
+                        if let st = d.statusTag {
+                            Text(st.label)
+                                .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Capsule().fill(statusTagColor(st)).shadow(color: .black.opacity(0.2), radius: 2, y: 1))
+                        } else {
+                            Image(systemName: "tag.fill")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.white.opacity(0.9))
+                                .padding(4)
+                                .background(Circle().fill(Color.black.opacity(0.35)))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .padding(6)
+                    .help(L("点击切换状态标签（TODO → DOING → DONE）"))
                 }
+                // Top-right: Card count badge
+                .overlay(alignment: .topTrailing) {
+                    if n > 0 {
+                        Text("\(n)")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(Capsule().fill(Color.red))
+                            .offset(x: 6, y: -6)
+                    }
+                }
+                // Bottom: Reading progress bar + percentage overlay
+                .overlay(alignment: .bottom) {
+                    VStack(spacing: 3) {
+                        HStack(spacing: 4) {
+                            Text("\(pct)%")
+                                .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                                .foregroundStyle(.white)
+                            Spacer()
+                            if totalPages > 0 {
+                                Text(readP > 0 ? "\(readP)/\(totalPages)p" : "\(totalPages)p")
+                                    .font(.system(size: 9, design: .monospaced))
+                                    .foregroundStyle(.white.opacity(0.88))
+                            }
+                        }
+                        GeometryReader { g in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(Color.white.opacity(0.28))
+                                Capsule()
+                                    .fill(d.statusTag == .done ? statusTagColor(.done) : MN.accent)
+                                    .frame(width: max(frac > 0 ? 4 : 0, g.size.width * frac))
+                            }
+                        }
+                        .frame(height: 3.5)
+                    }
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 5)
+                    .background(
+                        LinearGradient(
+                            colors: [Color.black.opacity(0.0), Color.black.opacity(0.68)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: 4, bottomTrailingRadius: 4))
+                }
+
             if renaming == d.id {
                 TextField(L("文档名称"), text: $draft, onCommit: { store.renameDoc(d.id, draft); renaming = nil })
                     .textFieldStyle(.roundedBorder).frame(width: 150)
@@ -432,13 +815,50 @@ struct LibraryView: View {
                     .onTapGesture(count: 2) { draft = d.title; renaming = d.id }
                     .help(L("双击重命名"))
             }
-            if isOpen { Text(L("已打开")).font(.system(size: 10)).foregroundStyle(MN.accent) }
+
+            // Custom tags & open state row
+            HStack(spacing: 4) {
+                if isOpen {
+                    Text(L("已打开")).font(.system(size: 10, weight: .medium)).foregroundStyle(MN.accent)
+                }
+                ForEach(d.customTags.prefix(2), id: \.self) { ct in
+                    Text("#" + ct)
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(.purple)
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Capsule().fill(Color.purple.opacity(0.12)))
+                }
+            }
         }
         .frame(width: 160)
         .contentShape(Rectangle())
         .onTapGesture { DocWindows.shared.open(d.id, notebook: notebook) }
         .contextMenu {
             Button(L("在新窗口打开")) { DocWindows.shared.open(d.id, notebook: notebook) }
+            Divider()
+            Menu(L("设置状态标签")) {
+                ForEach(DocStatusTag.allCases) { st in
+                    Button {
+                        store.setStatusTag(d.id, d.statusTag == st ? nil : st)
+                    } label: {
+                        if d.statusTag == st { Label(st.label, systemImage: "checkmark") }
+                        else { Text(st.label) }
+                    }
+                }
+                if d.statusTag != nil {
+                    Divider()
+                    Button(L("清除状态标签")) { store.setStatusTag(d.id, nil) }
+                }
+            }
+            Button(L("添加自定义标签…")) { addCustomTagPrompt(d.id) }
+            if !d.customTags.isEmpty {
+                Menu(L("移除标签")) {
+                    ForEach(d.customTags, id: \.self) { ct in
+                        Button("#" + ct) { store.removeTag(d.id, ct) }
+                    }
+                }
+            }
+            Divider()
             Button(L("重命名…")) { draft = d.title; renaming = d.id }
             Menu(L("加入笔记本")) {
                 ForEach(store.lib.notebooks) { nb in Button(nb.name) { store.addDocToNotebook(d.id, notebook: nb.id) } }
@@ -485,18 +905,25 @@ extension Notification.Name { static let showNotebook = Notification.Name("showN
 struct Thumb: View {
     let docId: UUID
     @State private var img: NSImage?
+    @State private var editTick = 0
     var body: some View {
         ZStack {
             Color.white
             if let img { Image(nsImage: img).resizable().aspectRatio(contentMode: .fill) }
         }
-        .task(id: docId) {
+        .task(id: "\(docId.uuidString)-\(editTick)") {
             let url = Paths.docDir(docId).appendingPathComponent("thumb.png")
             if let i = NSImage(contentsOf: url) { img = i; return }
             guard let d = PDFDocument(url: Paths.pdf(docId)), let p = d.safePage(0) else { return }
             let t = p.thumbnail(of: NSSize(width: 280, height: 372), for: .cropBox)
             img = t
             if let tiff = t.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff), let png = rep.representation(using: .png, properties: [:]) { try? png.write(to: url) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .pdfDidEdit)) { n in
+            if (n.object as? UUID) == docId {
+                img = nil
+                editTick += 1
+            }
         }
     }
 }
@@ -547,15 +974,20 @@ struct NarratorOverlay: View {
     @AppStorage("narratorDock") private var dockRaw = NarratorDock.bottomCenter.rawValue
     var body: some View {
         let d = NarratorDock(rawValue: dockRaw) ?? .bottomCenter
-        ZStack(alignment: d.alignment) {
-            Color.clear.allowsHitTesting(false)
-            if n.state != .idle && n.docId == docId && !w.active {
-                NarratorBar().padding(18).transition(.move(edge: d.edge).combined(with: .opacity))
+        GeometryReader { geo in
+            ZStack(alignment: d.alignment) {
+                Color.clear.allowsHitTesting(false)
+                if n.state != .idle && n.docId == docId && !w.active {
+                    NarratorBar()
+                        .frame(maxWidth: max(320, min(640, geo.size.width - 28)))
+                        .padding(14)
+                        .transition(.move(edge: d.edge).combined(with: .opacity))
+                }
             }
-        }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .animation(.spring(response: 0.35, dampingFraction: 0.85), value: n.state == .idle)
             .animation(.spring(response: 0.45, dampingFraction: 0.8), value: dockRaw)
+        }
     }
 }
 
@@ -635,7 +1067,13 @@ struct ReaderStatus: View {
                     .help(L("拖动或点击跳转 · 双击输入页码"))
             }
             Button { rc.goToPage(min(session.pageCount - 1, rc.currentPageIndex + 1)) } label: { Image(systemName: "chevron.down") }.buttonStyle(.plain).help(L("下一页")).accessibilityLabel(L("下一页"))
-            if rc.variant == .bilingual {
+            if rc.truncateMode {
+                Spacer()
+                Text(L("✂️ 截断模式：点击页面任意位置，截断此处下方及后续所有页（按 Esc 退出）")).foregroundStyle(.red)
+            } else if rc.eraseMode {
+                Spacer()
+                Text(L("🧽 擦除模式：在页面上拖拽框选要擦除的区域（按 Esc 退出）")).foregroundStyle(.red)
+            } else if rc.variant == .bilingual {
                 if session.failedPages[rc.currentPageIndex] != nil {
                     Button(L("重试本页")) { Task { await session.retranslate(rc.currentPageIndex) } }.buttonStyle(.link)
                 }
@@ -645,7 +1083,7 @@ struct ReaderStatus: View {
                     .buttonStyle(.plain).help(L("重新翻译本页"))
             } else {
                 Spacer()
-                Text(rc.readingMode ? L("阅读模式：选中文字可复制，不会弹出标注") : (rc.areaMode ? L("框选模式：在页面上拖拽选取区域（Esc 退出）") : (rc.autoExcerpt ? L("自动摘录：选中文字即生成卡片") : L("选中文字 → 点颜色摘录 · 点击高亮打开卡片"))))
+                Text(rc.readingMode ? L("阅读模式：选中文字可复制，不会弹出标注") : (rc.areaMode ? L("框选模式：在页面上拖拽选取区域（Esc 退出）") : (rc.autoExcerpt ? L("自动摘录：选中文字即生成卡片") : L("选中文字 → 点颜色摘录 · 点击高亮打开卡片 · 右键可截断/编辑 PDF"))))
             }
             Divider().frame(height: 12)
             Button { rc.zoom(1 / 1.15) } label: { Image(systemName: "minus") }.buttonStyle(.plain).help(L("缩小 ⌘-")).accessibilityLabel(L("缩小 ⌘-"))
@@ -814,3 +1252,4 @@ struct ReadProgress: View {
         }
     }
 }
+#endif

@@ -1,7 +1,11 @@
 import Foundation
 import AVFoundation
 import PDFKit
+#if os(macOS)
 import AppKit
+#elseif os(iOS)
+import UIKit
+#endif
 
 /// "AI 解读" mode: for each page, Claude looks at the rendered page (text + figures) and writes a spoken-style
 /// explanation split into short segments; each segment is synthesized with gemini-3.8-flash-tts and played,
@@ -30,6 +34,10 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     var playerRate: Float { nativeSpeed ? 1 : rate }
 
     func makePlayer(_ wav: Data) throws -> AVAudioPlayer {
+        #if os(iOS)
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.allowBluetoothA2DP, .defaultToSpeaker])
+        try? AVAudioSession.sharedInstance().setActive(true)
+        #endif
         let rate = playerRate
         var data = wav
         if rate > 2, let pcm = PCM(wav: wav) {
@@ -800,12 +808,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     }
 
     static func jpeg(of page: PDFPage) -> Data {
-        let b = page.bounds(for: .cropBox)
-        let scale = min(2.0, 1400 / max(b.width, b.height))
-        let img = page.thumbnail(of: NSSize(width: b.width * scale, height: b.height * scale), for: .cropBox)
-        guard let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
-              let j = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.72]) else { return Data() }
-        return j
+        PlatformPDF.thumbnailJPEG(page, maxDimension: 1400, quality: 0.72)
     }
 }
 

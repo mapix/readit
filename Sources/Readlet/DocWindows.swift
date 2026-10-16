@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 import AppKit
 
@@ -142,3 +143,4 @@ struct DocWindowView: View {
         .id("\(theme.theme)-\(lang.lang)")          // rebuild with the new palette
     }
 }
+#endif

@@ -1,5 +1,9 @@
 import Foundation
+#if os(macOS)
 import AppKit
+#elseif os(iOS)
+import UIKit
+#endif
 import CryptoKit
 import Network
 import Security
@@ -144,7 +148,7 @@ final class ChatGPTAuth: ObservableObject {
         var comps = URLComponents(string: ChatGPTAuth.authorizeURL)!
         comps.percentEncodedQueryItems = q.map { URLQueryItem(name: $0.0, value: ChatGPTAuth.formEncode($0.1)) }
         guard let url = comps.url else { throw TranslateError.bad("authorize URL") }
-        NSWorkspace.shared.open(url)
+        PlatformBrowser.open(url)
 
         let cb = try await srv.waitForCallback(timeout: 300)
         guard cb["state"] == state else { throw TranslateError.bad(L("登录回调校验失败（state 不匹配）")) }

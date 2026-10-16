@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 import PDFKit
 
@@ -286,3 +287,4 @@ struct NotePopover: View {
         .background(RoundedRectangle(cornerRadius: 7).fill(Color.purple.opacity(0.06)))
     }
 }
+#endif

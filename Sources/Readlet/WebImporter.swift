@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import AppKit
 import SwiftUI
@@ -682,3 +683,4 @@ enum WebImportPanel {
     }
     static func close() { panel?.close(); panel = nil }
 }
+#endif

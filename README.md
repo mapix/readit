@@ -1,11 +1,11 @@
 # Readlet
 
-A native macOS app (SwiftUI + PDFKit) for reading PDFs, EPUBs and web articles bilingually with the original layout preserved, listening to an AI explain every page, and taking MarginNote-style notes — excerpts, mind maps and links across documents. Bring your own AI: any Anthropic / OpenAI-compatible gateway, a local model, or your ChatGPT plan.
+A native **macOS, iOS & iPadOS** app (SwiftUI + PDFKit) for reading PDFs, EPUBs and web articles bilingually with the original layout preserved, listening to an AI explain every page, practicing 3D flashcards, and taking MarginNote-style notes — excerpts, mind maps and links across documents — synced automatically across devices via **iCloud**. Bring your own AI: any Anthropic / OpenAI-compatible gateway, a local model, or your ChatGPT plan.
 
-- **Get it** (free, open source): [Mac App Store](https://readlet.novarock.io/#download) (sandboxed, updates through the store) or the direct download from <https://readlet.novarock.io>. Both editions have the same features apart from the [differences listed here](AppStore/README.md#7-differences-of-the-app-store-edition).
+- **Get it** (free, open source): [App Store (macOS & iOS)](https://readlet.novarock.io/#download) or direct download (`Readlet-1.0.0.zip` for Mac / `Readlet-1.0.0-iOS.ipa` for iOS & iPadOS) from <https://readlet.novarock.io>. Both editions have the same features apart from the [differences listed here](AppStore/README.md#7-differences-of-the-app-store-edition).
 - **Set up**: the first launch opens a short guide; details in [docs/setup.md](docs/setup.md) and [docs/tts-providers.md](docs/tts-providers.md).
 - **Source**: https://github.com/mapix/readit (MIT licensed).
-- **Build**: `./build_app.sh` (direct edition → `/Applications/Readlet.app`, `dist/Readlet-<version>.zip`) · `./build_mas.sh` (App Store package) — see [Building](#building).
+- **Build**: `./build_app.sh` (macOS direct edition → `/Applications/Readlet.app`, `dist/Readlet-<version>.zip`) · `./build_ios.sh` (iOS / iPadOS Simulator + physical device `.app` & `dist/Readlet-<version>-iOS.ipa` + App Store `.ipa`) · `./build_mas.sh` (Mac App Store package) — see [Building](#building).
 
 ## Interface & Windows
 
@@ -204,11 +204,13 @@ Data lives in `~/Library/Application Support/Readlet/` (automatically migrated f
 
 ## Building
 
-Requires macOS 14+ and Swift 5.9+.
+Requires macOS 14+ / iOS 17+ and Swift 5.9+.
 
 ```bash
-./build_app.sh                 # universal (Apple Silicon + Intel) when Xcode is installed, else native; installs /Applications/Readlet.app
-UNIVERSAL=0 ./build_app.sh     # native only
+./build_app.sh                 # macOS universal (Apple Silicon + Intel); installs /Applications/Readlet.app & dist/Readlet-1.0.0.zip
+UNIVERSAL=0 ./build_app.sh     # macOS native only
+./build_ios.sh                 # iOS / iPadOS Simulator (.app) + Physical Device (.app & dist/Readlet-1.0.0-iOS.ipa)
+./build_ios.sh appstore        # iOS / iPadOS App Store archive & dist/Readlet-1.0.0-iOS-AppStore.ipa
 swift test                     # unit tests (config, TTS requests/parsing, script parser, EPUB, …)
 ```
 

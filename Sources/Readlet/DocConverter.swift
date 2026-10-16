@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import AppKit
 
@@ -183,3 +184,4 @@ final class XMLScan: NSObject, XMLParserDelegate {
         _ = stack.popLast()
     }
 }
+#endif

@@ -1,6 +1,10 @@
 import Foundation
 import PDFKit
+#if os(macOS)
 import AppKit
+#elseif os(iOS)
+import UIKit
+#endif
 
 /// PDFDocument whose pages draw with the theme tint
 /// plain PDFDocument (theme tint is applied as a view overlay; subclassing PDFPage.draw caused
@@ -16,9 +20,10 @@ final class CardAnnotation: PDFAnnotation {
 @MainActor
 final class DocSession: ObservableObject {
     let doc: Doc
-    let original: PDFDocument
+    private(set) var original: PDFDocument
     private(set) var bilingual: PDFDocument
     private var bilingualPageData: [Int: Data] = [:]
+    private var pageHolders: [Int: PDFDocument] = [:]
     @Published var translatedPages = Set<Int>()
     @Published var failedPages: [Int: String] = [:]
     @Published var running = Set<Int>()
@@ -37,26 +42,46 @@ final class DocSession: ObservableObject {
     var pageCount: Int { original.pageCount }
 
     init?(doc: Doc) {
-        guard let o = TintedDocument(url: Paths.pdf(doc.id)) else { return nil }
+        let pdfFile = Paths.pdf(doc.id)
+        guard let o = TintedDocument(url: pdfFile) else { return nil }
         self.doc = doc
         original = o
         // bilingual starts as a copy of the original; pages are replaced as they get translated
         // separate CGPDFDocument: sharing PDFPage copies between two documents makes PDFKit's
         // accessibility/annotation code re-enter the same page lock (os_unfair_lock recursion crash)
         bilingual = o          // placeholder until assembled below
-        // load cached translated pages, then build ONE self-contained PDF for the bilingual view
+        // load cached translated pages by listing the cache directory once
         var pageData: [Int: Data] = [:]
-        for i in 0..<o.pageCount {
-            let url = pageCacheURL(i)
-            if let d = try? Data(contentsOf: url), d.count > 100 {
+        let cDir = Paths.docDir(doc.id).appendingPathComponent("bi2-\(Settings.targetLang.hashValueStable)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: cDir, withIntermediateDirectories: true)
+        if let files = try? FileManager.default.contentsOfDirectory(at: cDir, includingPropertiesForKeys: nil) {
+            for f in files where f.pathExtension.lowercased() == "pdf" {
+                guard let i = Int(f.deletingPathExtension().lastPathComponent),
+                      i >= 0, i < o.pageCount,
+                      let d = try? Data(contentsOf: f), d.count > 100 else { continue }
                 pageData[i] = d
                 translatedPages.insert(i)
-                if let j = try? Data(contentsOf: url.appendingPathExtension("json")), let ins = try? JSONDecoder().decode([[Double]].self, from: j) { insertions[i] = ins }
+                let jsonURL = f.appendingPathExtension("json")
+                if let j = try? Data(contentsOf: jsonURL),
+                   let ins = try? JSONDecoder().decode([[Double]].self, from: j) {
+                    insertions[i] = ins
+                }
             }
         }
         bilingualPageData = pageData
-        guard let b = DocSession.assemble(original: o, pages: pageData) else { return nil }
-        bilingual = b
+        if o.pageCount > 60, let b = TintedDocument(url: pdfFile), b.pageCount == o.pageCount {
+            for (i, d) in pageData.sorted(by: { $0.key < $1.key }) where i < b.pageCount {
+                if let pd = TintedDocument(data: d), let pg = pd.safePage(0) {
+                    pageHolders[i] = pd
+                    b.removePage(at: i)
+                    b.insert(pg, at: i)
+                }
+            }
+            bilingual = b
+        } else {
+            guard let b = DocSession.assemble(original: o, pages: pageData) else { return nil }
+            bilingual = b
+        }
         applyAnnotations()
         updateProgress()
     }
@@ -201,7 +226,14 @@ final class DocSession: ObservableObject {
         swap { [weak self] in
             guard let self else { return }
             self.insertions[i] = ins
-            self.rebuildBilingual()
+            if self.original.pageCount > 60 {
+                self.pageHolders[i] = pd
+                self.replaceBilingualPage(i, with: np)
+                self.applyAnnotations(page: i, variant: .bilingual)
+                DocWindows.shared.entries[self.doc.id]?.reader.documentReplaced(self)
+            } else {
+                self.rebuildBilingual()
+            }
         }
         translatedPages.insert(i)
         updateProgress()
@@ -230,8 +262,19 @@ final class DocSession: ObservableObject {
     /// rebuild the bilingual PDF from all translated pages (pending swaps are batched by the reader)
     private var rebuildPending = false
     func rebuildBilingual() {
-        guard let nb = DocSession.assemble(original: original, pages: bilingualPageData) else { return }
-        bilingual = nb
+        if original.pageCount > 60, let b = TintedDocument(url: Paths.pdf(doc.id)), b.pageCount == original.pageCount {
+            for (i, d) in bilingualPageData.sorted(by: { $0.key < $1.key }) where i < b.pageCount {
+                if let pd = TintedDocument(data: d), let pg = pd.safePage(0) {
+                    pageHolders[i] = pd
+                    b.removePage(at: i)
+                    b.insert(pg, at: i)
+                }
+            }
+            bilingual = b
+        } else {
+            guard let nb = DocSession.assemble(original: original, pages: bilingualPageData) else { return }
+            bilingual = nb
+        }
         applyAnnotations(variant: .bilingual)
         DocWindows.shared.entries[doc.id]?.reader.documentReplaced(self)
     }
@@ -324,6 +367,49 @@ final class DocSession: ObservableObject {
 
     /// Writes the full bilingual PDF (with highlights) to a file.
     func exportBilingual(to url: URL) -> Bool { bilingual.write(to: url) }
+
+    func replaceOriginalDocument(_ newDoc: PDFDocument) {
+        original = newDoc
+        applyAnnotations(variant: .original)
+    }
+
+    func handlePDFEdited(invalidateFromPage: Int, onlyPage: Int? = nil, targetPage: Int) {
+        let validCount = original.pageCount
+        if let only = onlyPage {
+            paraCache.removeValue(forKey: only)
+            bilingualPageData.removeValue(forKey: only)
+            insertions.removeValue(forKey: only)
+            translatedPages.remove(only)
+            failedPages.removeValue(forKey: only)
+            try? FileManager.default.removeItem(at: pageCacheURL(only))
+            try? FileManager.default.removeItem(at: pageCacheURL(only).appendingPathExtension("json"))
+        } else {
+            let toRemove = Set(paraCache.keys).union(bilingualPageData.keys).union(translatedPages).filter { $0 >= invalidateFromPage || $0 >= validCount }
+            for p in toRemove {
+                paraCache.removeValue(forKey: p)
+                bilingualPageData.removeValue(forKey: p)
+                insertions.removeValue(forKey: p)
+                translatedPages.remove(p)
+                failedPages.removeValue(forKey: p)
+                try? FileManager.default.removeItem(at: pageCacheURL(p))
+                try? FileManager.default.removeItem(at: pageCacheURL(p).appendingPathExtension("json"))
+            }
+            // Also clean up any on-disk cache files beyond validCount
+            for p in validCount..<(validCount + 50) {
+                let u = pageCacheURL(p)
+                if FileManager.default.fileExists(atPath: u.path) {
+                    try? FileManager.default.removeItem(at: u)
+                    try? FileManager.default.removeItem(at: u.appendingPathExtension("json"))
+                }
+            }
+        }
+        queue.removeAll { $0 >= validCount }
+        rebuildBilingual()
+        updateProgress()
+        if let r = DocWindows.shared.entries[doc.id]?.reader {
+            r.reloadAfterPDFEdit(session: self, targetPage: min(max(0, targetPage), max(0, validCount - 1)))
+        }
+    }
 }
 
 extension Notification.Name {

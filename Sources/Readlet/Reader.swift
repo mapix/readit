@@ -1,44 +1,23 @@
+#if os(macOS)
 import SwiftUI
 import PDFKit
 import AppKit
 
-extension PDFDocument {
-    /// bounds-checked page lookup (stale indices after page swaps / doc changes must not raise)
-    func safePage(_ i: Int) -> PDFPage? { i >= 0 && i < pageCount ? page(at: i) : nil }
-}
-
-// MARK: geometry sanity (AppKit raises "Invalid view geometry" on NaN/inf frames)
-extension CGFloat {
-    var isSane: Bool { isFinite && !isNaN }
-    func finiteOr(_ d: CGFloat) -> CGFloat { isSane ? self : d }
-}
-extension CGPoint { var isSane: Bool { x.isSane && y.isSane && abs(x) < 1e7 && abs(y) < 1e7 } }
-extension CGRect {
-    /// finite, non-null, non-empty and of a plausible magnitude
-    var isSane: Bool {
-        !isNull && !isInfinite && origin.isSane && size.width.isSane && size.height.isSane
-            && width > 0 && height > 0 && width < 1e7 && height < 1e7
-    }
-    /// standardized, clipped to `b`; nil if the result is not sane
-    func sanitized(in b: CGRect) -> CGRect? {
-        guard isSane, b.isSane else { return nil }
-        let r = standardized.intersection(b)
-        return r.isSane ? r : nil
-    }
-}
-
 /// PDFView with MarginNote-like mouse handling: selection finishes on mouse-up (then the floating bar appears),
 /// clicking an excerpt highlight opens its card, and in "框选" mode a drag captures a rectangular region.
 final class BiPDFView: PDFView {
-    var onMenu: ((NSMenu) -> Void)?
+    var onMenu: ((NSMenu, NSEvent) -> Void)?
     var onMouseDown: ((NSEvent) -> Bool)?      // return true to swallow
     var onMouseDragged: ((NSEvent) -> Bool)?
     var onMouseUp: ((NSEvent) -> Void)?
+    var onMouseMoved: ((NSEvent) -> Void)?
     var areaMode = false
+    var eraseMode = false
+    var truncateMode = false
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let m = super.menu(for: event) ?? NSMenu()
-        onMenu?(m)
+        onMenu?(m, event)
         return m
     }
     override func mouseDown(with e: NSEvent) {
@@ -50,7 +29,7 @@ final class BiPDFView: PDFView {
         super.mouseDragged(with: e)
     }
     override func mouseUp(with e: NSEvent) {
-        if !areaMode { super.mouseUp(with: e) }
+        if !areaMode && !eraseMode && !truncateMode { super.mouseUp(with: e) }
         onMouseUp?(e)
     }
     var onKey: ((NSEvent) -> Bool)?
@@ -61,7 +40,7 @@ final class BiPDFView: PDFView {
     }
     override func resetCursorRects() {
         super.resetCursorRects()
-        if areaMode { addCursorRect(bounds, cursor: .crosshair) }
+        if areaMode || eraseMode || truncateMode { addCursorRect(bounds, cursor: .crosshair) }
     }
     private var tracking: NSTrackingArea?
     override func updateTrackingAreas() {
@@ -72,18 +51,43 @@ final class BiPDFView: PDFView {
     }
     override func mouseMoved(with e: NSEvent) {
         super.mouseMoved(with: e)
-        guard !areaMode else { return }
+        onMouseMoved?(e)
+        guard !areaMode && !eraseMode && !truncateMode else { return }
         if hitCard?(convert(e.locationInWindow, from: nil)) == true { NSCursor.pointingHand.set() }
     }
 }
 
-/// rubber band drawn during area capture
+/// rubber band drawn during area capture or region erase
 final class BandView: NSView {
+    var isErase = false
     override func draw(_ r: NSRect) {
-        NSColor.systemBlue.withAlphaComponent(0.12).setFill()
+        let col = isErase ? NSColor.systemRed : NSColor.systemBlue
+        col.withAlphaComponent(0.14).setFill()
         bounds.fill()
-        NSColor.systemBlue.setStroke()
-        let p = NSBezierPath(rect: bounds.insetBy(dx: 0.5, dy: 0.5)); p.lineWidth = 1; p.setLineDash([4, 3], count: 2, phase: 0); p.stroke()
+        col.setStroke()
+        let p = NSBezierPath(rect: bounds.insetBy(dx: 0.5, dy: 0.5)); p.lineWidth = 1.2; p.setLineDash([4, 3], count: 2, phase: 0); p.stroke()
+    }
+}
+
+/// Horizontal cut-line preview drawn when `truncateMode` is active
+final class CutLineView: NSView {
+    var cutY: CGFloat = 0 { didSet { needsDisplay = true } }
+    override var isFlipped: Bool { false }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func draw(_ dirtyRect: NSRect) {
+        guard cutY > 0 && cutY < bounds.height else { return }
+        // Shade the bottom area that will be truncated
+        let shaded = NSRect(x: 0, y: 0, width: bounds.width, height: cutY)
+        NSColor.systemRed.withAlphaComponent(0.12).setFill()
+        shaded.fill()
+        // Dashed red cut line
+        NSColor.systemRed.setStroke()
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: 0, y: cutY))
+        path.line(to: NSPoint(x: bounds.width, y: cutY))
+        path.lineWidth = 2.0
+        path.setLineDash([6, 4], count: 2, phase: 0)
+        path.stroke()
     }
 }
 
@@ -106,9 +110,26 @@ final class ReaderController: NSObject, ObservableObject {
     var bottomInset: CGFloat = 0
     var topInset: CGFloat = 0
     /// 阅读模式: plain text selection, no excerpt bar / card popups / auto excerpt
-    @Published var readingMode = UserDefaults.standard.bool(forKey: "readingMode") { didSet { UserDefaults.standard.set(readingMode, forKey: "readingMode"); if readingMode { closePopup(); areaMode = false } } }
+    @Published var readingMode = UserDefaults.standard.bool(forKey: "readingMode") { didSet { UserDefaults.standard.set(readingMode, forKey: "readingMode"); if readingMode { closePopup(); areaMode = false; eraseMode = false; truncateMode = false } } }
     @Published var autoExcerpt = UserDefaults.standard.bool(forKey: "autoExcerpt") { didSet { UserDefaults.standard.set(autoExcerpt, forKey: "autoExcerpt") } }
-    @Published var areaMode = false { didSet { view.areaMode = areaMode; view.window?.invalidateCursorRects(for: view); if areaMode { closePopup() } } }
+    @Published var areaMode = false { didSet { view.areaMode = areaMode; if areaMode { eraseMode = false; truncateMode = false; closePopup() }; view.window?.invalidateCursorRects(for: view) } }
+    @Published var eraseMode = false { didSet { view.eraseMode = eraseMode; if eraseMode { areaMode = false; truncateMode = false; closePopup() }; view.window?.invalidateCursorRects(for: view) } }
+    @Published var truncateMode = false {
+        didSet {
+            view.truncateMode = truncateMode
+            if truncateMode {
+                areaMode = false; eraseMode = false; closePopup()
+                let cl = CutLineView(frame: view.bounds)
+                cl.autoresizingMask = [.width, .height]
+                view.addSubview(cl)
+                cutLineView = cl
+            } else {
+                cutLineView?.removeFromSuperview()
+                cutLineView = nil
+            }
+            view.window?.invalidateCursorRects(for: view)
+        }
+    }
     var lastColor: Int {
         get { UserDefaults.standard.integer(forKey: "lastColor") }
         set { UserDefaults.standard.set(newValue, forKey: "lastColor"); objectWillChange.send() }
@@ -118,6 +139,8 @@ final class ReaderController: NSObject, ObservableObject {
     private var popupRect: CGRect = .zero      // page coords of what the popup is attached to
     private var bandStart: NSPoint?
     private var band: BandView?
+    private var cutLineView: CutLineView?
+    private var contextMenuPointInView: NSPoint?
 
     init(docId: UUID?) {
         self.docId = docId
@@ -132,10 +155,11 @@ final class ReaderController: NSObject, ObservableObject {
         NotificationCenter.default.addObserver(self, selector: #selector(pageChanged), name: .PDFViewPageChanged, object: view)
         NotificationCenter.default.addObserver(self, selector: #selector(selectionChanged), name: .PDFViewSelectionChanged, object: view)
         NotificationCenter.default.addObserver(self, selector: #selector(viewMoved), name: .PDFViewScaleChanged, object: view)
-        view.onMenu = { [weak self] m in self?.extendMenu(m) }
+        view.onMenu = { [weak self] m, ev in self?.extendMenu(m, event: ev) }
         view.onMouseDown = { [weak self] e in self?.mouseDown(e) ?? false }
         view.onMouseDragged = { [weak self] e in self?.mouseDragged(e) ?? false }
         view.onMouseUp = { [weak self] e in self?.mouseUp(e) }
+        view.onMouseMoved = { [weak self] e in self?.mouseMoved(e) }
         view.onKey = { [weak self] e in self?.key(e) ?? false }
         view.hitCard = { [weak self] pt in guard let self, !self.readingMode else { return false }; return self.cardAt(pt) != nil }
         NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .leftMouseDown]) { [weak self] e in
@@ -152,7 +176,10 @@ final class ReaderController: NSObject, ObservableObject {
         }
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             guard let self, e.keyCode == 53, e.window === self.view.window else { return e }    // Esc anywhere in the window
-            if self.popup != .none || self.areaMode { self.closePopup(); self.areaMode = false; self.view.clearSelection(); return nil }
+            if self.popup != .none || self.areaMode || self.eraseMode || self.truncateMode {
+                self.closePopup(); self.areaMode = false; self.eraseMode = false; self.truncateMode = false
+                self.view.clearSelection(); return nil
+            }
             return e
         }
         DispatchQueue.main.async { self.observeScroll() }
@@ -210,6 +237,25 @@ final class ReaderController: NSObject, ObservableObject {
 
     func unload() { view.document = nil; loadedKey = ""; closePopup() }
 
+    func reloadAfterPDFEdit(session: DocSession, targetPage: Int) {
+        closePopup()
+        areaMode = false; eraseMode = false; truncateMode = false
+        loading = true
+        let d = session.document(variant)
+        view.document = nil
+        view.document = d
+        loadedKey = session.doc.id.uuidString + variant.rawValue
+        let z = UserDefaults.standard.double(forKey: "zoom")
+        if z > 0 { view.autoScales = false; view.scaleFactor = CGFloat(z) } else { view.autoScales = true }
+        if let p = d.safePage(min(max(0, targetPage), max(0, d.pageCount - 1))) {
+            view.go(to: p)
+        }
+        loading = false
+        pageChanged()
+        if variant == .bilingual { session.startBilingual(from: currentPageIndex) }
+        view.setNeedsDisplay(view.bounds)
+    }
+
     private var loading = false
     @objc func pageChanged() {
         guard !loading, let d = view.document, let p = view.currentPage else { return }
@@ -217,6 +263,8 @@ final class ReaderController: NSObject, ObservableObject {
         if i != currentPageIndex { currentPageIndex = i }
         if let id = docId {
             UserDefaults.standard.set(i, forKey: "page-" + id.uuidString)
+            let total = store.sessions[id]?.pageCount ?? d.pageCount
+            store.updateReadingProgress(docId: id, page: i, pageCount: total)
             if variant == .bilingual { store.sessions[id]?.prioritize(i) }
         }
     }
@@ -394,11 +442,23 @@ final class ReaderController: NSObject, ObservableObject {
 
     // MARK: mouse
 
+    private func mouseMoved(_ e: NSEvent) {
+        guard truncateMode, let cl = cutLineView else { return }
+        let pt = view.convert(e.locationInWindow, from: nil)
+        cl.cutY = pt.y
+    }
+
     private func mouseDown(_ e: NSEvent) -> Bool {
         let pt = view.convert(e.locationInWindow, from: nil)
-        if areaMode {
+        if truncateMode {
+            truncateMode = false
+            truncateFromViewPoint(pt, below: true)
+            return true
+        }
+        if areaMode || eraseMode {
             bandStart = pt
             let b = BandView(frame: NSRect(origin: pt, size: .zero))
+            b.isErase = eraseMode
             view.addSubview(b); band = b
             return true
         }
@@ -445,17 +505,21 @@ final class ReaderController: NSObject, ObservableObject {
     }
 
     private func mouseDragged(_ e: NSEvent) -> Bool {
-        guard areaMode, let s = bandStart, let b = band else { return false }
+        guard (areaMode || eraseMode), let s = bandStart, let b = band else { return false }
         let pt = view.convert(e.locationInWindow, from: nil)
         b.frame = NSRect(x: min(s.x, pt.x), y: min(s.y, pt.y), width: abs(pt.x - s.x), height: abs(pt.y - s.y))
         return true
     }
 
     private func mouseUp(_ e: NSEvent) {
-        if areaMode, let b = band {
+        if (areaMode || eraseMode), let b = band {
             let r = b.frame
+            let wasErase = eraseMode
             b.removeFromSuperview(); band = nil; bandStart = nil
-            if r.width > 8 && r.height > 8 { makeAreaCard(viewRect: r) }
+            if r.width > 8 && r.height > 8 {
+                if wasErase { eraseRegionInView(viewRect: r) }
+                else { makeAreaCard(viewRect: r) }
+            }
             return
         }
         DispatchQueue.main.async { self.afterSelection() }
@@ -791,18 +855,80 @@ final class ReaderController: NSObject, ObservableObject {
     }
     func fitWidth() { view.autoScales = true; UserDefaults.standard.removeObject(forKey: "zoom"); DispatchQueue.main.async { self.viewMoved() } }
 
-    private func extendMenu(_ m: NSMenu) {
-        guard hasSelection else { return }
-        m.insertItem(.separator(), at: 0)
-        for (i, n) in highlightNames.enumerated().reversed() {
-            let it = NSMenuItem(title: LF("摘录（%@）", "\(n)"), action: #selector(menuCard(_:)), keyEquivalent: "")
-            it.target = self; it.tag = i
-            it.image = NSImage(size: NSSize(width: 12, height: 12), flipped: false) { r in highlightColors[i].setFill(); NSBezierPath(ovalIn: r).fill(); return true }
-            m.insertItem(it, at: 0)
+    // MARK: - PDF Editing Actions
+
+    func truncateFromViewPoint(_ ptInView: NSPoint, below: Bool) {
+        guard let d = view.document, let docId = docId, let ses = store.session(docId),
+              let page = view.page(for: ptInView, nearest: true) else { return }
+        let pageIndex = d.index(for: page)
+        let ptInPage = view.convert(ptInView, to: page)
+        let origY = PDFEditor.mapYToOriginal(session: ses, variant: variant, pageIndex: pageIndex, pageY: ptInPage.y)
+        if below {
+            PDFEditor.truncateFromHereToEnd(session: ses, pageIndex: pageIndex, origY: origY)
+        } else {
+            PDFEditor.truncateAboveHere(session: ses, pageIndex: pageIndex, origY: origY)
         }
-        let t = NSMenuItem(title: L("翻译选中文本"), action: #selector(menuTranslate), keyEquivalent: "")
-        t.target = self
-        m.insertItem(t, at: 0)
+    }
+
+    func eraseRegionInView(viewRect r: NSRect) {
+        defer { eraseMode = false }
+        guard let d = view.document, let docId = docId, let ses = store.session(docId),
+              let page = view.page(for: NSPoint(x: r.midX, y: r.midY), nearest: true) else { return }
+        let pageIndex = d.index(for: page)
+        let pr = view.convert(r, to: page).intersection(page.bounds(for: view.displayBox))
+        guard pr.width > 4, pr.height > 4 else { return }
+        let origRect = PDFEditor.mapRectToOriginal(session: ses, variant: variant, pageIndex: pageIndex, rect: pr)
+        PDFEditor.eraseRegion(session: ses, pageIndex: pageIndex, origRect: origRect)
+    }
+
+    private func extendMenu(_ m: NSMenu, event: NSEvent) {
+        contextMenuPointInView = view.convert(event.locationInWindow, from: nil)
+        if hasSelection {
+            m.insertItem(.separator(), at: 0)
+            for (i, n) in highlightNames.enumerated().reversed() {
+                let it = NSMenuItem(title: LF("摘录（%@）", "\(n)"), action: #selector(menuCard(_:)), keyEquivalent: "")
+                it.target = self; it.tag = i
+                it.image = NSImage(size: NSSize(width: 12, height: 12), flipped: false) { r in highlightColors[i].setFill(); NSBezierPath(ovalIn: r).fill(); return true }
+                m.insertItem(it, at: 0)
+            }
+            let t = NSMenuItem(title: L("翻译选中文本"), action: #selector(menuTranslate), keyEquivalent: "")
+            t.target = self
+            m.insertItem(t, at: 0)
+        }
+        guard let docId = docId, let ses = store.sessions[docId] else { return }
+        m.addItem(.separator())
+        let truncBelow = NSMenuItem(title: "✂️ " + L("从此处开始截断后面"), action: #selector(menuTruncateBelow), keyEquivalent: "")
+        truncBelow.target = self
+        m.addItem(truncBelow)
+
+        let truncAbove = NSMenuItem(title: "✂️ " + L("从此处截断本页上方"), action: #selector(menuTruncateAbove), keyEquivalent: "")
+        truncAbove.target = self
+        m.addItem(truncAbove)
+
+        let eraseIt = NSMenuItem(title: "🧽 " + L("框选擦除页面区域"), action: #selector(menuStartErase), keyEquivalent: "")
+        eraseIt.target = self
+        m.addItem(eraseIt)
+
+        if ses.pageCount > 1 {
+            let delPage = NSMenuItem(title: "🗑 " + LF("删除当前页 (p.%d)", currentPageIndex + 1), action: #selector(menuDeleteCurrentPage), keyEquivalent: "")
+            delPage.target = self
+            m.addItem(delPage)
+            if currentPageIndex + 1 < ses.pageCount {
+                let delAfter = NSMenuItem(title: L("删除当前页之后的所有页"), action: #selector(menuDeletePagesAfter), keyEquivalent: "")
+                delAfter.target = self
+                m.addItem(delAfter)
+            }
+            if currentPageIndex > 0 {
+                let delBefore = NSMenuItem(title: L("删除当前页之前的所有页"), action: #selector(menuDeletePagesBefore), keyEquivalent: "")
+                delBefore.target = self
+                m.addItem(delBefore)
+            }
+        }
+        if PDFEditor.hasBackup(docId) {
+            let restoreIt = NSMenuItem(title: "↺ " + L("恢复原始未编辑 PDF"), action: #selector(menuRestorePDF), keyEquivalent: "")
+            restoreIt.target = self
+            m.addItem(restoreIt)
+        }
     }
     @objc func menuCard(_ s: NSMenuItem) { makeCard(color: s.tag) }
     @objc func menuTranslate() {
@@ -811,6 +937,31 @@ final class ReaderController: NSObject, ObservableObject {
             translateSelection(selectionString)
             if popup != .selection { afterSelection() }
         }
+    }
+    @objc func menuTruncateBelow() {
+        guard let pt = contextMenuPointInView else { return }
+        truncateFromViewPoint(pt, below: true)
+    }
+    @objc func menuTruncateAbove() {
+        guard let pt = contextMenuPointInView else { return }
+        truncateFromViewPoint(pt, below: false)
+    }
+    @objc func menuStartErase() { eraseMode = true }
+    @objc func menuDeleteCurrentPage() {
+        guard let docId = docId, let ses = store.session(docId) else { return }
+        PDFEditor.deletePage(session: ses, pageIndex: currentPageIndex)
+    }
+    @objc func menuDeletePagesAfter() {
+        guard let docId = docId, let ses = store.session(docId) else { return }
+        PDFEditor.deletePagesAfter(session: ses, pageIndex: currentPageIndex)
+    }
+    @objc func menuDeletePagesBefore() {
+        guard let docId = docId, let ses = store.session(docId) else { return }
+        PDFEditor.deletePagesBefore(session: ses, pageIndex: currentPageIndex)
+    }
+    @objc func menuRestorePDF() {
+        guard let docId = docId, let ses = store.session(docId) else { return }
+        PDFEditor.restoreOriginal(session: ses)
     }
 }
 
@@ -835,3 +986,4 @@ struct PDFReaderView: NSViewRepresentable {
         } else { rc.unload() }
     }
 }
+#endif

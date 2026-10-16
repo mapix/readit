@@ -1,7 +1,11 @@
 import Foundation
 import PDFKit
 import CoreText
+#if os(macOS)
 import AppKit
+#elseif os(iOS)
+import UIKit
+#endif
 
 /// One text paragraph on a page, in PDF page space (origin bottom-left of the crop box).
 struct Para {

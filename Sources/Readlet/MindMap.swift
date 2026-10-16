@@ -13,7 +13,7 @@ struct LaidNode: Identifiable {
     static let hGap: CGFloat = 44, vGap: CGFloat = 12, maxW: CGFloat = 240
 
     static func textHeight(_ s: String, _ font: NSFont, _ w: CGFloat, maxH: CGFloat) -> CGFloat {
-        min(maxH, ceil((s as NSString).boundingRect(with: CGSize(width: w, height: 2000), options: [.usesLineFragmentOrigin], attributes: [.font: font]).height))
+        min(maxH, ceil((s as NSString).boundingRect(with: CGSize(width: w, height: 2000), options: [.usesLineFragmentOrigin], attributes: [.font: font], context: nil).height))
     }
 
     static func size(_ n: MindNode, store: Store, depth: Int) -> CGSize {
@@ -140,6 +140,11 @@ struct MindMapView: View {
                     .frame(width: W * scale, height: H * scale, alignment: .topLeading)
                     .contentShape(Rectangle())
                     .onTapGesture { store.selectedNodeId = nil; store.editingNodeId = nil; focused = true }
+                }
+                .onAppear {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        proxy.scrollTo(nb.root.id, anchor: .leading)
+                    }
                 }
                 .onChange(of: store.mapFocusRequest) { _, id in
                     guard let id else { return }

@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 import AppKit
 
@@ -16,8 +17,8 @@ final class MiniWidget: NSObject, ObservableObject, NSWindowDelegate {
     /// document shown in the widget (the window that was frontmost when collapsing)
     @Published var docId: UUID?
 
-    static let compactSize = NSSize(width: 340, height: 132)
-    static let transcriptSize = NSSize(width: 340, height: 430)
+    static let compactSize = NSSize(width: 356, height: 162)
+    static let transcriptSize = NSSize(width: 356, height: 450)
 
     /// windows that were in native fullscreen when collapsing (re-entered on expand)
     private var wasFullScreen: Set<ObjectIdentifier> = []
@@ -121,7 +122,7 @@ final class MiniWidget: NSObject, ObservableObject, NSWindowDelegate {
 
     private func makePanel() -> NSPanel {
         let p = NSPanel(contentRect: NSRect(origin: .zero, size: MiniWidget.compactSize),
-                        styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
+                        styleMask: [.nonactivatingPanel, .borderless],
                         backing: .buffered, defer: false)
         p.isFloatingPanel = true
         p.level = .floating
@@ -133,6 +134,7 @@ final class MiniWidget: NSObject, ObservableObject, NSWindowDelegate {
         p.hasShadow = true
         p.delegate = self
         let host = NSHostingView(rootView: WidgetView().environment(\.colorScheme, .light))
+        host.sizingOptions = []
         host.frame = p.contentView?.bounds ?? NSRect(origin: .zero, size: MiniWidget.compactSize)
         host.autoresizingMask = [.width, .height]
         p.contentView = host
@@ -177,36 +179,36 @@ struct WidgetView: View {
 
     // MARK: compact "now playing"
     var nowPlaying: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 11) {
+        VStack(spacing: 11) {
+            HStack(alignment: .center, spacing: 12) {
                 ZStack(alignment: .bottomTrailing) {
-                    if let id = docId { Thumb(docId: id).frame(width: 44, height: 58).clipShape(RoundedRectangle(cornerRadius: 5)) }
-                    else { RoundedRectangle(cornerRadius: 5).fill(Color.gray.opacity(0.2)).frame(width: 44, height: 58) }
+                    if let id = docId { Thumb(docId: id).frame(width: 44, height: 58).clipShape(RoundedRectangle(cornerRadius: 6)) }
+                    else { RoundedRectangle(cornerRadius: 6).fill(Color.gray.opacity(0.2)).frame(width: 44, height: 58) }
                     if narrating {
                         Image(systemName: "waveform").font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
                             .padding(3).background(Circle().fill(Color.purple)).offset(x: 4, y: 4)
                     }
                 }
                 .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(docId.flatMap { store.doc($0)?.title } ?? "Readlet")
-                        .font(.system(size: 12.5, weight: .semibold)).lineLimit(1).truncationMode(.middle)
-                    Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).monospacedDigit()
+                        .font(.system(size: 13, weight: .semibold)).lineLimit(1).truncationMode(.middle)
+                    Text(subtitle).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1).monospacedDigit()
                     if narrating, n.segIndex < n.segments.count, !w.showTranscript {
                         Text(n.segments[n.segIndex].text).font(.system(size: 10.5)).foregroundStyle(Color(white: 0.3)).lineLimit(1)
                     }
                 }
-                Spacer(minLength: 4)
-                VStack(spacing: 8) {
-                    Button { w.expand() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 10.5, weight: .semibold)) }
+                Spacer(minLength: 6)
+                VStack(spacing: 10) {
+                    Button { w.expand() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 11, weight: .semibold)) }
                         .buttonStyle(.plain).help(L("展开 PDF 窗口"))
-                    Button { w.showTranscript.toggle() } label: { Image(systemName: w.showTranscript ? "chevron.up" : "text.alignleft").font(.system(size: 10.5, weight: .semibold)) }
+                    Button { w.showTranscript.toggle() } label: { Image(systemName: w.showTranscript ? "chevron.up" : "text.alignleft").font(.system(size: 11, weight: .semibold)) }
                         .buttonStyle(.plain).help(w.showTranscript ? L("收起讲稿") : L("显示每段讲稿"))
                 }
                 .foregroundStyle(.secondary)
             }
             // progress
-            VStack(spacing: 3) {
+            VStack(spacing: 4) {
                 GeometryReader { g in
                     ZStack(alignment: .leading) {
                         Capsule().fill(Color.black.opacity(0.08))
@@ -216,30 +218,42 @@ struct WidgetView: View {
                 }
                 .frame(height: 4)
                 HStack {
-                    Text(narrating ? LF("第 %d/%d 段", n.segIndex + 1, max(1, n.segments.count)) : LF("第 %d 页", currentPage + 1)).font(.system(size: 9.5)).foregroundStyle(.tertiary).monospacedDigit()
+                    Text(narrating ? LF("第 %d/%d 段", n.segIndex + 1, max(1, n.segments.count)) : LF("第 %d 页", currentPage + 1)).font(.system(size: 10)).foregroundStyle(.secondary).monospacedDigit()
                     Spacer()
                     TimelineView(.periodic(from: .now, by: 1)) { _ in
                         let eta = narrating ? (n.remainingSeconds().map { Narrator.formatRemaining($0) + " · " } ?? "") : ""
-                        Text(eta + "\(Int(progress * 100))%").font(.system(size: 9.5)).foregroundStyle(.tertiary).monospacedDigit()
+                        Text(eta + "\(Int(progress * 100))%").font(.system(size: 10)).foregroundStyle(.secondary).monospacedDigit()
                     }
                 }
             }
-            // transport
-            HStack(spacing: 22) {
-                Button { narrating ? n.previous() : reader?.goToPage(currentPage - 1) } label: { Image(systemName: "backward.fill") }
-                Button { togglePlay() } label: {
-                    Image(systemName: narrating && n.state == .playing ? "pause.circle.fill" : "play.circle.fill").font(.system(size: 30))
-                        .foregroundStyle(LinearGradient(colors: [.purple, .blue], startPoint: .top, endPoint: .bottom))
+            // transport: centered prev / play / next, with mic button aligned right
+            ZStack {
+                HStack(spacing: 28) {
+                    Button { narrating ? n.previous() : reader?.goToPage(currentPage - 1) } label: {
+                        Image(systemName: "backward.fill").font(.system(size: 15))
+                    }
+                    Button { togglePlay() } label: {
+                        Image(systemName: narrating && n.state == .playing ? "pause.circle.fill" : "play.circle.fill")
+                            .font(.system(size: 32))
+                            .foregroundStyle(LinearGradient(colors: [.purple, .blue], startPoint: .top, endPoint: .bottom))
+                    }
+                    .disabled(n.state == .preparing && narrating)
+                    Button { narrating ? n.next() : reader?.goToPage(currentPage + 1) } label: {
+                        Image(systemName: "forward.fill").font(.system(size: 15))
+                    }
                 }
-                .disabled(n.state == .preparing && narrating)
-                Button { narrating ? n.next() : reader?.goToPage(currentPage + 1) } label: { Image(systemName: "forward.fill") }
-                MicButton().scaleEffect(0.82).frame(width: 26, height: 26).opacity(narrating ? 1 : 0.35).disabled(!narrating)
+                if narrating {
+                    HStack {
+                        Spacer()
+                        MicButton().scaleEffect(0.84).frame(width: 28, height: 28)
+                    }
+                }
             }
             .buttonStyle(.plain)
-            .font(.system(size: 14))
             .foregroundStyle(Color(white: 0.2))
         }
-        .padding(.horizontal, 14).padding(.vertical, 12)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
         .frame(height: MiniWidget.compactSize.height)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { w.expand() }
@@ -320,3 +334,4 @@ struct VisualEffect: NSViewRepresentable {
     }
     func updateNSView(_ v: NSVisualEffectView, context: Context) {}
 }
+#endif

@@ -1,8 +1,28 @@
 import Foundation
+#if os(macOS)
 import AppKit
+#elseif os(iOS)
+import UIKit
+#endif
 import PDFKit
 
 enum Variant: String, Codable, Hashable { case original, bilingual }
+
+/// Built-in workflow status tags for documents (`TODO`, `DOING`, `DONE`).
+enum DocStatusTag: String, CaseIterable, Codable, Identifiable, Equatable {
+    case todo = "TODO"
+    case doing = "DOING"
+    case done = "DONE"
+    var id: String { rawValue }
+    var label: String { rawValue }
+    var icon: String {
+        switch self {
+        case .todo: return "circle.dashed"
+        case .doing: return "timelapse"
+        case .done: return "checkmark.circle.fill"
+        }
+    }
+}
 
 struct Doc: Codable, Identifiable, Hashable {
     var id = UUID()
@@ -10,6 +30,70 @@ struct Doc: Codable, Identifiable, Hashable {
     var added = Date()
     /// web page the PDF was imported from (Readlet's "从网页导入")
     var source: String? = nil
+    /// workflow status tags (`TODO`, `DOING`, `DONE`) + arbitrary user tags
+    var tags: [String] = []
+    /// total page count cached for bookshelf progress display
+    var pageCount: Int? = nil
+    /// 0-indexed current / furthest page read
+    var readPage: Int? = nil
+    /// last modified timestamp for conflict-free iCloud sync
+    var updatedAt: Date? = nil
+
+    init(id: UUID = UUID(), title: String, added: Date = Date(), source: String? = nil, tags: [String] = [], pageCount: Int? = nil, readPage: Int? = nil, updatedAt: Date? = Date()) {
+        self.id = id
+        self.title = title
+        self.added = added
+        self.source = source
+        self.tags = tags
+        self.pageCount = pageCount
+        self.readPage = readPage
+        self.updatedAt = updatedAt
+    }
+
+    enum CodingKeys: String, CodingKey { case id, title, added, source, tags, pageCount, readPage, updatedAt }
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        added = try c.decodeIfPresent(Date.self, forKey: .added) ?? Date()
+        source = try c.decodeIfPresent(String.self, forKey: .source)
+        tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
+        pageCount = try c.decodeIfPresent(Int.self, forKey: .pageCount)
+        readPage = try c.decodeIfPresent(Int.self, forKey: .readPage)
+        updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt)
+    }
+
+    var statusTag: DocStatusTag? {
+        for t in tags {
+            if let st = DocStatusTag(rawValue: t.uppercased()) { return st }
+        }
+        return nil
+    }
+
+    var customTags: [String] {
+        tags.filter { DocStatusTag(rawValue: $0.uppercased()) == nil }
+    }
+
+    /// Resolved 0-indexed page (from `readPage` or `UserDefaults` fallback)
+    var resolvedReadPage: Int? {
+        if let rp = readPage { return rp }
+        if UserDefaults.standard.object(forKey: "page-" + id.uuidString) != nil {
+            return UserDefaults.standard.integer(forKey: "page-" + id.uuidString)
+        }
+        return nil
+    }
+
+    /// Reading progress in `0.0 ... 1.0`
+    var progressFraction: Double {
+        if statusTag == .done { return 1.0 }
+        let total = max(1, pageCount ?? 0)
+        guard pageCount != nil, let rp = resolvedReadPage else { return 0.0 }
+        return min(1.0, max(0.0, Double(rp + 1) / Double(total)))
+    }
+
+    var progressPercent: Int {
+        Int((progressFraction * 100.0).rounded())
+    }
 }
 
 struct Card: Codable, Identifiable, Hashable {
@@ -25,11 +109,12 @@ struct Card: Codable, Identifiable, Hashable {
     var translation: String? = nil
     var comments: [String] = []
     var isImage = false
+    var updatedAt: Date? = nil
 
     init(docId: UUID, page: Int, variant: Variant, rects: [CGRect], text: String, color: Int = 0) {
-        self.docId = docId; self.page = page; self.variant = variant; self.rects = rects; self.text = text; self.color = color
+        self.docId = docId; self.page = page; self.variant = variant; self.rects = rects; self.text = text; self.color = color; self.updatedAt = Date()
     }
-    enum CodingKeys: String, CodingKey { case id, docId, page, variant, rects, text, note, color, created, translation, comments, isImage }
+    enum CodingKeys: String, CodingKey { case id, docId, page, variant, rects, text, note, color, created, translation, comments, isImage, updatedAt }
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -43,6 +128,7 @@ struct Card: Codable, Identifiable, Hashable {
         translation = try c.decodeIfPresent(String.self, forKey: .translation)
         comments = try c.decodeIfPresent([String].self, forKey: .comments) ?? []
         isImage = try c.decodeIfPresent(Bool.self, forKey: .isImage) ?? false
+        updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt)
         let legacy = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
         if !legacy.isEmpty && comments.isEmpty { comments = [legacy] }
     }
@@ -202,6 +288,22 @@ final class Store: ObservableObject {
         if let d = currentDocId, !lib.docs.contains(where: { $0.id == d }) { currentDocId = nil }
         if currentDocId == nil { currentDocId = currentNotebook?.docIds.first }
         variant = Variant(rawValue: UserDefaults.standard.string(forKey: "lastVariant") ?? "") ?? .original
+        refreshMissingPageCounts()
+    }
+
+    func refreshMissingPageCounts() {
+        var changed = false
+        for i in lib.docs.indices {
+            if lib.docs[i].pageCount == nil, let pdf = PDFDocument(url: Paths.pdf(lib.docs[i].id)) {
+                lib.docs[i].pageCount = pdf.pageCount
+                changed = true
+            }
+            if lib.docs[i].readPage == nil, UserDefaults.standard.object(forKey: "page-" + lib.docs[i].id.uuidString) != nil {
+                lib.docs[i].readPage = UserDefaults.standard.integer(forKey: "page-" + lib.docs[i].id.uuidString)
+                changed = true
+            }
+        }
+        if changed { save() }
     }
 
     /// write immediately (imports, deletes — never lose these to a quit within the debounce window)
@@ -209,6 +311,7 @@ final class Store: ObservableObject {
         saveWork?.cancel()
         if let d = try? JSONEncoder().encode(lib) { try? d.write(to: Paths.libraryFile, options: .atomic) }
         UserDefaults.standard.set(currentNotebookId?.uuidString, forKey: "lastNotebook")
+        CloudSync.shared.notifyLocalChange()
     }
 
     func save() {
@@ -219,9 +322,26 @@ final class Store: ObservableObject {
             UserDefaults.standard.set(self.currentNotebookId?.uuidString, forKey: "lastNotebook")
             UserDefaults.standard.set(self.currentDocId?.uuidString, forKey: "lastDoc")
             UserDefaults.standard.set(self.variant.rawValue, forKey: "lastVariant")
+            CloudSync.shared.notifyLocalChange()
         }
         saveWork = w
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: w)
+    }
+
+    /// Applies a merged library from `CloudSync` without triggering a redundant re-upload loop.
+    func applyCloudMergedLibrary(_ merged: Library) {
+        let goneCards = Set(lib.cards.map(\.id)).subtracting(merged.cards.map(\.id))
+        lib = merged
+        if currentNotebookId == nil || !lib.notebooks.contains(where: { $0.id == currentNotebookId }) {
+            currentNotebookId = lib.notebooks.first?.id
+        }
+        if let cid = currentDocId, !lib.docs.contains(where: { $0.id == cid }) {
+            currentDocId = currentNotebook?.docIds.first
+        }
+        for ses in sessions.values {
+            for id in goneCards { ses.removeAnnotations(cardId: id) }
+            ses.applyAnnotations()
+        }
     }
 
     var currentNotebook: Notebook? { lib.notebooks.first { $0.id == currentNotebookId } }
@@ -233,6 +353,10 @@ final class Store: ObservableObject {
         if let s = sessions[id] { return s }
         guard let d = doc(id), let s = DocSession(doc: d) else { return nil }
         sessions[id] = s
+        if d.pageCount != s.pageCount, let idx = lib.docs.firstIndex(where: { $0.id == id }) {
+            lib.docs[idx].pageCount = s.pageCount
+            save()
+        }
         return s
     }
 
@@ -259,6 +383,7 @@ final class Store: ObservableObject {
 
     func deleteNotebook(_ id: UUID) {
         registerUndo(L("删除笔记本"))
+        CloudSync.shared.recordDeletion(id)
         lib.notebooks.removeAll { $0.id == id }
         if lib.notebooks.isEmpty { lib.notebooks.append(Notebook(name: L("我的笔记本"), root: MindNode(title: L("我的笔记本")))) }
         if currentNotebookId == id { currentNotebookId = lib.notebooks.first?.id; currentDocId = currentNotebook?.docIds.first }
@@ -267,28 +392,137 @@ final class Store: ObservableObject {
 
     @discardableResult
     func importPDF(_ url: URL, open: Bool = false) -> UUID? {
-        guard PDFDocument(url: url) != nil else { return nil }
+        guard let pdf = PDFDocument(url: url) else { return nil }
         let title = url.deletingPathExtension().lastPathComponent
         // same file imported before? reuse
         if let existing = lib.docs.first(where: { $0.title == title }),
            let a = try? Data(contentsOf: Paths.pdf(existing.id)), let b = try? Data(contentsOf: url), a == b {
             addDocToNotebook(existing.id)
+            #if os(macOS)
             if open { DocWindows.shared.open(existing.id) }
+            #else
+            if open { openDoc(existing.id) }
+            #endif
             return existing.id
         }
-        let d = Doc(title: title)
+        let d = Doc(title: title, tags: [DocStatusTag.todo.rawValue], pageCount: pdf.pageCount, readPage: nil, updatedAt: Date())
         do { try FileManager.default.copyItem(at: url, to: Paths.pdf(d.id)) } catch { return nil }
         lib.docs.append(d)
         addDocToNotebook(d.id)
         saveNow()
+        #if os(macOS)
         if open { DocWindows.shared.open(d.id) }
+        #else
+        if open { openDoc(d.id) }
+        #endif
         return d.id
     }
 
     func setSource(_ docId: UUID, _ url: String) {
         guard let i = lib.docs.firstIndex(where: { $0.id == docId }) else { return }
         lib.docs[i].source = url
+        lib.docs[i].updatedAt = Date()
         saveNow()
+    }
+
+    // MARK: - Document Tags & Reading Progress
+
+    /// Sets or clears the mutually exclusive status tag (`TODO`, `DOING`, `DONE`) while preserving custom tags.
+    func setStatusTag(_ docId: UUID, _ status: DocStatusTag?) {
+        guard let i = lib.docs.firstIndex(where: { $0.id == docId }) else { return }
+        var custom = lib.docs[i].customTags
+        if let status {
+            custom.insert(status.rawValue, at: 0)
+        }
+        lib.docs[i].tags = custom
+        lib.docs[i].updatedAt = Date()
+        saveNow()
+    }
+
+    /// Cycles status tag: `nil -> TODO -> DOING -> DONE -> TODO`
+    func cycleStatusTag(_ docId: UUID) {
+        guard let d = doc(docId) else { return }
+        let next: DocStatusTag
+        switch d.statusTag {
+        case nil: next = .todo
+        case .todo: next = .doing
+        case .doing: next = .done
+        case .done: next = .todo
+        }
+        setStatusTag(docId, next)
+    }
+
+    func addTag(_ docId: UUID, _ rawTag: String) {
+        let t = rawTag.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, let i = lib.docs.firstIndex(where: { $0.id == docId }) else { return }
+        if let st = DocStatusTag(rawValue: t.uppercased()) {
+            setStatusTag(docId, st)
+            return
+        }
+        if !lib.docs[i].tags.contains(where: { $0.caseInsensitiveCompare(t) == .orderedSame }) {
+            lib.docs[i].tags.append(t)
+            lib.docs[i].updatedAt = Date()
+            saveNow()
+        }
+    }
+
+    func removeTag(_ docId: UUID, _ tag: String) {
+        guard let i = lib.docs.firstIndex(where: { $0.id == docId }) else { return }
+        lib.docs[i].tags.removeAll { $0.caseInsensitiveCompare(tag) == .orderedSame }
+        lib.docs[i].updatedAt = Date()
+        saveNow()
+    }
+
+    func toggleTag(_ docId: UUID, _ tag: String) {
+        guard let d = doc(docId) else { return }
+        if let st = DocStatusTag(rawValue: tag.uppercased()) {
+            setStatusTag(docId, d.statusTag == st ? nil : st)
+        } else if d.tags.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) {
+            removeTag(docId, tag)
+        } else {
+            addTag(docId, tag)
+        }
+    }
+
+    var allCustomTags: [String] {
+        var seen = Set<String>()
+        var out: [String] = []
+        for d in lib.docs {
+            for t in d.customTags {
+                let key = t.lowercased()
+                if !seen.contains(key) {
+                    seen.insert(key)
+                    out.append(t)
+                }
+            }
+        }
+        return out
+    }
+
+    /// Updates reading progress for `docId` and automatically transitions `TODO -> DOING` (or `DONE` on the last page if appropriate).
+    func updateReadingProgress(docId: UUID, page: Int, pageCount: Int) {
+        guard let i = lib.docs.firstIndex(where: { $0.id == docId }) else { return }
+        let clampedPage = min(max(0, page), max(0, pageCount - 1))
+        var changed = false
+        if lib.docs[i].pageCount != pageCount {
+            lib.docs[i].pageCount = pageCount
+            changed = true
+        }
+        if lib.docs[i].readPage != clampedPage {
+            lib.docs[i].readPage = clampedPage
+            changed = true
+        }
+        // Automatically transition TODO -> DOING when the user reads past page 1
+        if lib.docs[i].statusTag == .todo && clampedPage > 0 {
+            var custom = lib.docs[i].customTags
+            custom.insert(DocStatusTag.doing.rawValue, at: 0)
+            lib.docs[i].tags = custom
+            changed = true
+        }
+        if changed {
+            lib.docs[i].updatedAt = Date()
+            save()
+        }
     }
 
     func addDocToNotebook(_ docId: UUID, notebook: UUID? = nil) {
@@ -301,7 +535,10 @@ final class Store: ObservableObject {
         let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty, let i = lib.docs.firstIndex(where: { $0.id == id }) else { return }
         lib.docs[i].title = t
+        lib.docs[i].updatedAt = Date()
+        #if os(macOS)
         DocWindows.shared.entries[id]?.window.title = t
+        #endif
         saveNow()
     }
 
@@ -312,9 +549,10 @@ final class Store: ObservableObject {
     }
 
     func deleteDoc(_ docId: UUID) {
+        let cardIds = Set(lib.cards.filter { $0.docId == docId }.map { $0.id })
+        CloudSync.shared.recordDeletions([docId] + Array(cardIds))
         lib.docs.removeAll { $0.id == docId }
         for i in lib.notebooks.indices { lib.notebooks[i].docIds.removeAll { $0 == docId } }
-        let cardIds = Set(lib.cards.filter { $0.docId == docId }.map { $0.id })
         lib.cards.removeAll { cardIds.contains($0.id) }
         lib.links.removeAll { cardIds.contains($0.a) || cardIds.contains($0.b) }
         for i in lib.notebooks.indices { for c in cardIds { removeNodes(forCard: c, in: &lib.notebooks[i].root) } }
@@ -361,6 +599,7 @@ final class Store: ObservableObject {
     func updateCard(_ id: UUID, _ f: (inout Card) -> Void) {
         guard let i = lib.cards.firstIndex(where: { $0.id == id }) else { return }
         f(&lib.cards[i])
+        lib.cards[i].updatedAt = Date()
         let c = lib.cards[i]
         sessions[c.docId]?.refreshAnnotations(for: c)
         save()
@@ -369,6 +608,7 @@ final class Store: ObservableObject {
     func deleteCard(_ id: UUID) {
         guard let c = card(id) else { return }
         registerUndo(L("删除卡片"))
+        CloudSync.shared.recordDeletion(id)
         lib.cards.removeAll { $0.id == id }
         lib.links.removeAll { $0.a == id || $0.b == id }
         for i in lib.notebooks.indices { removeNodes(forCard: id, in: &lib.notebooks[i].root) }
@@ -404,6 +644,7 @@ final class Store: ObservableObject {
 
     func jump(to card: Card) {
         selectedCardId = card.id
+        #if os(macOS)
         if let e = DocWindows.shared.entries[card.docId] {
             e.window.makeKeyAndOrderFront(nil)
             if e.reader.variant != card.variant { e.reader.setVariant(card.variant) }
@@ -412,6 +653,13 @@ final class Store: ObservableObject {
             UserDefaults.standard.set(card.variant.rawValue, forKey: "variant-" + card.docId.uuidString)
             DocWindows.shared.open(card.docId, jump: card)
         }
+        #else
+        currentDocId = card.docId
+        variant = card.variant
+        pendingJump = card
+        ReaderController.shared.setVariant(card.variant)
+        ReaderController.shared.jump(to: card)
+        #endif
     }
 
     // MARK: mind map editing
@@ -446,6 +694,7 @@ final class Store: ObservableObject {
     func deleteNode(_ id: UUID) {
         guard let nb = currentNotebook, id != nb.root.id else { return }
         registerUndo(L("删除主题"))
+        CloudSync.shared.recordDeletion(id)
         let parent = nb.root.parentOf(id)
         updateNotebook { nb in _ = nb.root.remove(id) }
         selectedNodeId = parent?.id
@@ -496,7 +745,13 @@ final class Store: ObservableObject {
     // MARK: undo — snapshot of the whole library (cheap value copy), registered on the key window
 
     private let fallbackUndo = UndoManager()
-    private var undoManager: UndoManager { NSApp.keyWindow?.undoManager ?? fallbackUndo }
+    private var undoManager: UndoManager {
+        #if os(macOS)
+        return NSApp.keyWindow?.undoManager ?? fallbackUndo
+        #else
+        return fallbackUndo
+        #endif
+    }
 
     /// call before a user-initiated destructive edit; ⌘Z restores the library as it was
     func registerUndo(_ name: String) {

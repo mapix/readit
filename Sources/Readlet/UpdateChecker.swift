@@ -1,87 +1,212 @@
-import Foundation
+#if os(macOS)
 import AppKit
+import Foundation
+import Combine
 
-/// Checks the website's `download/latest.json` for a newer release (on launch at most once a day, or on demand).
+/// Checks for new versions of Readlet on launch, periodically in the background, and from the menu / Settings.
+/// - Direct builds: checks `/download/latest.json` on the official website.
+/// - Mac App Store builds: checks Apple's iTunes Lookup API (`itunes.apple.com/lookup?bundleId=...`) and opens the Mac App Store page.
 @MainActor
-final class UpdateChecker {
+final class UpdateChecker: ObservableObject {
     static let shared = UpdateChecker()
 
-    struct Release: Decodable { var version: String; var file: String?; var size: String?; var date: String?; var notes: String? }
-
-    static var feedURL: URL {
-        URL(string: ConfigFile.string("app.update_url") ?? "https://readlet.novarock.io/download/latest.json")
-            ?? URL(fileURLWithPath: "/")
+    struct Release: Codable, Equatable {
+        let version: String
+        let file: String
+        let size: String?
+        let sha256: String?
+        let notes: String?
+        var storeURL: String? = nil
     }
-    static let fallbackFeedURL = URL(string: "https://readit.novarock.io/download/latest.json")!
-    static var currentVersion: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0" }
-    private var d: UserDefaults { .standard }
+
+    private struct ITunesLookupResponse: Decodable {
+        struct Result: Decodable {
+            let version: String
+            let trackViewUrl: String?
+            let releaseNotes: String?
+        }
+        let resultCount: Int
+        let results: [Result]
+    }
+
+    private let endpoints = [
+        URL(string: "https://readlet.novarock.io/download/latest.json")!,
+        URL(string: "https://readlet.learnings.ai/download/latest.json")!,
+    ]
+    private let downloadBases = [
+        URL(string: "https://readlet.novarock.io/download/")!,
+        URL(string: "https://readlet.learnings.ai/download/")!,
+    ]
+
+    @Published var availableRelease: Release? = nil
+    @Published var checking: Bool = false
+    @Published var lastCheckedAt: Date? = nil
+    @Published var statusText: String = ""
+
+    private var periodicTimer: Timer?
+
+    var autoCheckEnabled: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: "autoCheckUpdates") == nil { return true }
+            return UserDefaults.standard.bool(forKey: "autoCheckUpdates")
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "autoCheckUpdates")
+            objectWillChange.send()
+            configurePeriodicTimer()
+        }
+    }
+
+    static var currentVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? AppInfo.version
+    }
+
+    init() {
+        configurePeriodicTimer()
+    }
+
+    private func configurePeriodicTimer() {
+        periodicTimer?.invalidate()
+        periodicTimer = nil
+        guard autoCheckEnabled, ProcessInfo.processInfo.environment["BIREADER_SCRIPT"] == nil else { return }
+        // Check automatically every 6 hours while running
+        periodicTimer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                await self?.check(manual: false)
+            }
+        }
+    }
 
     func checkOnLaunch() {
-        guard AppInfo.selfUpdates else { return }
-        if ConfigFile.string("app.check_updates") == "false" { return }
-        let last = d.object(forKey: "updateCheckedAt") as? Date ?? .distantPast
-        guard Date().timeIntervalSince(last) > 20 * 3600 else { return }
+        guard autoCheckEnabled, ProcessInfo.processInfo.environment["BIREADER_SCRIPT"] == nil else { return }
         Task { await check(manual: false) }
     }
 
-    private func fetchRelease(from url: URL) async -> (Release, URL)? {
-        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
-        req.setValue("Readlet/\(UpdateChecker.currentVersion)", forHTTPHeaderField: "User-Agent")
-        guard let (data, resp) = try? await URLSession.shared.data(for: req),
-              (resp as? HTTPURLResponse)?.statusCode == 200,
-              let rel = try? JSONDecoder().decode(Release.self, from: data) else { return nil }
-        return (rel, url)
+    func check(manual: Bool) async {
+        guard !checking else { return }
+        checking = true
+        statusText = L("正在检查更新…")
+        defer { checking = false }
+
+        do {
+            let rel: Release?
+            if AppInfo.isAppStore {
+                rel = try await fetchAppStoreRelease()
+            } else {
+                rel = try await fetchDirectRelease()
+            }
+            lastCheckedAt = Date()
+            guard let rel else {
+                statusText = LF("已是最新版本 (%@)", Self.currentVersion)
+                if manual { showUpToDateAlert() }
+                return
+            }
+            let cur = Self.currentVersion
+            let skipped = UserDefaults.standard.string(forKey: "skippedVersion")
+            if Self.isNewer(rel.version, than: cur) {
+                availableRelease = rel
+                statusText = LF("发现新版本 %@", rel.version)
+                if manual || skipped != rel.version {
+                    prompt(rel, current: cur)
+                }
+            } else {
+                availableRelease = nil
+                statusText = LF("已是最新版本 (%@)", cur)
+                if manual { showUpToDateAlert() }
+            }
+        } catch {
+            statusText = L("检查更新失败")
+            if manual {
+                let a = NSAlert()
+                a.messageText = L("检查更新失败")
+                a.informativeText = L("暂时无法连接更新服务器，请稍后再试。")
+                a.addButton(withTitle: L("好"))
+                a.runModal()
+            }
+        }
     }
 
-    func check(manual: Bool) async {
-        d.set(Date(), forKey: "updateCheckedAt")
-        var fetched = await fetchRelease(from: UpdateChecker.feedURL)
-        if fetched == nil, ConfigFile.string("app.update_url") == nil {
-            fetched = await fetchRelease(from: UpdateChecker.fallbackFeedURL)
+    private func fetchDirectRelease() async throws -> Release? {
+        var lastError: Error?
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 8
+        let session = URLSession(configuration: cfg)
+        for url in endpoints {
+            do {
+                let (data, resp) = try await session.data(from: url)
+                if let http = resp as? HTTPURLResponse, http.statusCode == 200 {
+                    return try JSONDecoder().decode(Release.self, from: data)
+                }
+            } catch {
+                lastError = error
+            }
         }
-        guard let (rel, usedURL) = fetched else {
-            if manual { alert(L("检查更新失败"), L("暂时无法连接更新服务器，请稍后再试。"), buttons: [L("好")]) }
-            return
-        }
-        let cur = UpdateChecker.currentVersion
-        guard UpdateChecker.isNewer(rel.version, than: cur) else {
-            if manual { alert(L("已是最新版本"), LF("Readlet %@ 是目前的最新版本。", cur), buttons: [L("好")]) }
-            return
-        }
-        if !manual, d.string(forKey: "updateSkipVersion") == rel.version { return }
-        let info = [rel.size, rel.date.map { String($0.prefix(10)) }].compactMap { $0 }.joined(separator: " · ")
-        let r = alert(LF("Readlet %@ 可以更新了", rel.version),
-                      LF("当前版本 %@。", cur) + (info.isEmpty ? "" : " " + info) + (rel.notes.map { "\n\n" + $0 } ?? ""),
-                      buttons: [L("下载新版本"), L("稍后"), L("跳过这个版本")])
-        switch r {
-        case .alertFirstButtonReturn:
-            let base = usedURL.deletingLastPathComponent()
-            let u = rel.file.map { base.appendingPathComponent($0) } ?? URL(string: "https://readlet.novarock.io/#download")!
+        if let lastError { throw lastError }
+        return nil
+    }
+
+    private func fetchAppStoreRelease() async throws -> Release? {
+        let bundleId = Bundle.main.bundleIdentifier ?? "io.novarock.readlet"
+        guard let url = URL(string: "https://itunes.apple.com/lookup?bundleId=\(bundleId)") else { return nil }
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 8
+        let (data, _) = try await URLSession(configuration: cfg).data(from: url)
+        let lookup = try JSONDecoder().decode(ITunesLookupResponse.self, from: data)
+        guard let first = lookup.results.first else { return nil }
+        return Release(
+            version: first.version,
+            file: "",
+            size: nil,
+            sha256: nil,
+            notes: first.releaseNotes,
+            storeURL: first.trackViewUrl ?? "macappstore://itunes.apple.com/app/id6823317776?mt=12"
+        )
+    }
+
+    private func showUpToDateAlert() {
+        let a = NSAlert()
+        a.messageText = L("已是最新版本")
+        a.informativeText = LF("Readlet %@ 是目前的最新版本。", Self.currentVersion)
+        a.addButton(withTitle: L("好"))
+        a.runModal()
+    }
+
+    func openDownload(for r: Release) {
+        if let storeURL = r.storeURL, let u = URL(string: storeURL) {
             NSWorkspace.shared.open(u)
+            return
+        }
+        let u = downloadBases[0].appendingPathComponent(r.file)
+        NSWorkspace.shared.open(u)
+    }
+
+    func prompt(_ r: Release, current: String) {
+        let a = NSAlert()
+        a.messageText = LF("Readlet %@ 可以更新了", r.version)
+        var info = LF("当前版本 %@。", current)
+        if let s = r.size, !s.isEmpty { info += "（\(s)）" }
+        if let n = r.notes, !n.isEmpty { info += "\n\n" + n }
+        a.informativeText = info
+        a.addButton(withTitle: L("下载新版本"))
+        a.addButton(withTitle: L("稍后"))
+        a.addButton(withTitle: L("跳过这个版本"))
+        switch a.runModal() {
+        case .alertFirstButtonReturn:
+            openDownload(for: r)
         case .alertThirdButtonReturn:
-            d.set(rel.version, forKey: "updateSkipVersion")
+            UserDefaults.standard.set(r.version, forKey: "skippedVersion")
         default: break
         }
     }
 
-    @discardableResult
-    private func alert(_ title: String, _ text: String, buttons: [String]) -> NSApplication.ModalResponse {
-        let a = NSAlert()
-        a.messageText = title
-        a.informativeText = text
-        for b in buttons { a.addButton(withTitle: b) }
-        NSApp.activate(ignoringOtherApps: true)
-        return a.runModal()
-    }
-
-    /// "0.10.1" > "0.9.3"; missing parts count as 0; non-numeric suffixes ignored
     nonisolated static func isNewer(_ a: String, than b: String) -> Bool {
-        func parts(_ s: String) -> [Int] { s.split(separator: ".").map { Int($0.prefix { $0.isNumber }) ?? 0 } }
-        let x = parts(a), y = parts(b)
-        for i in 0..<max(x.count, y.count) {
-            let p = i < x.count ? x[i] : 0, q = i < y.count ? y[i] : 0
-            if p != q { return p > q }
+        let pa = a.split(separator: ".").map { Int($0) ?? 0 }
+        let pb = b.split(separator: ".").map { Int($0) ?? 0 }
+        for i in 0..<max(pa.count, pb.count) {
+            let x = i < pa.count ? pa[i] : 0, y = i < pb.count ? pb[i] : 0
+            if x != y { return x > y }
         }
         return false
     }
 }
+#endif

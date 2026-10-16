@@ -1,0 +1,2057 @@
+#if os(iOS)
+import SwiftUI
+import UIKit
+import PDFKit
+import UniformTypeIdentifiers
+import WebKit
+
+final class iOSAppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            return .portrait
+        }
+        return .all
+    }
+}
+
+@main
+struct ReadletIOSApp: App {
+    @UIApplicationDelegateAdaptor(iOSAppDelegate.self) private var appDelegate
+    @StateObject private var store = Store.shared
+    @StateObject private var cloud = CloudSync.shared
+    @Environment(\.scenePhase) private var scenePhase
+
+    init() {
+        Migration.run()
+    }
+
+    var body: some Scene {
+        WindowGroup {
+            iOSRootView(store: store, cloud: cloud)
+                .onAppear {
+                    cloud.start()
+                }
+                .onOpenURL { url in
+                    _ = url.startAccessingSecurityScopedResource()
+                    defer { url.stopAccessingSecurityScopedResource() }
+                    if url.pathExtension.lowercased() == "pdf" {
+                        if let id = store.importPDF(url, open: true) {
+                            DocWindows.shared.open(id)
+                        }
+                    }
+                }
+                .onChange(of: scenePhase) { _, newPhase in
+                    if newPhase == .active {
+                        cloud.syncNow()
+                    } else if newPhase == .background {
+                        store.saveNow()
+                    }
+                }
+        }
+    }
+}
+
+// MARK: - Root Tab View
+
+struct iOSRootView: View {
+    @ObservedObject var store: Store
+    @ObservedObject var cloud: CloudSync
+    @ObservedObject var wins = DocWindows.shared
+    @ObservedObject var lang = LangCenter.shared
+
+    @State private var selectedTab = 0
+    @State private var activeReaderDocId: UUID?
+
+    var body: some View {
+        ZStack {
+            if let docId = activeReaderDocId, store.doc(docId) != nil {
+                iOSDocumentStudyView(
+                    store: store,
+                    docId: docId,
+                    onClose: { activeReaderDocId = nil }
+                )
+                .id(docId)
+            } else {
+                TabView(selection: $selectedTab) {
+                    iOSBookshelfView(
+                        store: store,
+                        cloud: cloud,
+                        onOpenDoc: { id in
+                            DocWindows.shared.open(id)
+                            activeReaderDocId = id
+                        }
+                    )
+                    .tabItem {
+                        Label(L("书架"), systemImage: "books.vertical.fill")
+                    }
+                    .tag(0)
+
+                    iOSMindMapTabView(
+                        store: store,
+                        onJumpToDoc: { id in
+                            DocWindows.shared.open(id)
+                            activeReaderDocId = id
+                        }
+                    )
+                    .tabItem {
+                        Label(L("脑图"), systemImage: "point.3.connected.trianglepath.dotted")
+                    }
+                    .tag(1)
+
+                    iOSFlashcardsTabView(store: store)
+                        .tabItem {
+                            Label(L("闪卡"), systemImage: "rectangle.on.rectangle.angled")
+                        }
+                        .tag(2)
+
+                    iOSSettingsView(store: store, cloud: cloud)
+                        .tabItem {
+                            Label(L("设置与同步"), systemImage: "icloud.and.arrow.up")
+                        }
+                        .tag(3)
+                }
+            }
+        }
+        .id(lang.lang)
+        .onChange(of: store.pendingJump) { _, card in
+            if let card {
+                DocWindows.shared.open(card.docId, jump: card)
+                activeReaderDocId = card.docId
+                store.pendingJump = nil
+            }
+        }
+        .onOpenURL { url in
+            if url.scheme == "readlet" {
+                let host = url.host() ?? ""
+                let path = url.pathComponents.dropFirst().first ?? ""
+                if host == "tab", let t = Int(path) {
+                    activeReaderDocId = nil
+                    selectedTab = t
+                } else if host == "open" {
+                    if path == "first", let first = store.lib.docs.first {
+                        DocWindows.shared.open(first.id)
+                        activeReaderDocId = first.id
+                    } else if let id = UUID(uuidString: path), store.doc(id) != nil {
+                        DocWindows.shared.open(id)
+                        activeReaderDocId = id
+                    }
+                } else if host == "close" {
+                    activeReaderDocId = nil
+                }
+            }
+        }
+        .onAppear {
+            let args = ProcessInfo.processInfo.arguments
+            if let idx = args.firstIndex(of: "--tab"), idx + 1 < args.count, let t = Int(args[idx + 1]) {
+                selectedTab = t
+            }
+            if args.contains("--open-first"), let first = store.lib.docs.first {
+                DocWindows.shared.open(first.id)
+                activeReaderDocId = first.id
+            } else if args.contains("--open-second"), store.lib.docs.count > 1 {
+                let second = store.lib.docs[1]
+                DocWindows.shared.open(second.id)
+                activeReaderDocId = second.id
+            }
+        }
+    }
+}
+
+// MARK: - Tab 1: Bookshelf View
+
+struct iOSBookshelfView: View {
+    @ObservedObject var store: Store
+    @ObservedObject var cloud: CloudSync
+    @ObservedObject var lang = LangCenter.shared
+    let onOpenDoc: (UUID) -> Void
+
+    @State private var selectedTagFilter: String = "ALL"
+    @State private var showFileImporter = false
+    @State private var showWebImportSheet = false
+    @State private var showNewTagAlert = false
+    @State private var tagTargetDocId: UUID?
+    @State private var newTagText = ""
+    @State private var searchText = ""
+
+    private var filteredDocs: [Doc] {
+        let base: [Doc]
+        switch selectedTagFilter {
+        case "ALL":
+            base = store.lib.docs
+        case "UNTAGGED":
+            base = store.lib.docs.filter { $0.tags.isEmpty }
+        default:
+            base = store.lib.docs.filter { d in
+                d.tags.contains { $0.caseInsensitiveCompare(selectedTagFilter) == .orderedSame }
+            }
+        }
+        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return base }
+        return base.filter { $0.title.localizedCaseInsensitiveContains(q) }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    iCloudBanner
+                    workflowRatioCard
+                    if filteredDocs.isEmpty {
+                        emptyStateView
+                    } else {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 155), spacing: 14)], spacing: 16) {
+                            ForEach(filteredDocs) { doc in
+                                iOSDocCardView(
+                                    store: store,
+                                    doc: doc,
+                                    onTap: { onOpenDoc(doc.id) },
+                                    onAddCustomTag: {
+                                        tagTargetDocId = doc.id
+                                        newTagText = ""
+                                        showNewTagAlert = true
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+            }
+            .background(Color(uiColor: .systemGroupedBackground))
+            .navigationTitle("Readlet")
+            .searchable(text: $searchText, prompt: L("搜索 PDF 文档…"))
+            .refreshable {
+                cloud.syncNow()
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        cloud.syncNow()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: cloud.state.isSyncing ? "arrow.triangle.2.circlepath.icloud.fill" : "checkmark.icloud.fill")
+                                .symbolEffect(.pulse, isActive: cloud.state.isSyncing)
+                            Text(cloud.state.isSyncing ? L("同步中") : "iCloud")
+                                .font(.caption.weight(.semibold))
+                        }
+                        .foregroundStyle(.blue)
+                    }
+                }
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Menu {
+                        ForEach(UILang.allCases) { l in
+                            Button {
+                                lang.set(l)
+                            } label: {
+                                if lang.lang == l {
+                                    Label(l.name, systemImage: "checkmark")
+                                } else {
+                                    Text(l.name)
+                                }
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "globe")
+                    }
+
+                    Menu {
+                        Button {
+                            showFileImporter = true
+                        } label: {
+                            Label(L("导入 PDF 文件…"), systemImage: "doc.badge.plus")
+                        }
+                        Button {
+                            showWebImportSheet = true
+                        } label: {
+                            Label(L("从网页链接导入…"), systemImage: "globe")
+                        }
+                        Divider()
+                        Button {
+                            cloud.syncNow()
+                        } label: {
+                            Label(L("立即同步 iCloud"), systemImage: "arrow.triangle.2.circlepath.icloud")
+                        }
+                    } label: {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title3)
+                    }
+                }
+            }
+            .fileImporter(
+                isPresented: $showFileImporter,
+                allowedContentTypes: [.pdf],
+                allowsMultipleSelection: true
+            ) { result in
+                guard case .success(let urls) = result else { return }
+                for u in urls {
+                    _ = u.startAccessingSecurityScopedResource()
+                    defer { u.stopAccessingSecurityScopedResource() }
+                    if let id = store.importPDF(u, open: false) {
+                        if urls.count == 1 { onOpenDoc(id) }
+                    }
+                }
+            }
+            .sheet(isPresented: $showWebImportSheet) {
+                iOSWebImportSheet { importedDocId in
+                    if let id = importedDocId {
+                        onOpenDoc(id)
+                    }
+                }
+            }
+            .alert(L("添加标签"), isPresented: $showNewTagAlert) {
+                TextField(L("标签名称（如 AI、精读）"), text: $newTagText)
+                Button(L("取消"), role: .cancel) {}
+                Button(L("添加")) {
+                    if let id = tagTargetDocId {
+                        store.addTag(id, newTagText)
+                    }
+                }
+            }
+        }
+    }
+
+    private var iCloudBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: cloud.state.isSyncing ? "arrow.triangle.2.circlepath.icloud.fill" : "icloud.fill")
+                .font(.system(size: 18))
+                .foregroundStyle(.blue)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(L("iCloud 多端自动同步"))
+                        .font(.subheadline.weight(.semibold))
+                    Text(LF("%d PDF · %d 卡片", store.lib.docs.count, store.lib.cards.count))
+                        .font(.caption2.weight(.medium))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.blue.opacity(0.12)))
+                        .foregroundStyle(.blue)
+                }
+                if cloud.state.isSyncing {
+                    Text(L("正在与 Mac / iCloud Drive 同步最新阅读进度与文档…"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if let dt = cloud.lastSyncedAt {
+                    Text(LF("已与 Mac 同步 · %@", dt.formatted(date: .omitted, time: .shortened)))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(L("Mac 与 iPhone 书架、双语进度、脑图卡片与网关设置自动同步"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            Button {
+                cloud.syncNow()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.caption.weight(.bold))
+                    .padding(7)
+                    .background(Circle().fill(Color.blue.opacity(0.12)))
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+    }
+
+    private var workflowRatioCard: some View {
+        let docs = store.lib.docs
+        let total = max(1, docs.count)
+        let todoCount = docs.filter { $0.statusTag == .todo }.count
+        let doingCount = docs.filter { $0.statusTag == .doing }.count
+        let doneCount = docs.filter { $0.statusTag == .done }.count
+        let avgPct = docs.isEmpty ? 0 : Int((docs.map(\.progressFraction).reduce(0, +) / Double(total) * 100).rounded())
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        tagFilterChip(id: "ALL", title: L("全部"), count: docs.count, color: .indigo)
+                        tagFilterChip(id: "TODO", title: "TODO", count: todoCount, color: .orange)
+                        tagFilterChip(id: "DOING", title: "DOING", count: doingCount, color: .blue)
+                        tagFilterChip(id: "DONE", title: "DONE", count: doneCount, color: .green)
+                        ForEach(store.allCustomTags, id: \.self) { ct in
+                            let c = docs.filter { d in d.customTags.contains { $0.caseInsensitiveCompare(ct) == .orderedSame } }.count
+                            if c > 0 {
+                                tagFilterChip(id: ct, title: "#" + ct, count: c, color: .purple)
+                            }
+                        }
+                    }
+                }
+                Spacer(minLength: 4)
+                Text("\(avgPct)%")
+                    .font(.caption.monospacedDigit().weight(.bold))
+                    .foregroundStyle(.secondary)
+            }
+
+            GeometryReader { geo in
+                let w = max(1, geo.size.width)
+                let todoW = w * CGFloat(todoCount) / CGFloat(total)
+                let doingW = w * CGFloat(doingCount) / CGFloat(total)
+                let doneW = w * CGFloat(doneCount) / CGFloat(total)
+                HStack(spacing: 0) {
+                    if todoCount > 0 { Rectangle().fill(Color.orange).frame(width: todoW) }
+                    if doingCount > 0 { Rectangle().fill(Color.blue).frame(width: doingW) }
+                    if doneCount > 0 { Rectangle().fill(Color.green).frame(width: doneW) }
+                    Spacer(minLength: 0)
+                }
+                .background(Color.secondary.opacity(0.15))
+                .clipShape(Capsule())
+            }
+            .frame(height: 6)
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+    }
+
+    private func tagFilterChip(id: String, title: String, count: Int, color: Color) -> some View {
+        let active = selectedTagFilter.caseInsensitiveCompare(id) == .orderedSame
+        return Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                selectedTagFilter = active && id != "ALL" ? "ALL" : id
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                Text("\(count)")
+                    .font(.caption2.monospacedDigit())
+                    .opacity(0.8)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(active ? color : Color.secondary.opacity(0.12)))
+            .foregroundStyle(active ? Color.white : color)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var emptyStateView: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "doc.richtext")
+                .font(.system(size: 42))
+                .foregroundStyle(.secondary)
+            Text(L("暂无匹配的 PDF 文档"))
+                .font(.headline)
+            Text(L("点击右上角 + 导入 PDF 或网页链接，或在 Mac 上添加文档后通过 iCloud 自动同步到手机。"))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+            HStack(spacing: 12) {
+                Button {
+                    showFileImporter = true
+                } label: {
+                    Label(L("导入 PDF"), systemImage: "plus")
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button {
+                    cloud.syncNow()
+                } label: {
+                    Label(L("同步 iCloud"), systemImage: "arrow.triangle.2.circlepath.icloud")
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 44)
+        .background(RoundedRectangle(cornerRadius: 16).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+    }
+}
+
+// MARK: - Bookshelf Document Card & Thumbnail
+
+struct iOSDocCardView: View {
+    @ObservedObject var store: Store
+    let doc: Doc
+    let onTap: () -> Void
+    let onAddCustomTag: () -> Void
+
+    private func statusColor(_ st: DocStatusTag?) -> Color {
+        switch st {
+        case .todo: return .orange
+        case .doing: return .blue
+        case .done: return .green
+        case nil: return .secondary
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ZStack(alignment: .topTrailing) {
+                iOSDocThumb(docId: doc.id)
+                    .frame(height: 196)
+                    .frame(maxWidth: .infinity)
+                    .background(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.black.opacity(0.08), lineWidth: 0.6))
+
+                Button {
+                    store.cycleStatusTag(doc.id)
+                } label: {
+                    let st = doc.statusTag
+                    HStack(spacing: 3) {
+                        Image(systemName: st?.icon ?? "tag")
+                            .font(.system(size: 10, weight: .bold))
+                        Text(st?.rawValue ?? "TAG")
+                            .font(.system(size: 10, weight: .bold))
+                    }
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(st != nil ? statusColor(st) : Color.black.opacity(0.55)))
+                    .foregroundStyle(.white)
+                }
+                .padding(8)
+            }
+            .onTapGesture { onTap() }
+
+            Text(doc.title)
+                .font(.footnote.weight(.semibold))
+                .lineLimit(2)
+                .frame(minHeight: 34, alignment: .topLeading)
+                .onTapGesture { onTap() }
+
+            if !doc.customTags.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) {
+                        ForEach(doc.customTags, id: \.self) { ct in
+                            Text("#" + ct)
+                                .font(.system(size: 10, weight: .medium))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(Color.purple.opacity(0.14)))
+                                .foregroundStyle(.purple)
+                        }
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    if let total = doc.pageCount {
+                        let cur = min(total, (doc.resolvedReadPage ?? 0) + 1)
+                        Text("p.\(cur)/\(total)")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("PDF")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text("\(doc.progressPercent)%")
+                        .font(.caption2.monospacedDigit().weight(.bold))
+                        .foregroundStyle(statusColor(doc.statusTag))
+                }
+                ProgressView(value: max(0.03, doc.progressFraction))
+                    .tint(statusColor(doc.statusTag))
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+        .contextMenu {
+            Button { onTap() } label: { Label(L("打开阅读"), systemImage: "book") }
+            Divider()
+            ForEach(DocStatusTag.allCases) { st in
+                Button {
+                    store.setStatusTag(doc.id, doc.statusTag == st ? nil : st)
+                } label: {
+                    Label(st.rawValue, systemImage: doc.statusTag == st ? "checkmark.circle.fill" : st.icon)
+                }
+            }
+            Button { onAddCustomTag() } label: { Label(L("添加自定义标签…"), systemImage: "tag.fill") }
+            Divider()
+            Button(role: .destructive) {
+                store.deleteDoc(doc.id)
+            } label: {
+                Label(L("删除文档"), systemImage: "trash")
+            }
+        }
+    }
+}
+
+struct iOSDocThumb: View {
+    let docId: UUID
+    @ObservedObject private var cloud = CloudSync.shared
+    @State private var image: UIImage?
+
+    var body: some View {
+        ZStack {
+            Color.white
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                Image(systemName: "doc.richtext")
+                    .font(.system(size: 32))
+                    .foregroundStyle(.secondary.opacity(0.4))
+            }
+        }
+        .task(id: "\(docId.uuidString)-\(image == nil ? (cloud.lastSyncedAt?.timeIntervalSince1970 ?? 0) : 0)") {
+            guard image == nil else { return }
+            let thumbFile = Paths.docDir(docId).appendingPathComponent("thumb.png")
+            if let d = try? Data(contentsOf: thumbFile), let ui = UIImage(data: d) {
+                image = ui
+                return
+            }
+            let pdfURL = Paths.pdf(docId)
+            let generated = await Task.detached(priority: .utility) { () -> UIImage? in
+                guard let doc = PDFDocument(url: pdfURL), let p0 = doc.safePage(0) else { return nil }
+                if let png = PlatformPDF.thumbnailPNG(p0, size: CGSize(width: 280, height: 372)) {
+                    try? png.write(to: thumbFile, options: .atomic)
+                    return UIImage(data: png)
+                }
+                return nil
+            }.value
+            image = generated
+        }
+    }
+}
+
+// MARK: - Full-Screen Bilingual PDF Reader & Study View
+
+struct iOSDocumentStudyView: View {
+    @ObservedObject var store: Store
+    let docId: UUID
+    let onClose: () -> Void
+
+    @ObservedObject private var rc = ReaderController.shared
+    @ObservedObject private var narrator = Narrator.shared
+    @State private var viewMode: Int = 0 // 0 = PDF, 1 = Split, 2 = MindMap
+    @State private var showCopilotSheet = false
+    @State private var showOutlineSheet = false
+    @State private var showFlashcardsSheet = false
+    @State private var showPDFEditConfirmation: String?
+
+    private var doc: Doc? { store.doc(docId) }
+    private var session: DocSession? { store.session(docId) }
+
+    var body: some View {
+        NavigationStack {
+            ZStack(alignment: .bottom) {
+                Group {
+                    if viewMode == 0 {
+                        iOSPDFContainerView(store: store, rc: rc, session: session)
+                    } else if viewMode == 1 {
+                        GeometryReader { geo in
+                            if geo.size.width > geo.size.height {
+                                HStack(spacing: 0) {
+                                    iOSPDFContainerView(store: store, rc: rc, session: session)
+                                        .frame(width: geo.size.width * 0.56)
+                                    Divider()
+                                    MindMapView(store: store)
+                                }
+                            } else {
+                                VStack(spacing: 0) {
+                                    iOSPDFContainerView(store: store, rc: rc, session: session)
+                                        .frame(height: geo.size.height * 0.58)
+                                    Divider()
+                                    MindMapView(store: store)
+                                }
+                            }
+                        }
+                    } else {
+                        MindMapView(store: store)
+                    }
+                }
+
+                VStack(spacing: 10) {
+                    if !rc.selectionText.isEmpty {
+                        iOSSelectionExcerptBar(
+                            rc: rc,
+                            onAskAI: {
+                                showCopilotSheet = true
+                            }
+                        )
+                        .padding(.horizontal, 12)
+                    }
+
+                    if narrator.state != .idle && narrator.docId == docId {
+                        iOSNarratorBar(narrator: narrator, rc: rc)
+                            .padding(.horizontal, 12)
+                    }
+
+                    bottomReaderControlBar
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        onClose()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chevron.left")
+                            Text(L("书架"))
+                        }
+                    }
+                }
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button {
+                        rc.setVariant(rc.variant == .bilingual ? .original : .bilingual)
+                    } label: {
+                        Image(systemName: rc.variant == .bilingual ? "character.bubble.fill" : "character.bubble")
+                            .foregroundStyle(rc.variant == .bilingual ? .blue : .primary)
+                    }
+
+                    Button {
+                        toggleNarration()
+                    } label: {
+                        Image(systemName: narrator.state != .idle && narrator.docId == docId ? "waveform.circle.fill" : "headphones")
+                            .foregroundStyle(narrator.state != .idle && narrator.docId == docId ? .purple : .primary)
+                    }
+
+                    Button {
+                        showCopilotSheet = true
+                    } label: {
+                        Image(systemName: "sparkles")
+                            .foregroundStyle(.purple)
+                    }
+
+                    Menu {
+                        Section(L("视图切换")) {
+                            Button { viewMode = 0 } label: { Label(L("仅看 PDF"), systemImage: viewMode == 0 ? "checkmark" : "doc.richtext") }
+                            Button { viewMode = 1 } label: { Label(L("PDF + 脑图分屏"), systemImage: viewMode == 1 ? "checkmark" : "rectangle.split.2x1") }
+                            Button { viewMode = 2 } label: { Label(L("仅看脑图"), systemImage: viewMode == 2 ? "checkmark" : "point.3.connected.trianglepath.dotted") }
+                        }
+                        Section(L("阅读状态标签")) {
+                            ForEach(DocStatusTag.allCases) { st in
+                                Button {
+                                    store.setStatusTag(docId, doc?.statusTag == st ? nil : st)
+                                } label: {
+                                    Label(st.rawValue, systemImage: doc?.statusTag == st ? "checkmark.circle.fill" : st.icon)
+                                }
+                            }
+                        }
+                        if rc.variant == .bilingual, let ses = session {
+                            Section(L("双语对照")) {
+                                Button {
+                                    ses.translateWholeDocument(from: rc.currentPageIndex)
+                                } label: {
+                                    Label(L("全文翻译"), systemImage: "character.bubble")
+                                }
+                                Button {
+                                    Task { await ses.retranslate(rc.currentPageIndex) }
+                                } label: {
+                                    Label(L("重新翻译本页"), systemImage: "arrow.clockwise")
+                                }
+                            }
+                        }
+                        if let ses = session {
+                            Section(L("PDF 页面编辑")) {
+                                Button {
+                                    let box = ses.original.safePage(rc.currentPageIndex)?.bounds(for: .cropBox) ?? CGRect(x: 0, y: 0, width: 600, height: 800)
+                                    _ = PDFEditor.truncateFromHereToEnd(session: ses, pageIndex: rc.currentPageIndex, origY: box.midY)
+                                } label: {
+                                    Label(L("从本页中部截断后续内容"), systemImage: "scissors")
+                                }
+                                if ses.pageCount > 1 {
+                                    Button(role: .destructive) {
+                                        _ = PDFEditor.deletePage(session: ses, pageIndex: rc.currentPageIndex)
+                                    } label: {
+                                        Label(L("删除当前页"), systemImage: "trash")
+                                    }
+                                    if rc.currentPageIndex + 1 < ses.pageCount {
+                                        Button(role: .destructive) {
+                                            _ = PDFEditor.deletePagesAfter(session: ses, pageIndex: rc.currentPageIndex)
+                                        } label: {
+                                            Label(L("删除本页之后的全部页面"), systemImage: "arrow.down.to.line")
+                                        }
+                                    }
+                                }
+                                if PDFEditor.hasBackup(docId) {
+                                    Button {
+                                        _ = PDFEditor.restoreOriginal(session: ses)
+                                    } label: {
+                                        Label(L("恢复未裁剪的原版 PDF"), systemImage: "arrow.uturn.backward")
+                                    }
+                                }
+                            }
+                        }
+                        Section(L("学习工具")) {
+                            Button { showOutlineSheet = true } label: { Label(L("目录与摘录卡片"), systemImage: "list.bullet.indent") }
+                            Button { showFlashcardsSheet = true } label: { Label(L("AI 学习闪卡"), systemImage: "rectangle.on.rectangle.angled") }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                }
+            }
+            .onAppear {
+                rc.bind(docId: docId)
+                DocWindows.shared.activeDocId = docId
+            }
+            .sheet(isPresented: $showCopilotSheet) {
+                iOSCopilotSheet(store: store, rc: rc, docId: docId)
+            }
+            .sheet(isPresented: $showOutlineSheet) {
+                iOSOutlineAndCardsSheet(store: store, rc: rc, docId: docId)
+            }
+            .sheet(isPresented: $showFlashcardsSheet) {
+                NavigationStack {
+                    iOSMobileFlashcardsContent(store: store, rc: rc, docId: docId)
+                        .navigationTitle(L("AI 学习闪卡"))
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button(L("完成")) { showFlashcardsSheet = false }
+                            }
+                        }
+                }
+            }
+        }
+    }
+
+    private func toggleNarration() {
+        guard let ses = session else { return }
+        if narrator.state != .idle && narrator.docId == docId {
+            narrator.togglePause()
+        } else {
+            narrator.start(docId: docId, doc: ses.document(rc.variant), title: ses.doc.title, from: rc.currentPageIndex)
+        }
+    }
+
+    private var bottomReaderControlBar: some View {
+        HStack(spacing: 12) {
+            Button {
+                rc.goToPage(rc.currentPageIndex - 1)
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.caption.weight(.bold))
+            }
+            .disabled(rc.currentPageIndex <= 0)
+
+            Text("p.\(rc.currentPageIndex + 1) / \(max(1, rc.pageCount))")
+                .font(.caption.monospacedDigit().weight(.semibold))
+
+            Button {
+                rc.goToPage(rc.currentPageIndex + 1)
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+            }
+            .disabled(rc.currentPageIndex + 1 >= rc.pageCount)
+
+            if rc.variant == .bilingual, let ses = session {
+                Divider().frame(height: 14)
+                if !ses.running.isEmpty {
+                    ProgressView().controlSize(.mini)
+                }
+                Text(ses.progressText.isEmpty ? L("双语") : ses.progressText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Picker("", selection: $viewMode) {
+                Image(systemName: "doc.richtext").tag(0)
+                Image(systemName: "rectangle.split.2x1").tag(1)
+                Image(systemName: "point.3.connected.trianglepath.dotted").tag(2)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 110)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial)
+    }
+}
+
+// MARK: - PDFKit UIViewRepresentable & Floating Reader Bars
+
+struct iOSPDFContainerView: UIViewRepresentable {
+    @ObservedObject var store: Store
+    @ObservedObject var rc: ReaderController
+    let session: DocSession?
+
+    func makeUIView(context: Context) -> UIView {
+        let container = UIView()
+        container.backgroundColor = UIColor.systemGroupedBackground
+        rc.view.frame = container.bounds
+        rc.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        container.addSubview(rc.view)
+        return container
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        guard let session else { return }
+        let targetDoc = session.document(rc.variant)
+        if rc.view.document !== targetDoc {
+            let savedPage = rc.currentPageIndex
+            rc.view.document = targetDoc
+            rc.view.autoScales = true
+            if let pg = targetDoc.safePage(savedPage) {
+                rc.view.go(to: pg)
+            }
+        }
+    }
+}
+
+struct iOSSelectionExcerptBar: View {
+    @ObservedObject var rc: ReaderController
+    let onAskAI: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ForEach(0..<min(6, highlightColors.count), id: \.self) { i in
+                Button {
+                    _ = rc.excerptSelection(color: i)
+                } label: {
+                    Circle()
+                        .fill(Color(uiColor: highlightColors[i]))
+                        .frame(width: 24, height: 24)
+                        .overlay(Circle().stroke(Color.black.opacity(0.2), lineWidth: 1))
+                }
+            }
+            Divider().frame(height: 18)
+            Button {
+                PlatformClipboard.copy(rc.selectionText)
+                rc.view.clearSelection()
+                rc.selectionText = ""
+            } label: {
+                Image(systemName: "doc.on.doc")
+                    .font(.subheadline)
+            }
+            Button {
+                onAskAI()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "sparkles")
+                    Text(L("问 AI"))
+                }
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(Color.purple))
+                .foregroundStyle(.white)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Capsule().fill(.regularMaterial).shadow(color: .black.opacity(0.18), radius: 8, y: 3))
+    }
+}
+
+struct iOSNarratorBar: View {
+    @ObservedObject var narrator: Narrator
+    @ObservedObject var rc: ReaderController
+
+    private var currentSubtitle: String {
+        if narrator.listening {
+            return narrator.heard.isEmpty ? L("正在聆听你的问题…") : narrator.heard
+        }
+        if narrator.answering {
+            return L("AI 讲解员正在思考并组织回答…")
+        }
+        if let qa = narrator.lastQA {
+            return "💬 \(qa.a)"
+        }
+        if narrator.state == .preparing {
+            return L("正在准备本页 AI 语音讲稿与合成…")
+        }
+        if narrator.segIndex < narrator.segments.count {
+            return narrator.segments[narrator.segIndex].text
+        }
+        return L("AI 语音解读中…")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(currentSubtitle)
+                .font(.footnote)
+                .lineLimit(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let err = narrator.error, !err.isEmpty {
+                Text(err)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .lineLimit(1)
+            }
+
+            HStack(spacing: 14) {
+                Button {
+                    narrator.previous()
+                } label: {
+                    Image(systemName: "backward.fill")
+                }
+
+                Button {
+                    narrator.togglePause()
+                } label: {
+                    if narrator.state == .preparing {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: narrator.state == .playing ? "pause.circle.fill" : "play.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.purple)
+                    }
+                }
+
+                Button {
+                    narrator.next()
+                } label: {
+                    Image(systemName: "forward.fill")
+                }
+
+                Text("p.\(narrator.page + 1) · \(narrator.segIndex + 1)/\(max(1, narrator.segments.count))")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Menu {
+                    ForEach([Float(1.0), 1.25, 1.5, 1.75, 2.0, 2.5], id: \.self) { spd in
+                        Button {
+                            narrator.rate = spd
+                        } label: {
+                            HStack {
+                                Text(String(format: "%.2gx", spd))
+                                if abs(narrator.rate - spd) < 0.05 {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Text(String(format: "%.2gx", narrator.rate))
+                        .font(.caption.monospacedDigit().weight(.bold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(Color.purple.opacity(0.15)))
+                        .foregroundStyle(.purple)
+                }
+
+                Button {
+                    if narrator.listening {
+                        narrator.endQuestion()
+                    } else {
+                        narrator.beginQuestion()
+                    }
+                } label: {
+                    Image(systemName: narrator.listening ? "mic.fill" : "mic")
+                        .foregroundStyle(narrator.listening ? .red : .primary)
+                        .padding(6)
+                        .background(Circle().fill(narrator.listening ? Color.red.opacity(0.15) : Color.secondary.opacity(0.12)))
+                }
+
+                Button {
+                    narrator.stop()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 16).fill(.regularMaterial).shadow(color: .black.opacity(0.15), radius: 10, y: 4))
+    }
+}
+
+struct iOSCopilotSheet: View {
+    @ObservedObject var store: Store
+    @ObservedObject var rc: ReaderController
+    let docId: UUID
+    @Environment(\.dismiss) private var dismiss
+    @State private var openFlag = true
+
+    var body: some View {
+        NavigationStack {
+            CopilotPanel(store: store, rc: rc, open: $openFlag)
+                .navigationTitle(L("AI 阅读助手"))
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(L("完成")) { dismiss() }
+                    }
+                }
+                .onChange(of: openFlag) { _, v in
+                    if !v { dismiss() }
+                }
+        }
+    }
+}
+
+struct iOSOutlineAndCardsSheet: View {
+    @ObservedObject var store: Store
+    @ObservedObject var rc: ReaderController
+    let docId: UUID
+    @Environment(\.dismiss) private var dismiss
+    @State private var tab = 0
+
+    private var docCards: [Card] {
+        store.lib.cards.filter { $0.docId == docId }.sorted { $0.page < $1.page }
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                Picker("", selection: $tab) {
+                    Text(L("摘录卡片") + " (\(docCards.count))").tag(0)
+                    Text(L("目录")).tag(1)
+                }
+                .pickerStyle(.segmented)
+                .padding(12)
+
+                if tab == 0 {
+                    if docCards.isEmpty {
+                        ContentUnavailableView(
+                            L("暂无摘录卡片"),
+                            systemImage: "highlighter",
+                            description: Text(L("在 PDF 页面上长按选中文本，即可一键高亮摘录并自动翻译。"))
+                        )
+                    } else {
+                        List {
+                            ForEach(docCards) { card in
+                                Button {
+                                    rc.jump(to: card)
+                                    dismiss()
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        HStack {
+                                            Circle()
+                                                .fill(Color(uiColor: highlightColors[card.color % highlightColors.count]))
+                                                .frame(width: 10, height: 10)
+                                            Text("p.\(card.page + 1)")
+                                                .font(.caption.monospacedDigit().weight(.bold))
+                                                .foregroundStyle(.secondary)
+                                            Spacer()
+                                        }
+                                        Text(card.text)
+                                            .font(.subheadline)
+                                            .foregroundStyle(.primary)
+                                            .lineLimit(3)
+                                        if let tr = card.translation, !tr.isEmpty {
+                                            Text(tr)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(2)
+                                        }
+                                    }
+                                    .padding(.vertical, 4)
+                                }
+                                .swipeActions {
+                                    Button(role: .destructive) {
+                                        store.deleteCard(card.id)
+                                    } label: {
+                                        Label(L("删除"), systemImage: "trash")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    ScrollView {
+                        TOCList(rc: rc, query: "")
+                    }
+                }
+            }
+            .navigationTitle(L("目录与卡片"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(L("关闭")) { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Tab 2: Mind Map Tab View
+
+struct iOSMindMapTabView: View {
+    @ObservedObject var store: Store
+    let onJumpToDoc: (UUID) -> Void
+
+    @State private var showNewNotebookAlert = false
+    @State private var newNotebookName = ""
+
+    var body: some View {
+        NavigationStack {
+            MindMapView(store: store)
+                .navigationTitle(store.currentNotebook?.name ?? L("脑图"))
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Menu {
+                            ForEach(store.lib.notebooks) { nb in
+                                Button {
+                                    store.currentNotebookId = nb.id
+                                    store.save()
+                                } label: {
+                                    Label(nb.name, systemImage: store.currentNotebookId == nb.id ? "checkmark" : "book.closed")
+                                }
+                            }
+                            Divider()
+                            Button {
+                                newNotebookName = ""
+                                showNewNotebookAlert = true
+                            } label: {
+                                Label(L("新建笔记本…"), systemImage: "plus")
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "book.closed")
+                                Text(L("笔记本"))
+                            }
+                        }
+                    }
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        Button {
+                            store.addChild(to: store.selectedNodeId ?? store.currentNotebook?.root.id)
+                        } label: {
+                            Image(systemName: "plus.rectangle.on.rectangle")
+                        }
+                        if let sel = store.selectedNodeId, let nb = store.currentNotebook, sel != nb.root.id {
+                            Button(role: .destructive) {
+                                store.deleteNode(sel)
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                        }
+                    }
+                }
+                .alert(L("新建笔记本"), isPresented: $showNewNotebookAlert) {
+                    TextField(L("笔记本名称"), text: $newNotebookName)
+                    Button(L("取消"), role: .cancel) {}
+                    Button(L("创建")) {
+                        let clean = newNotebookName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        store.newNotebook(name: clean.isEmpty ? L("新笔记本") : clean)
+                    }
+                }
+        }
+    }
+}
+
+// MARK: - Tab 3: Flashcards Tab View & Mobile Study Session
+
+struct iOSFlashcardsTabView: View {
+    @ObservedObject var store: Store
+    @ObservedObject private var rc = ReaderController.shared
+    @ObservedObject private var fs = FlashStore.shared
+
+    private var activeDocId: UUID? {
+        if let id = rc.docId, store.doc(id) != nil { return id }
+        if let id = store.currentDocId, store.doc(id) != nil { return id }
+        return store.lib.docs.first?.id
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if store.lib.docs.isEmpty {
+                    ContentUnavailableView(
+                        L("暂无闪卡文档"),
+                        systemImage: "rectangle.on.rectangle.angled",
+                        description: Text(L("先导入或通过 iCloud 同步 PDF 文档，即可让 AI 自动提炼间隔重复记忆闪卡。"))
+                    )
+                } else {
+                    VStack(spacing: 0) {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(store.lib.docs) { d in
+                                    let active = activeDocId == d.id
+                                    let deckCount = fs.decks(d.id).reduce(0) { $0 + $1.cards.count }
+                                    Button {
+                                        rc.bind(docId: d.id)
+                                        DocWindows.shared.activeDocId = d.id
+                                    } label: {
+                                        HStack(spacing: 6) {
+                                            Image(systemName: "doc.text.fill")
+                                                .font(.caption2)
+                                            Text(d.title)
+                                                .font(.caption.weight(.semibold))
+                                                .lineLimit(1)
+                                                .frame(maxWidth: 180)
+                                            if deckCount > 0 {
+                                                Text("\(deckCount)")
+                                                    .font(.caption2.monospacedDigit().weight(.bold))
+                                                    .padding(.horizontal, 5)
+                                                    .padding(.vertical, 1)
+                                                    .background(Capsule().fill(active ? Color.white.opacity(0.24) : Color.purple.opacity(0.15)))
+                                            }
+                                        }
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 7)
+                                        .background(Capsule().fill(active ? Color.purple : Color(uiColor: .secondarySystemGroupedBackground)))
+                                        .foregroundStyle(active ? Color.white : Color.primary)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                        }
+                        .background(Color(uiColor: .systemGroupedBackground))
+
+                        Divider()
+
+                        if let docId = activeDocId {
+                            iOSMobileFlashcardsContent(store: store, rc: rc, docId: docId)
+                                .id(docId)
+                        }
+                    }
+                    .onAppear {
+                        if rc.docId == nil, let first = store.currentDocId ?? store.lib.docs.first?.id {
+                            rc.bind(docId: first)
+                            DocWindows.shared.activeDocId = first
+                        }
+                    }
+                }
+            }
+            .navigationTitle(L("AI 学习闪卡"))
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+}
+
+struct iOSMobileFlashcardsContent: View {
+    @ObservedObject var store: Store
+    @ObservedObject var rc: ReaderController
+    let docId: UUID
+    @ObservedObject private var fs = FlashStore.shared
+
+    @State private var selectedDeckIndex: Int? = nil
+    @State private var count: Int = 12
+    @State private var scope: Int = 0 // 0 = 全文, 1 = 当前页 ±2 页
+
+    private var decks: [FlashDeck] { fs.decks(docId) }
+
+    var body: some View {
+        ZStack {
+            Color(uiColor: .systemGroupedBackground).ignoresSafeArea()
+            if let di = selectedDeckIndex, di < decks.count {
+                iOSMobileDeckStudyView(
+                    docId: docId,
+                    deckIndex: di,
+                    deck: decks[di],
+                    onBack: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            selectedDeckIndex = nil
+                        }
+                    }
+                )
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        generatorCard
+                        if decks.isEmpty && !fs.generating {
+                            VStack(spacing: 12) {
+                                Image(systemName: "rectangle.stack.badge.sparkles")
+                                    .font(.system(size: 38))
+                                    .foregroundStyle(LinearGradient(colors: [.purple, .blue], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                Text(L("还没有卡组。生成后可以像翻卡片一样自测，标记「记住了 / 再看看」，进度会保存。"))
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.center)
+                                    .padding(.horizontal, 16)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 36)
+                            .background(RoundedRectangle(cornerRadius: 16).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+                        } else {
+                            VStack(spacing: 12) {
+                                ForEach(Array(decks.enumerated()), id: \.offset) { i, d in
+                                    let known = d.cards.filter { $0.status == 2 }.count
+                                    Button {
+                                        withAnimation(.easeInOut(duration: 0.2)) {
+                                            selectedDeckIndex = i
+                                        }
+                                    } label: {
+                                        VStack(alignment: .leading, spacing: 10) {
+                                            HStack {
+                                                Image(systemName: "rectangle.stack.fill")
+                                                    .foregroundStyle(LinearGradient(colors: [.purple, .blue], startPoint: .top, endPoint: .bottom))
+                                                Text(d.title)
+                                                    .font(.subheadline.weight(.semibold))
+                                                    .foregroundStyle(.primary)
+                                                    .lineLimit(1)
+                                                Spacer()
+                                                Image(systemName: "chevron.right")
+                                                    .font(.caption.weight(.bold))
+                                                    .foregroundStyle(.tertiary)
+                                            }
+                                            HStack {
+                                                Text("\(L(d.scope)) · " + LF("%d 张", d.cards.count))
+                                                    .font(.caption)
+                                                    .foregroundStyle(.secondary)
+                                                Spacer()
+                                                Text(LF("已掌握 %d/%d", known, d.cards.count))
+                                                    .font(.caption.monospacedDigit().weight(.medium))
+                                                    .foregroundStyle(known == d.cards.count && !d.cards.isEmpty ? .green : .secondary)
+                                            }
+                                            ProgressView(value: Double(known), total: Double(max(1, d.cards.count)))
+                                                .tint(.green)
+                                        }
+                                        .padding(14)
+                                        .background(RoundedRectangle(cornerRadius: 14).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .contextMenu {
+                                        Button(L("删除卡组"), role: .destructive) {
+                                            fs.deleteDeck(docId, i)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding(16)
+                }
+            }
+        }
+    }
+
+    private var generatorCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label(L("生成新卡组"), systemImage: "sparkles")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                HStack(spacing: 8) {
+                    Button {
+                        if count > 5 { count -= 1 }
+                    } label: {
+                        Image(systemName: "minus.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(LF("%d 张", count))
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .frame(minWidth: 42)
+                    Button {
+                        if count < 30 { count += 1 }
+                    } label: {
+                        Image(systemName: "plus.circle.fill")
+                            .foregroundStyle(.purple)
+                    }
+                }
+            }
+
+            Picker(L("范围"), selection: $scope) {
+                Text(L("全文")).tag(0)
+                Text(L("当前页 ±2 页")).tag(1)
+            }
+            .pickerStyle(.segmented)
+
+            Button {
+                guard let s = store.session(docId) else { return }
+                let lo = max(0, min(rc.currentPageIndex - 2, s.pageCount - 1))
+                let hi = max(lo, min(s.pageCount - 1, rc.currentPageIndex + 2))
+                let r: ClosedRange<Int>? = scope == 0 ? nil : lo...hi
+                fs.generate(docId: docId, doc: s.original, title: s.doc.title, pages: r, count: count)
+            } label: {
+                HStack(spacing: 8) {
+                    if fs.generating {
+                        ProgressView().tint(.white).controlSize(.small)
+                    } else {
+                        Image(systemName: "sparkles")
+                    }
+                    Text(fs.generating ? L("生成中…") : L("生成 AI 学习闪卡"))
+                        .font(.subheadline.weight(.semibold))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 11)
+                .background(RoundedRectangle(cornerRadius: 12).fill(LinearGradient(colors: [.purple, .blue], startPoint: .leading, endPoint: .trailing)))
+                .foregroundStyle(.white)
+            }
+            .disabled(fs.generating)
+
+            if let e = fs.genError {
+                Text("⚠️ " + e)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 16).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+    }
+}
+
+struct iOSMobileDeckStudyView: View {
+    let docId: UUID
+    let deckIndex: Int
+    let deck: FlashDeck
+    let onBack: () -> Void
+
+    @ObservedObject private var fs = FlashStore.shared
+    @State private var order: [UUID] = []
+    @State private var pos: Int = 0
+    @State private var flipped: Bool = false
+    @State private var onlyReview: Bool = false
+
+    private var cards: [Flashcard] {
+        order.compactMap { id in deck.cards.first { $0.id == id } }
+    }
+
+    private func kindColor(_ kind: String) -> Color {
+        switch kind {
+        case "概念": return .blue
+        case "应用": return .orange
+        case "数据": return .teal
+        default: return .purple
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 14) {
+            HStack(spacing: 10) {
+                Button {
+                    onBack()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                        Text(L("全部卡组"))
+                    }
+                    .font(.subheadline.weight(.medium))
+                }
+                Spacer()
+                Button {
+                    onlyReview.toggle()
+                    reset()
+                } label: {
+                    Text(L("只看未掌握"))
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(onlyReview ? Color.purple : Color(uiColor: .secondarySystemGroupedBackground)))
+                        .foregroundStyle(onlyReview ? Color.white : Color.primary)
+                }
+                Button {
+                    order.shuffle()
+                    pos = 0
+                    flipped = false
+                } label: {
+                    Image(systemName: "shuffle")
+                        .font(.subheadline)
+                        .padding(7)
+                        .background(Circle().fill(Color(uiColor: .secondarySystemGroupedBackground)))
+                }
+            }
+
+            if cards.isEmpty {
+                Spacer()
+                VStack(spacing: 12) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 48))
+                        .foregroundStyle(.green)
+                    Text(L("全部掌握了！"))
+                        .font(.title3.weight(.semibold))
+                    Button(L("重新学习全部")) {
+                        onlyReview = false
+                        reset()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.purple)
+                }
+                Spacer()
+            } else if pos >= cards.count {
+                Spacer()
+                let known = deck.cards.filter { $0.status == 2 }.count
+                VStack(spacing: 14) {
+                    Image(systemName: "flag.checkered")
+                        .font(.system(size: 44))
+                        .foregroundStyle(.purple)
+                    Text(L("本轮完成"))
+                        .font(.title3.weight(.semibold))
+                    Text(LF("已掌握 %d/%d", known, deck.cards.count))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 12) {
+                        Button(L("复习未掌握")) {
+                            onlyReview = true
+                            reset()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.purple)
+
+                        Button(L("再来一遍")) {
+                            reset()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+                Spacer()
+            } else {
+                let c = cards[pos]
+                HStack(spacing: 10) {
+                    Text("\(pos + 1) / \(cards.count)")
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ProgressView(value: Double(pos + 1), total: Double(max(1, cards.count)))
+                        .tint(.purple)
+                }
+
+                // 3D Flip Flashcard
+                ZStack {
+                    cardFace(c, front: true)
+                        .opacity(flipped ? 0 : 1)
+                    cardFace(c, front: false)
+                        .opacity(flipped ? 1 : 0)
+                        .rotation3DEffect(.degrees(180), axis: (x: 0, y: 1, z: 0))
+                }
+                .rotation3DEffect(.degrees(flipped ? 180 : 0), axis: (x: 0, y: 1, z: 0), perspective: 0.5)
+                .onTapGesture {
+                    withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
+                        flipped.toggle()
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                // Bottom Study Controls
+                HStack(spacing: 10) {
+                    Button {
+                        go(-1)
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.subheadline.weight(.bold))
+                            .frame(width: 42, height: 44)
+                            .background(RoundedRectangle(cornerRadius: 12).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+                    }
+                    .disabled(pos == 0)
+
+                    if flipped {
+                        Button {
+                            mark(c, 1)
+                        } label: {
+                            Label(L("再看看"), systemImage: "arrow.counterclockwise")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                                .background(RoundedRectangle(cornerRadius: 12).fill(Color.orange.opacity(0.18)))
+                                .foregroundStyle(.orange)
+                        }
+
+                        Button {
+                            mark(c, 2)
+                        } label: {
+                            Label(L("记住了"), systemImage: "checkmark")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                                .background(RoundedRectangle(cornerRadius: 12).fill(Color.green))
+                                .foregroundStyle(.white)
+                        }
+                    } else {
+                        Button {
+                            withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
+                                flipped = true
+                            }
+                        } label: {
+                            Text(L("查看答案"))
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                                .background(RoundedRectangle(cornerRadius: 12).fill(Color.purple))
+                                .foregroundStyle(.white)
+                        }
+                    }
+
+                    Button {
+                        go(1)
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.subheadline.weight(.bold))
+                            .frame(width: 42, height: 44)
+                            .background(RoundedRectangle(cornerRadius: 12).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .onAppear { reset() }
+    }
+
+    private func cardFace(_ card: Flashcard, front: Bool) -> some View {
+        let kCol = kindColor(card.kind)
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text(L(card.kind))
+                    .font(.caption.weight(.bold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(kCol.opacity(0.16)))
+                    .foregroundStyle(kCol)
+                if let p = card.page {
+                    Text("p.\(p)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(front ? L("问题") : L("答案"))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 8)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text(front ? card.question : card.answer)
+                        .font(front ? .title3.weight(.semibold) : .body)
+                        .foregroundStyle(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if !front, let exp = card.explanation, !exp.isEmpty {
+                        Divider()
+                        Text(exp)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            HStack {
+                Spacer()
+                Label(L("点击卡片翻转查看答案"), systemImage: "hand.tap")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Spacer()
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20)
+                .stroke(front ? Color.primary.opacity(0.08) : kCol.opacity(0.45), lineWidth: front ? 1 : 1.5)
+        )
+    }
+
+    private func reset() {
+        order = deck.cards.filter { !onlyReview || $0.status != 2 }.map(\.id)
+        pos = 0
+        flipped = false
+    }
+
+    private func go(_ delta: Int) {
+        withAnimation(.easeInOut(duration: 0.22)) {
+            pos = max(0, min(cards.count, pos + delta))
+            flipped = false
+        }
+    }
+
+    private func mark(_ card: Flashcard, _ status: Int) {
+        fs.setStatus(docId, deck: deckIndex, card: card.id, status: status)
+        go(1)
+    }
+}
+
+// MARK: - Tab 4: Settings & iCloud Sync View
+
+struct iOSSettingsView: View {
+    @ObservedObject var store: Store
+    @ObservedObject var cloud: CloudSync
+    @ObservedObject var narrator = Narrator.shared
+
+    @State private var baseURL = Settings.baseURL
+    @State private var apiKey = Settings.apiKey
+    @State private var translateModel = ModelConfig.translateModel
+    @State private var translateStyle = ModelConfig.style("translate")
+    @State private var chatModel = ModelConfig.chatModel
+    @State private var chatStyle = ModelConfig.style("chat")
+    @State private var targetLang = Settings.targetLang
+    @State private var ttsProvider = Settings.ttsProvider
+    @State private var ttsVoice = Settings.ttsVoice
+    @State private var ttsSpeed = Settings.ttsSpeed
+    @State private var narrationStyle = Settings.narrationStyle
+    @State private var testStatus = ""
+    @State private var isTesting = false
+    @State private var showFolderPicker = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Toggle(L("启用 iCloud 多端自动同步"), isOn: $cloud.isEnabled)
+                    HStack {
+                        Label(L("同步状态"), systemImage: cloud.state.isSyncing ? "arrow.triangle.2.circlepath.icloud.fill" : "checkmark.icloud.fill")
+                        Spacer()
+                        if cloud.state.isSyncing {
+                            ProgressView().controlSize(.small)
+                        } else if let dt = cloud.lastSyncedAt {
+                            Text(dt.formatted(date: .abbreviated, time: .shortened))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text(L("已就绪"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    HStack {
+                        Text(L("已同步内容"))
+                        Spacer()
+                        Text("\(store.lib.docs.count) 篇文档 · \(store.lib.cards.count) 张摘录卡片 · \(store.lib.notebooks.count) 个笔记本")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Button {
+                        saveSettings()
+                        cloud.syncNow()
+                    } label: {
+                        Label(L("立即与 Mac / iCloud 同步"), systemImage: "arrow.triangle.2.circlepath.icloud")
+                    }
+                    Button {
+                        showFolderPicker = true
+                    } label: {
+                        Label(L("选择 iCloud Drive 同步目录…"), systemImage: "folder.badge.gearshape")
+                    }
+                    if !cloud.cloudLocationDescription.isEmpty {
+                        Text(cloud.cloudLocationDescription)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text(L("iCloud 多端同步（iPhone · iPad · Mac）"))
+                } footer: {
+                    Text(L("在 Mac 或 iPhone 上导入的 PDF、双语缓存、TODO/DOING/DONE 标签、阅读进度百分比、脑图卡片及 AI 网关配置会自动通过 iCloud Drive 双向合并同步。"))
+                }
+
+                Section(L("AI 网关与模型配置")) {
+                    LabeledContent(L("网关地址")) {
+                        TextField("https://api.anthropic.com", text: $baseURL)
+                            .keyboardType(.URL)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .multilineTextAlignment(.trailing)
+                    }
+                    LabeledContent("API Key") {
+                        SecureField("sk-...", text: $apiKey)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .multilineTextAlignment(.trailing)
+                    }
+                    LabeledContent(L("翻译模型")) {
+                        TextField("claude-haiku-5-5", text: $translateModel)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .multilineTextAlignment(.trailing)
+                    }
+                    Picker(L("翻译接口协议"), selection: $translateStyle) {
+                        ForEach(APIStyle.available) { st in
+                            Text(st.name).tag(st)
+                        }
+                    }
+                    LabeledContent(L("AI 解读/助手模型")) {
+                        TextField("claude-haiku-5-5", text: $chatModel)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .multilineTextAlignment(.trailing)
+                    }
+                    Picker(L("助手接口协议"), selection: $chatStyle) {
+                        ForEach(APIStyle.available) { st in
+                            Text(st.name).tag(st)
+                        }
+                    }
+                    Picker(L("翻译目标语言"), selection: $targetLang) {
+                        ForEach(["简体中文", "繁體中文", "English", "日本語", "한국어", "Français", "Deutsch", "Español"], id: \.self) { lg in
+                            Text(lg).tag(lg)
+                        }
+                    }
+                    HStack {
+                        Button {
+                            saveSettings()
+                            testConnection()
+                        } label: {
+                            HStack(spacing: 6) {
+                                if isTesting { ProgressView().controlSize(.small) }
+                                Text(L("保存并测试网关连接"))
+                            }
+                        }
+                        .disabled(isTesting)
+                        Spacer()
+                    }
+                    if !testStatus.isEmpty {
+                        Text(testStatus)
+                            .font(.caption)
+                            .foregroundStyle(testStatus.hasPrefix("✅") ? .green : .red)
+                    }
+                }
+
+                Section(L("AI 语音讲解 (TTS)")) {
+                    Picker(L("语音引擎"), selection: $ttsProvider) {
+                        ForEach(TTSProvider.allCases) { p in
+                            Text(L(p.title)).tag(p)
+                        }
+                    }
+                    LabeledContent(L("音色 (Voice)")) {
+                        TextField("Zephyr", text: $ttsVoice)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .multilineTextAlignment(.trailing)
+                    }
+                    Picker(L("默认倍速"), selection: $ttsSpeed) {
+                        Text("1.0x").tag(Float(1.0))
+                        Text("1.25x").tag(Float(1.25))
+                        Text("1.5x").tag(Float(1.5))
+                        Text("2.0x").tag(Float(2.0))
+                    }
+                    Picker(L("讲解风格"), selection: $narrationStyle) {
+                        ForEach(NarrationStyle.allCases) { st in
+                            Text(L(st.title)).tag(st)
+                        }
+                    }
+                    Button {
+                        saveSettings()
+                        Task { try? await narrator.previewVoice() }
+                    } label: {
+                        Label(L("试听当前语音"), systemImage: "speaker.wave.2.fill")
+                    }
+                }
+            }
+            .navigationTitle(L("设置与同步"))
+            .onAppear {
+                reloadFromSettings()
+            }
+            .onChange(of: cloud.lastSyncedAt) { _, _ in
+                reloadFromSettings()
+            }
+            .fileImporter(
+                isPresented: $showFolderPicker,
+                allowedContentTypes: [.folder],
+                allowsMultipleSelection: false
+            ) { res in
+                if case .success(let urls) = res, let u = urls.first {
+                    cloud.setCustomCloudFolder(u)
+                }
+            }
+        }
+    }
+
+    private func reloadFromSettings() {
+        baseURL = Settings.baseURL
+        apiKey = Settings.apiKey
+        translateModel = ModelConfig.translateModel
+        translateStyle = ModelConfig.style("translate")
+        chatModel = ModelConfig.chatModel
+        chatStyle = ModelConfig.style("chat")
+        targetLang = Settings.targetLang
+        ttsProvider = Settings.ttsProvider
+        ttsVoice = Settings.ttsVoice
+        ttsSpeed = Settings.ttsSpeed
+        narrationStyle = Settings.narrationStyle
+    }
+
+    private func saveSettings() {
+        Settings.baseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !apiKey.isEmpty {
+            Settings.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        ModelConfig.setModel("translate", translateModel.trimmingCharacters(in: .whitespacesAndNewlines))
+        ModelConfig.setStyle("translate", translateStyle)
+        ModelConfig.setModel("chat", chatModel.trimmingCharacters(in: .whitespacesAndNewlines))
+        ModelConfig.setStyle("chat", chatStyle)
+        Settings.targetLang = targetLang
+        Settings.ttsProvider = ttsProvider
+        Settings.ttsVoice = ttsVoice.trimmingCharacters(in: .whitespacesAndNewlines)
+        Settings.ttsSpeed = ttsSpeed
+        Settings.narrationStyle = narrationStyle
+        narrator.provider = ttsProvider
+        narrator.voice = ttsVoice
+        narrator.rate = ttsSpeed
+        CloudSync.shared.recordSettingsChange()
+    }
+
+    private func testConnection() {
+        isTesting = true
+        testStatus = L("正在测试连接…")
+        Task {
+            do {
+                let t = try await Translator.translateOne("Attention is all you need.")
+                testStatus = "✅ " + L("连接成功：") + t
+            } catch {
+                testStatus = "❌ " + error.localizedDescription
+            }
+            isTesting = false
+        }
+    }
+}
+
+// MARK: - iOS Web URL to PDF Importer Sheet
+
+struct iOSWebImportSheet: View {
+    let onImported: (UUID?) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var urlString: String = PlatformClipboard.string()?.hasPrefix("http") == true ? (PlatformClipboard.string() ?? "") : "https://"
+    @State private var isImporting = false
+    @State private var errorMsg = ""
+    @State private var webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 820, height: 1100))
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section(L("网页文章链接")) {
+                    TextField("https://...", text: $urlString)
+                        .keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
+                if !errorMsg.isEmpty {
+                    Section {
+                        Text(errorMsg).foregroundStyle(.red).font(.caption)
+                    }
+                }
+                Section {
+                    Button {
+                        Task { await convertWebToPDF() }
+                    } label: {
+                        HStack {
+                            if isImporting { ProgressView().controlSize(.small) }
+                            Text(isImporting ? L("正在加载网页并生成 PDF…") : L("导入为 PDF 文档"))
+                        }
+                    }
+                    .disabled(isImporting || urlString.trimmingCharacters(in: .whitespacesAndNewlines).count < 8)
+                }
+            }
+            .navigationTitle(L("从网页导入"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(L("取消")) { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func convertWebToPDF() async {
+        let clean = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let u = URL(string: clean) else {
+            errorMsg = L("请输入有效的网址 URL")
+            return
+        }
+        isImporting = true
+        errorMsg = ""
+        webView.load(URLRequest(url: u))
+        try? await Task.sleep(nanoseconds: 3_500_000_000)
+        do {
+            let pdfData = try await webView.pdf(configuration: WKPDFConfiguration())
+            let rawTitle = (try? await webView.evaluateJavaScript("document.title") as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let title = (rawTitle?.isEmpty == false ? rawTitle! : (u.host ?? "Web Article"))
+                .replacingOccurrences(of: "/", with: "-")
+            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("\(title).pdf")
+            try pdfData.write(to: tmp, options: .atomic)
+            if let docId = Store.shared.importPDF(tmp, open: false) {
+                Store.shared.setSource(docId, clean)
+                isImporting = false
+                dismiss()
+                onImported(docId)
+                return
+            }
+            errorMsg = L("生成的 PDF 无法解析")
+        } catch {
+            errorMsg = error.localizedDescription
+        }
+        isImporting = false
+    }
+}
+#endif

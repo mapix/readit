@@ -8,9 +8,16 @@ enum UILang: String, CaseIterable, Identifiable {
     var name: String { switch self { case .zh: return "中文"; case .en: return "English"; case .ja: return "日本語" } }
     static var current: UILang {
         if let r = UserDefaults.standard.string(forKey: "uiLang"), let l = UILang(rawValue: r) { return l }
-        let p = (Locale.preferredLanguages.first ?? "en").lowercased()
-        if p.hasPrefix("zh") { return .zh }
-        if p.hasPrefix("ja") { return .ja }
+        let langs = Locale.preferredLanguages.map { $0.lowercased() }
+        if let first = langs.first {
+            if first.hasPrefix("zh") { return .zh }
+            if first.hasPrefix("ja") { return .ja }
+        }
+        if langs.contains(where: { $0.hasPrefix("zh") }) { return .zh }
+        if let region = Locale.current.region?.identifier.uppercased(), ["CN", "HK", "MO", "TW"].contains(region) {
+            return .zh
+        }
+        if Settings.targetLang.contains("中文") { return .zh }
         return .en
     }
 }
@@ -51,7 +58,9 @@ struct LangMenu: View {
                 Button { lc.set(l) } label: { if lc.lang == l { Label(l.name, systemImage: "checkmark") } else { Text(l.name) } }
             }
         } label: {
-            HStack(spacing: 4) { Image(systemName: "globe"); Text(lc.lang.name).font(.system(size: 12)) }.foregroundStyle(MN.barText)
+            Image(systemName: "globe")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(MN.barText)
         }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         .help(L("界面语言"))
@@ -625,5 +634,149 @@ enum L10nTable {
         "第 %d/%d 段 · 全文 %d%%": ("Segment %d/%d · %d%% of document", "段落 %d/%d · 全体 %d%%"),
         "已缓冲 %d 段": ("%d buffered", "%d 段落バッファ済み"),
         "录制中（已播放 %d 段）。导出时会从第一页到最后一页完整合成一遍":("Recording (%d segments played). Export renders one complete pass from the first page to the last", "録画中（%d 段落再生済み）。書き出しは最初から最後のページまで通しで合成します"),
+        // Onboarding V2
+        "一步步完成语言、AI 模型与语音讲解配置（随时可在设置中修改）": ("Step-by-step setup for language, AI models, and voice narration (changeable anytime in Settings)", "言語・AI モデル・音声解説を順番に設定します（設定でいつでも変更可能）"),
+        "1. 语言与外观": ("1. Language & Theme", "1. 言語と外観"),
+        "2. AI 模型配置": ("2. AI Models", "2. AI モデル設定"),
+        "3. 语音讲解与开始": ("3. Voice & Quick Start", "3. 音声解説と開始"),
+        "上一步": ("Back", "戻る"),
+        "下一步": ("Next", "次へ"),
+        "切换到「双语」视图或划词翻译时，原文会翻译为该语言：": ("When switching to Bilingual view or translating selections, text is translated into:", "「対訳」表示や選択テキスト翻訳で翻訳される言語："),
+        "阅读主题": ("Reading Theme", "読書テーマ"),
+        "书架标签与阅读进度": ("Bookshelf Tags & Reading Progress", "本棚のタグと読書進捗"),
+        "书架支持 TODO / DOING / DONE 状态标签、自定义分类过滤与比例统计，并实时显示每篇文档的阅读百分比。": ("Filter by TODO / DOING / DONE or custom tags with visual ratio bars, and track reading progress % on every book.", "TODO / DOING / DONE やカスタムタグで分類・割合表示し、各文書の読書進捗（%）を本棚に表示します。"),
+        "Anthropic、OpenAI、DeepSeek 或兼容接口，填地址和 Key": ("Anthropic, OpenAI, DeepSeek or compatible — enter URL and key", "Anthropic、OpenAI、DeepSeek または互換 API（URL とキーを入力）"),
+        "只用阅读、摘录、PDF 编辑和脑图；以后再配置": ("Reading, excerpts, PDF editing and mind maps; set up AI later", "閲覧・抜粋・PDF 編集・マインドマップのみ。AI は後で設定"),
+        "常用预设：": ("Quick presets:", "プリセット："),
+        "所有阅读、双语（需要模型时会提示）、摘录、PDF 截断编辑、标签与脑图功能都可以直接使用。": ("Reading, bilingual view (prompts when needed), excerpts, PDF truncation/editing, tags, and mind maps all work right away.", "閲覧、対訳（必要時に案内）、抜粋、PDF 切り詰め編集、タグ、マインドマップはすぐ使えます。"),
+        "语音试听成功": ("Voice preview played", "音声を試聴しました"),
+        "核心功能速览": ("Key Features at a Glance", "主な機能"),
+        "双语对照与 AI 讲解：按 ⌘2 切换原版排版双语视图，按 ⌘⇧L 开启逐页语音解读。": ("Bilingual & AI Narration: Press ⌘2 for layout-preserving bilingual view, and ⌘⇧L for page-by-page voice narration.", "対訳と AI 解説：⌘2 で元のレイアウトを保った対訳表示、⌘⇧L でページごとの音声解説。"),
+        "PDF 截断与编辑：导入网页或文档后，在页面任意位置右键即可「从此处开始截断后面」或擦除多余内容。": ("PDF Truncation & Editing: Right-click anywhere on a page to \"Truncate from Here to End\" or erase unwanted web footers.", "PDF 編集：ページの任意の位置を右クリックして「ここから後ろを切り詰め」や不要部分の消去が可能。"),
+        "标签分类与进度：支持 TODO / DOING / DONE 标签过滤、比例统计条，书架实时展示每本书的阅读百分比。": ("Tags & Reading Progress: Organize with TODO / DOING / DONE tags, ratio bars, and live reading progress percentages.", "タグと読書進捗：TODO / DOING / DONE タグで分類・割合表示し、本棚に進捗パーセントを表示。"),
+        "连接成功！": ("Connected!", "接続に成功しました！"),
+        // PDF Editing
+        "从此处开始截断后面": ("Truncate from Here to End", "ここから後ろをすべて切り詰める"),
+        "从此处截断本页上方": ("Truncate Above Here on This Page", "このページのこれより上を切り詰める"),
+        "框选擦除页面区域": ("Erase Rectangular Region", "矩形領域を消去"),
+        "删除当前页 (p.%d)": ("Delete Current Page (p.%d)", "現在のページを削除 (p.%d)"),
+        "删除当前页之后的所有页": ("Delete All Pages After This", "これより後のページをすべて削除"),
+        "删除当前页之前的所有页": ("Delete All Pages Before This", "これより前のページをすべて削除"),
+        "恢复原始未编辑 PDF": ("Restore Original Unedited PDF", "編集前の元の PDF に戻す"),
+        "退出截断模式 (Esc)": ("Exit Truncate Mode (Esc)", "切り詰めモードを終了 (Esc)"),
+        "点击页面位置截断后面…": ("Click on Page to Truncate Below…", "ページ上の位置をクリックして後ろを切り詰め…"),
+        "退出框选擦除 (Esc)": ("Exit Erase Mode (Esc)", "消去モードを終了 (Esc)"),
+        "框选擦除页面区域…": ("Erase Rectangular Region…", "矩形領域をドラッグして消去…"),
+        "编辑 PDF：从指定位置截断后面、擦除区域或删除多余页": ("Edit PDF: truncate from position to end, erase regions, or remove extra pages", "PDF を編集：指定位置から後ろを切り詰め、領域消去、不要ページの削除"),
+        "✂️ 截断模式：点击页面任意位置，截断此处下方及后续所有页（按 Esc 退出）": ("✂️ Truncate Mode: Click anywhere on the page to remove everything below & all following pages (Esc to cancel)", "✂️ 切り詰めモード：クリックした位置より下と以降の全ページを削除します（Esc で終了）"),
+        "🧽 擦除模式：在页面上拖拽框选要擦除的区域（按 Esc 退出）": ("🧽 Erase Mode: Drag on the page to white-out a rectangular region (Esc to cancel)", "🧽 消去モード：ページ上をドラッグして消去する領域を選択（Esc で終了）"),
+        "选中文字 → 点颜色摘录 · 点击高亮打开卡片 · 右键可截断/编辑 PDF": ("Select → color to excerpt · Click highlight for card · Right-click to truncate/edit PDF", "選択→色で抜粋 · ハイライトでカード · 右クリックで PDF 切り詰め/編集"),
+        // Tags & Progress
+        "添加标签": ("Add Tag", "タグを追加"),
+        "输入标签名称（如 TODO、DOING、DONE、Paper、精读 等）：": ("Enter tag name(s) (e.g. TODO, DOING, DONE, Paper, DeepRead):", "タグ名を入力（例：TODO、DOING、DONE、Paper など）："),
+        "阅读状态标签": ("Reading Status", "読書ステータス"),
+        "清除状态标签": ("Clear Status Tag", "ステータスタグを消去"),
+        "自定义标签": ("Custom Tags", "カスタムタグ"),
+        "添加新标签…": ("Add New Tag…", "新しいタグを追加…"),
+        "标签": ("Tag", "タグ"),
+        "点击设置文档标签（TODO / DOING / DONE 或自定义标签）": ("Click to set document tags (TODO / DOING / DONE or custom tags)", "クリックして文書タグを設定（TODO / DOING / DONE またはカスタムタグ）"),
+        "全部": ("All", "すべて"),
+        "未标记": ("Untagged", "未設定"),
+        "平均阅读 %d%%": ("Avg Read %d%%", "平均進捗 %d%%"),
+        "点击切换状态标签（TODO → DOING → DONE）": ("Click to cycle status tag (TODO → DOING → DONE)", "クリックでステータス切替（TODO → DOING → DONE）"),
+        "设置状态标签": ("Set Status Tag", "ステータスタグを設定"),
+        "添加自定义标签…": ("Add Custom Tag…", "カスタムタグを追加…"),
+        "移除标签": ("Remove Tag", "タグを削除"),
+        // Version Update Checker
+        "正在检查更新…": ("Checking for updates…", "アップデートを確認中…"),
+        "已是最新版本 (%@)": ("Up to date (%@)", "最新バージョンです (%@)"),
+        "发现新版本 %@": ("New version %@ available", "新しいバージョン %@ があります"),
+        "新版本 %@": ("Update %@", "新バージョン %@"),
+        "下载 %@": ("Download %@", "%@ をダウンロード"),
+        "启动时与后台自动检查新版本": ("Automatically check for updates on launch and in background", "起動時およびバックグラウンドで自動的にアップデートを確認"),
+        // iOS & CloudSync UI
+        "书架": ("Bookshelf", "本棚"),
+        "设置与同步": ("Settings & Sync", "設定と同期"),
+        "AI 学习闪卡": ("AI Flashcards", "AI フラッシュカード"),
+        "AI 网关与模型配置": ("AI Gateway & Models", "AI ゲートウェイとモデル設定"),
+        "AI 解读/助手模型": ("AI Narration / Copilot Model", "AI 解説 / アシスタントモデル"),
+        "AI 讲解员正在思考并组织回答…": ("AI Narrator is thinking…", "AI 解説者が回答を考えています…"),
+        "AI 语音解读中…": ("AI Narrating…", "AI 音声解説中…"),
+        "AI 语音讲解 (TTS)": ("AI Voice Narration (TTS)", "AI 音声解説 (TTS)"),
+        "AI 阅读助手": ("AI Copilot", "AI 読書アシスタント"),
+        "Mac 与 iPhone 书架、双语进度、脑图卡片与网关设置自动同步": ("Bookshelf, bilingual progress, mind maps & gateway settings sync automatically across Mac & iPhone", "本棚、対訳の進捗、マインドマップ、ゲートウェイ設定を Mac と iPhone 間で自動同期"),
+        "PDF + 脑图分屏": ("Split PDF + Mind Map", "PDF + マインドマップ分割"),
+        "PDF 页面编辑": ("PDF Page Editing", "PDF ページ編集"),
+        "iCloud 多端同步（iPhone · iPad · Mac）": ("iCloud Multi-Device Sync (iPhone · iPad · Mac)", "iCloud マルチデバイス同期（iPhone · iPad · Mac）"),
+        "iCloud 多端自动同步": ("iCloud Auto Sync", "iCloud 自動同期"),
+        "仅看 PDF": ("PDF Only", "PDF のみ"),
+        "仅看脑图": ("Mind Map Only", "マインドマップのみ"),
+        "从本页中部截断后续内容": ("Truncate Below Mid-Page to End", "このページの中央から後ろを切り詰め"),
+        "从网页链接导入…": ("Import from Web URL…", "Web リンクから読み込む…"),
+        "保存并测试网关连接": ("Save & Test Connection", "保存して接続テスト"),
+        "先导入或通过 iCloud 同步 PDF 文档，即可让 AI 自动提炼间隔重复记忆闪卡。": ("Import or sync a PDF via iCloud to generate spaced-repetition AI flashcards.", "PDF を読み込むか iCloud 同期すると、AI フラッシュカードを自動生成できます。"),
+        "全文翻译": ("Translate Whole Document", "全文を翻訳"),
+        "关闭": ("Close", "閉じる"),
+        "创建": ("Create", "作成"),
+        "删除当前页": ("Delete Current Page", "現在のページを削除"),
+        "删除本页之后的全部页面": ("Delete All Following Pages", "以降のすべてのページを削除"),
+        "助手接口协议": ("Copilot Protocol", "アシスタントプロトコル"),
+        "双语对照": ("Bilingual Mode", "対訳モード"),
+        "同步 iCloud": ("Sync iCloud", "iCloud を同期"),
+        "同步中": ("Syncing", "同期中"),
+        "同步状态": ("Sync Status", "同期状態"),
+        "启用 iCloud 多端自动同步": ("Enable iCloud Auto Sync", "iCloud 自動同期を有効化"),
+        "在 Mac 或 iPhone 上导入的 PDF、双语缓存、TODO/DOING/DONE 标签、阅读进度百分比、脑图卡片及 AI 网关配置会自动通过 iCloud Drive 双向合并同步。": ("PDFs, bilingual caches, TODO/DOING/DONE tags, reading progress %, mind map cards, and AI gateway settings automatically sync two-way between Mac and iPhone.", "Mac や iPhone で読み込んだ PDF、対訳キャッシュ、タグ、読書進捗、マインドマップ、AI 設定を双方向で自動同期します。"),
+        "在 PDF 页面上长按选中文本，即可一键高亮摘录并自动翻译。": ("Long-press text on a PDF page to highlight, excerpt, and translate.", "PDF ページ上のテキストを長押しして選択すると、ハイライト抜粋と自動翻訳ができます。"),
+        "学习工具": ("Study Tools", "学習ツール"),
+        "导入 PDF 文件…": ("Import PDF File…", "PDF ファイルを読み込む…"),
+        "导入为 PDF 文档": ("Import as PDF", "PDF として読み込む"),
+        "已与 Mac 同步 · %@": ("Synced with Mac · %@", "Mac と同期済み · %@"),
+        "已同步内容": ("Synced Items", "同期済みデータ"),
+        "已就绪": ("Ready", "準備完了"),
+        "恢复未裁剪的原版 PDF": ("Restore Original PDF", "元の PDF に戻す"),
+        "打开阅读": ("Open Reader", "開いて読む"),
+        "搜索 PDF 文档…": ("Search PDFs…", "PDF 文書を検索…"),
+        "摘录卡片": ("Excerpts", "抜粋カード"),
+        "新建笔记本…": ("New Notebook…", "新規ノートブック…"),
+        "暂无匹配的 PDF 文档": ("No Matching PDFs", "一致する PDF がありません"),
+        "暂无摘录卡片": ("No Excerpt Cards Yet", "抜粋カードがありません"),
+        "暂无闪卡文档": ("No Documents for Flashcards", "フラッシュカード対象の文書がありません"),
+        "标签名称（如 AI、精读）": ("Tag name (e.g. AI, DeepRead)", "タグ名（例：AI、精読）"),
+        "模式": ("Mode", "モード"),
+        "正在与 Mac / iCloud Drive 同步最新阅读进度与文档…": ("Syncing latest reading progress and documents with Mac / iCloud…", "Mac / iCloud と最新の進捗・文書を同期中…"),
+        "正在准备本页 AI 语音讲稿与合成…": ("Preparing AI narration script & audio…", "このページの AI 解説スクリプトと音声を準備中…"),
+        "正在加载网页并生成 PDF…": ("Loading web page and generating PDF…", "Web ページを読み込んで PDF を生成中…"),
+        "正在测试连接…": ("Testing connection…", "接続テスト中…"),
+        "正在聆听你的问题…": ("Listening to your question…", "質問を聞いています…"),
+        "添加": ("Add", "追加"),
+        "点击右上角 + 导入 PDF 或网页链接，或在 Mac 上添加文档后通过 iCloud 自动同步到手机。": ("Tap + to import a PDF or web link, or add documents on Mac to sync via iCloud.", "右上の + から PDF や Web リンクを追加するか、Mac で追加して iCloud 同期してください。"),
+        "生成的 PDF 无法解析": ("Could not parse generated PDF", "生成された PDF を解析できません"),
+        "目录与卡片": ("Outline & Cards", "目次とカード"),
+        "目录与摘录卡片": ("Outline & Excerpts", "目次と抜粋カード"),
+        "立即与 Mac / iCloud 同步": ("Sync Now with Mac / iCloud", "今すぐ Mac / iCloud と同期"),
+        "立即同步 iCloud": ("Sync iCloud Now", "今すぐ iCloud を同期"),
+        "笔记本名称": ("Notebook Name", "ノートブック名"),
+        "网关地址": ("Gateway URL", "ゲートウェイ URL"),
+        "网页文章链接": ("Web Article URL", "Web 記事の URL"),
+        "翻译接口协议": ("Translation Protocol", "翻訳プロトコル"),
+        "翻译模型": ("Translation Model", "翻訳モデル"),
+        "视图切换": ("View Mode", "表示モード"),
+        "试听当前语音": ("Preview Voice", "音声を試聴"),
+        "请输入有效的网址 URL": ("Please enter a valid URL", "有効な URL を入力してください"),
+        "连接成功：": ("Connected: ", "接続成功："),
+        "选择 iCloud Drive 同步目录…": ("Choose iCloud Drive Folder…", "iCloud Drive フォルダを選択…"),
+        "音色 (Voice)": ("Voice", "音声 (Voice)"),
+        "默认倍速": ("Default Speed", "標準再生速度"),
+        "%d PDF · %d 卡片": ("%d PDFs · %d Cards", "%d PDF · %d カード"),
+        "选择文档": ("Select Document", "文書を選択"),
+        "生成数量": ("Card Count", "カード枚数"),
+        "点击卡片翻转查看答案": ("Tap card to flip for answer", "カードをタップして答えを表示"),
+        "查看答案": ("Show Answer", "答えを見る"),
+        "返回卡组列表": ("Back to Decks", "デッキ一覧へ戻る"),
+        "生成 AI 学习闪卡": ("Generate AI Flashcards", "AI フラッシュカードを生成"),
+        "问题": ("Question", "問題"),
+        "答案": ("Answer", "解答"),
+        "解析": ("Explanation", "解説"),
     ]
 }

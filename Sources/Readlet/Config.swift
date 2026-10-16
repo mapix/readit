@@ -12,7 +12,7 @@ enum ConfigFile {
     /// ~/.config/readlet (automatically migrates files from ~/.config/readit if present; falls back if needed)
     static var configDir: URL {
         let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser
+        let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
         let new = home.appendingPathComponent(".config/readlet", isDirectory: true)
         let old = home.appendingPathComponent(".config/readit", isDirectory: true)
         if fm.fileExists(atPath: old.path) {
@@ -35,12 +35,13 @@ enum ConfigFile {
         let fm = FileManager.default
         let newFile = configDir.appendingPathComponent("config.toml")
         if fm.fileExists(atPath: newFile.path) { return newFile }
-        let oldFile = fm.homeDirectoryForCurrentUser.appendingPathComponent(".config/readit/config.toml")
+        let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        let oldFile = home.appendingPathComponent(".config/readit/config.toml")
         if fm.fileExists(atPath: oldFile.path) { return oldFile }
         return newFile
     }
     static var displayPath: String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let home = NSHomeDirectory()
         return url.path.hasPrefix(home + "/") ? "~" + url.path.dropFirst(home.count) : url.path
     }
     static var exists: Bool { FileManager.default.fileExists(atPath: url.path) }
@@ -110,6 +111,7 @@ enum ConfigFile {
 
     /// e.g. `security find-generic-password -s readlet -w` (Keychain). Runs once per config change, 5 s timeout.
     private static func runCommand(_ cmd: String) -> String {
+        #if os(macOS)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/sh")
         p.arguments = ["-c", cmd]
@@ -125,6 +127,9 @@ enum ConfigFile {
         if p.isRunning { p.terminate(); return "" }
         let data = out.fileHandleForReading.readDataToEndOfFile()
         return (String(data: data, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        #else
+        return ""
+        #endif
     }
 
     // MARK: write-back

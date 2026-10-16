@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 import AppKit
 
@@ -20,6 +21,8 @@ struct SettingsView: View {
     @State var theme = AppTheme.current
     @ObservedObject var lc = LangCenter.shared
     @ObservedObject var gpt = ChatGPTAuth.shared
+    @ObservedObject var updater = UpdateChecker.shared
+    @ObservedObject var cloud = CloudSync.shared
     // narration + speech
     @State var narrStyle = Settings.narrationStyle
     @State var narrExtra = Settings.narrationExtraPrompt
@@ -157,13 +160,24 @@ struct SettingsView: View {
             Section(L("外观")) {
                 Picker(L("主题"), selection: $theme) { ForEach(AppTheme.allCases) { Text($0.name).tag($0) } }.pickerStyle(.segmented)
             }
-            if AppInfo.selfUpdates { Section(L("更新")) {
+            Section(L("更新")) {
                 HStack {
-                    Text(LF("当前版本 %@", UpdateChecker.currentVersion))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(LF("当前版本 %@", "\(UpdateChecker.currentVersion) (\(AppInfo.build))"))
+                        if !updater.statusText.isEmpty {
+                            Text(updater.statusText).font(.caption).foregroundStyle(updater.availableRelease != nil ? Color.accentColor : .secondary)
+                        }
+                    }
                     Spacer()
-                    Button(L("检查更新…")) { Task { await UpdateChecker.shared.check(manual: true) } }
+                    if let rel = updater.availableRelease {
+                        Button(LF("下载 %@", rel.version)) { updater.openDownload(for: rel) }
+                            .buttonStyle(.borderedProminent)
+                    }
+                    Button(updater.checking ? L("正在检查更新…") : L("检查更新…")) {
+                        Task { await updater.check(manual: true) }
+                    }.disabled(updater.checking)
                 }
-            }
+                Toggle(L("启动时与后台自动检查新版本"), isOn: Binding(get: { updater.autoCheckEnabled }, set: { updater.autoCheckEnabled = $0 }))
             }
         }
         .formStyle(.grouped)
@@ -394,6 +408,29 @@ struct SettingsView: View {
                     Button(L("在访达中显示数据目录")) { NSWorkspace.shared.activateFileViewerSelecting([Paths.base]) }
                 }
             }
+            Section(L("iCloud 多端同步（Mac · iPhone · iPad）")) {
+                Toggle(L("自动通过 iCloud 同步文档、标签、阅读进度、卡片与配置"), isOn: $cloud.isEnabled)
+                HStack {
+                    Image(systemName: cloud.state.isSyncing ? "arrow.triangle.2.circlepath.icloud.fill" : "checkmark.icloud.fill")
+                        .foregroundStyle(cloud.isEnabled ? .blue : .secondary)
+                    if cloud.state.isSyncing {
+                        Text(L("正在与 iCloud 同步…")).font(.callout).foregroundStyle(.secondary)
+                    } else if let dt = cloud.lastSyncedAt {
+                        Text(LF("上次同步：%@", dt.formatted(date: .abbreviated, time: .standard))).font(.callout).foregroundStyle(.secondary)
+                    } else {
+                        Text(L("就绪")).font(.callout).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button(L("立即同步")) { cloud.syncNow() }
+                        .disabled(!cloud.isEnabled || cloud.state.isSyncing)
+                }
+                if !cloud.cloudLocationDescription.isEmpty {
+                    Text(cloud.cloudLocationDescription)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
         }
         .formStyle(.grouped)
         .task { await refreshUsage() }
@@ -483,5 +520,7 @@ struct SettingsView: View {
         if priceTTS != Pricing.ttsPerMChars { Pricing.ttsPerMChars = priceTTS }
         if currency != Pricing.currency { Pricing.currency = currency }
         ThemeCenter.shared.set(theme)
+        CloudSync.shared.recordSettingsChange()
     }
 }
+#endif

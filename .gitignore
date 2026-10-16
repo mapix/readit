@@ -11,3 +11,8 @@ landing/download/
 deploy/
 takeover.sh
 configure_from_codex.sh
+
+.asc/
+landing/download/
+AppStore/*.mp4
+landing/*.mp4
