@@ -269,7 +269,8 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
 
     // MARK: control
 
-    /// start narrating; by default resumes from the position saved for this document (survives stop / quit / crash)
+    /// start narrating; resumes from saved segment if on the same page (or if starting from page 0 with saved progress),
+    /// otherwise starts from the current reader page `page` so opening/scrolling to a page never jumps back to page 0.
     func start(docId: UUID, doc: PDFDocument, title: String, from page: Int, resume: Bool = true) {
         stop()
         // pick up hand edits of config.toml since launch
@@ -285,39 +286,76 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         pageCount = doc.pageCount
         error = nil
         guard pageCount > 0 else { return }
+        let targetPage = max(0, min(pageCount - 1, page))
         if resume, let s = Narrator.savedProgress(docId), s.page >= 0, s.page < pageCount {
-            resumedFrom = s
-            play(page: s.page, seg: max(0, s.seg))
-        } else {
-            resumedFrom = nil
-            play(page: max(0, min(pageCount - 1, page)), seg: 0)
+            if s.page == targetPage && s.seg > 0 {
+                resumedFrom = s
+                play(page: s.page, seg: s.seg)
+                return
+            } else if targetPage == 0 && (s.page > 0 || s.seg > 0) {
+                resumedFrom = s
+                play(page: s.page, seg: max(0, s.seg))
+                return
+            }
         }
+        resumedFrom = nil
+        play(page: targetPage, seg: 0)
     }
 
-    /// ignore the saved position and start at the page currently shown in the reader
+    /// ignore the saved position and start at the page currently shown in the reader (from segment 0)
     func restartFromCurrentPage() {
         guard let id = docId, let d = doc else { return }
+        let curPage = Narrator.reader.currentPageIndex
         Narrator.clearProgress(id)
-        start(docId: id, doc: d, title: title, from: Narrator.reader.currentPageIndex, resume: false)
+        start(docId: id, doc: d, title: title, from: curPage, resume: false)
     }
 
-    // MARK: persisted progress (per document, voice independent)
+    // MARK: persisted progress (per document, voice independent, synced across Mac & iOS)
     struct Progress: Codable, Equatable { var page: Int; var seg: Int; var date: Date = Date() }
     /// set when the current run resumed from a saved position (shown in the bar)
     @Published var resumedFrom: Progress?
-    static func progressURL(_ id: UUID) -> URL {
+    nonisolated static func progressURL(_ id: UUID) -> URL {
         let u = Paths.docDir(id).appendingPathComponent("narration", isDirectory: true)
         try? FileManager.default.createDirectory(at: u, withIntermediateDirectories: true)
         return u.appendingPathComponent("progress.json")
     }
-    static func savedProgress(_ id: UUID) -> Progress? {
+    nonisolated static func savedDiskProgress(_ id: UUID) -> Progress? {
         guard let d = try? Data(contentsOf: progressURL(id)) else { return nil }
         return try? JSONDecoder().decode(Progress.self, from: d)
     }
-    static func saveProgress(_ id: UUID, page: Int, seg: Int) {
-        if let d = try? JSONEncoder().encode(Progress(page: page, seg: seg)) { try? d.write(to: progressURL(id), options: .atomic) }
+    static func savedProgress(_ id: UUID) -> Progress? {
+        let disk = savedDiskProgress(id)
+        let docProg: Progress? = {
+            guard let doc = Store.shared.doc(id), let np = doc.narrationPage else { return nil }
+            return Progress(page: np, seg: doc.narrationSeg ?? 0, date: doc.narrationUpdatedAt ?? doc.updatedAt ?? .distantPast)
+        }()
+        switch (disk, docProg) {
+        case (let a?, let b?):
+            let aNonZero = a.page > 0 || a.seg > 0
+            let bNonZero = b.page > 0 || b.seg > 0
+            if aNonZero && !bNonZero { return a }
+            if bNonZero && !aNonZero { return b }
+            return b.date > a.date ? b : a
+        case (let a?, nil):
+            return a
+        case (nil, let b?):
+            return b
+        case (nil, nil):
+            return nil
+        }
     }
-    static func clearProgress(_ id: UUID) { try? FileManager.default.removeItem(at: progressURL(id)) }
+    static func saveProgress(_ id: UUID, page: Int, seg: Int) {
+        let now = Date()
+        let p = Progress(page: page, seg: seg, date: now)
+        if let d = try? JSONEncoder().encode(p) {
+            try? d.write(to: progressURL(id), options: .atomic)
+        }
+        Store.shared.updateNarrationProgress(docId: id, page: page, seg: seg, date: now)
+    }
+    static func clearProgress(_ id: UUID) {
+        try? FileManager.default.removeItem(at: progressURL(id))
+        Store.shared.clearNarrationProgress(docId: id)
+    }
 
     func togglePause() {
         switch state {

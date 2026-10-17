@@ -8,16 +8,12 @@ enum UILang: String, CaseIterable, Identifiable {
     var name: String { switch self { case .zh: return "中文"; case .en: return "English"; case .ja: return "日本語" } }
     static var current: UILang {
         if let r = UserDefaults.standard.string(forKey: "uiLang"), let l = UILang(rawValue: r) { return l }
-        let langs = Locale.preferredLanguages.map { $0.lowercased() }
-        if let first = langs.first {
-            if first.hasPrefix("zh") { return .zh }
-            if first.hasPrefix("ja") { return .ja }
+        for raw in Locale.preferredLanguages {
+            let code = raw.lowercased()
+            if code.hasPrefix("en") { return .en }
+            if code.hasPrefix("zh") { return .zh }
+            if code.hasPrefix("ja") { return .ja }
         }
-        if langs.contains(where: { $0.hasPrefix("zh") }) { return .zh }
-        if let region = Locale.current.region?.identifier.uppercased(), ["CN", "HK", "MO", "TW"].contains(region) {
-            return .zh
-        }
-        if Settings.targetLang.contains("中文") { return .zh }
         return .en
     }
 }
@@ -778,5 +774,17 @@ enum L10nTable {
         "问题": ("Question", "問題"),
         "答案": ("Answer", "解答"),
         "解析": ("Explanation", "解説"),
+        "AI 语音解读": ("AI Narration", "AI 音声解説"),
+        "从当前页开始讲 (p.%d)": ("Narrate from Current Page (p.%d)", "現在のページから解説 (p.%d)"),
+        "继续上次讲解 (p.%d · 第 %d 段)": ("Resume Last Narration (p.%d · Seg %d)", "前回の続きから解説 (p.%d · 第 %d 段落)"),
+        "从当前页 (第 %d 页) 开始讲": ("Narrate from Current Page (p.%d)", "現在のページ (%d ページ) から解説"),
+        "已从第 %d 页第 %d 段继续 · 点击从本页开头重新讲": ("Resumed at p.%d seg %d · Tap to restart this page", "%d ページ第 %d 段落から再開 · タップでこのページの最初から"),
+        "从本页讲": ("From Here", "このページから"),
+        "%d 篇文档 · %d 张摘录卡片 · %d 个笔记本": ("%d Docs · %d Cards · %d Notebooks", "%d 件の文書 · %d 枚のカード · %d 冊のノート"),
+        "外观与语言": ("Appearance & Language", "外観と言語"),
+        "界面主题": ("Theme", "テーマ"),
+        "跟随系统": ("System", "システム設定に従う"),
+        "提问": ("Ask", "質問"),
+        "松开发送": ("Send", "送信"),
     ]
 }

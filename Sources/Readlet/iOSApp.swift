@@ -42,12 +42,23 @@ struct ReadletIOSApp: App {
                 }
                 .onChange(of: scenePhase) { _, newPhase in
                     if newPhase == .active {
-                        cloud.syncNow()
+                        cloud.syncNow(silent: true)
                     } else if newPhase == .background {
                         store.saveNow()
                     }
                 }
         }
+    }
+}
+
+@MainActor
+final class iOSThemeCenter: ObservableObject {
+    static let shared = iOSThemeCenter()
+    @Published var theme: AppTheme = AppTheme.current
+    var colorScheme: ColorScheme { theme.isDark ? .dark : .light }
+    func set(_ t: AppTheme) {
+        UserDefaults.standard.set(t.rawValue, forKey: "theme")
+        theme = t
     }
 }
 
@@ -58,6 +69,7 @@ struct iOSRootView: View {
     @ObservedObject var cloud: CloudSync
     @ObservedObject var wins = DocWindows.shared
     @ObservedObject var lang = LangCenter.shared
+    @ObservedObject var themeCenter = iOSThemeCenter.shared
 
     @State private var selectedTab = 0
     @State private var activeReaderDocId: UUID?
@@ -112,7 +124,10 @@ struct iOSRootView: View {
                 }
             }
         }
-        .id(lang.lang)
+        .tint(MN.accent)
+        .preferredColorScheme(themeCenter.colorScheme)
+        .environment(\.colorScheme, themeCenter.colorScheme)
+        .id("\(lang.lang.rawValue)-\(themeCenter.theme.rawValue)")
         .onChange(of: store.pendingJump) { _, card in
             if let card {
                 DocWindows.shared.open(card.docId, jump: card)
@@ -142,6 +157,9 @@ struct iOSRootView: View {
         }
         .onAppear {
             let args = ProcessInfo.processInfo.arguments
+            if let idx = args.firstIndex(of: "--theme"), idx + 1 < args.count, let t = AppTheme(rawValue: args[idx + 1]) {
+                themeCenter.set(t)
+            }
             if let idx = args.firstIndex(of: "--tab"), idx + 1 < args.count, let t = Int(args[idx + 1]) {
                 selectedTab = t
             }
@@ -163,6 +181,7 @@ struct iOSBookshelfView: View {
     @ObservedObject var store: Store
     @ObservedObject var cloud: CloudSync
     @ObservedObject var lang = LangCenter.shared
+    @ObservedObject var themeCenter = iOSThemeCenter.shared
     let onOpenDoc: (UUID) -> Void
 
     @State private var selectedTagFilter: String = "ALL"
@@ -218,36 +237,51 @@ struct iOSBookshelfView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
             }
-            .background(Color(uiColor: .systemGroupedBackground))
+            .background(MN.shelf)
             .navigationTitle("Readlet")
             .searchable(text: $searchText, prompt: L("搜索 PDF 文档…"))
             .refreshable {
-                cloud.syncNow()
+                cloud.syncNow(silent: false)
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
-                        cloud.syncNow()
+                        cloud.syncNow(silent: false)
                     } label: {
                         HStack(spacing: 4) {
-                            Image(systemName: cloud.state.isSyncing ? "arrow.triangle.2.circlepath.icloud.fill" : "checkmark.icloud.fill")
-                                .symbolEffect(.pulse, isActive: cloud.state.isSyncing)
-                            Text(cloud.state.isSyncing ? L("同步中") : "iCloud")
+                            Image(systemName: "checkmark.icloud.fill")
+                                .font(.subheadline)
+                            Text("iCloud")
                                 .font(.caption.weight(.semibold))
                         }
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(MN.accent)
                     }
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Menu {
-                        ForEach(UILang.allCases) { l in
-                            Button {
-                                lang.set(l)
-                            } label: {
-                                if lang.lang == l {
-                                    Label(l.name, systemImage: "checkmark")
-                                } else {
-                                    Text(l.name)
+                        Section(L("语言")) {
+                            ForEach(UILang.allCases) { l in
+                                Button {
+                                    lang.set(l)
+                                } label: {
+                                    if lang.lang == l {
+                                        Label(l.name, systemImage: "checkmark")
+                                    } else {
+                                        Text(l.name)
+                                    }
+                                }
+                            }
+                        }
+                        Section(L("界面主题")) {
+                            ForEach(AppTheme.allCases) { t in
+                                Button {
+                                    themeCenter.set(t)
+                                } label: {
+                                    if themeCenter.theme == t {
+                                        Label(t.name, systemImage: "checkmark")
+                                    } else {
+                                        Text(t.name)
+                                    }
                                 }
                             }
                         }
@@ -268,7 +302,7 @@ struct iOSBookshelfView: View {
                         }
                         Divider()
                         Button {
-                            cloud.syncNow()
+                            cloud.syncNow(silent: false)
                         } label: {
                             Label(L("立即同步 iCloud"), systemImage: "arrow.triangle.2.circlepath.icloud")
                         }
@@ -298,6 +332,7 @@ struct iOSBookshelfView: View {
                         onOpenDoc(id)
                     }
                 }
+                .preferredColorScheme(themeCenter.colorScheme)
             }
             .alert(L("添加标签"), isPresented: $showNewTagAlert) {
                 TextField(L("标签名称（如 AI、精读）"), text: $newTagText)
@@ -311,48 +346,64 @@ struct iOSBookshelfView: View {
         }
     }
 
+    private var iCloudBannerSubtitle: String {
+        if let dt = cloud.lastSyncedAt {
+            return LF("已与 Mac 同步 · %@", dt.formatted(date: .omitted, time: .shortened))
+        }
+        if cloud.state.isSyncing {
+            return L("正在与 Mac / iCloud Drive 同步最新阅读进度与文档…")
+        }
+        return L("Mac 与 iPhone 书架、双语进度、脑图卡片与网关设置自动同步")
+    }
+
     private var iCloudBanner: some View {
         HStack(spacing: 10) {
-            Image(systemName: cloud.state.isSyncing ? "arrow.triangle.2.circlepath.icloud.fill" : "icloud.fill")
+            Image(systemName: "icloud.fill")
                 .font(.system(size: 18))
-                .foregroundStyle(.blue)
+                .foregroundStyle(MN.accent)
+                .frame(width: 24, height: 24)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(L("iCloud 多端自动同步"))
                         .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
                     Text(LF("%d PDF · %d 卡片", store.lib.docs.count, store.lib.cards.count))
                         .font(.caption2.weight(.medium))
+                        .lineLimit(1)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.blue.opacity(0.12)))
-                        .foregroundStyle(.blue)
+                        .background(Capsule().fill(MN.accent.opacity(0.12)))
+                        .foregroundStyle(MN.accent)
                 }
-                if cloud.state.isSyncing {
-                    Text(L("正在与 Mac / iCloud Drive 同步最新阅读进度与文档…"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else if let dt = cloud.lastSyncedAt {
-                    Text(LF("已与 Mac 同步 · %@", dt.formatted(date: .omitted, time: .shortened)))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text(L("Mac 与 iPhone 书架、双语进度、脑图卡片与网关设置自动同步"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text(iCloudBannerSubtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            Spacer()
+            Spacer(minLength: 4)
             Button {
-                cloud.syncNow()
+                cloud.syncNow(silent: false)
             } label: {
-                Image(systemName: "arrow.clockwise")
-                    .font(.caption.weight(.bold))
-                    .padding(7)
-                    .background(Circle().fill(Color.blue.opacity(0.12)))
+                ZStack {
+                    Circle().fill(MN.accent.opacity(0.12))
+                    if cloud.state.isSyncing {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .tint(MN.accent)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(MN.accent)
+                    }
+                }
+                .frame(width: 28, height: 28)
             }
+            .buttonStyle(.plain)
         }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 14).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+        .padding(.horizontal, 12)
+        .frame(height: 58)
+        .background(RoundedRectangle(cornerRadius: 14).fill(MN.panel))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.06), lineWidth: 0.6))
     }
 
     private var workflowRatioCard: some View {
@@ -367,14 +418,14 @@ struct iOSBookshelfView: View {
             HStack {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
-                        tagFilterChip(id: "ALL", title: L("全部"), count: docs.count, color: .indigo)
+                        tagFilterChip(id: "ALL", title: L("全部"), count: docs.count, color: MN.accent)
                         tagFilterChip(id: "TODO", title: "TODO", count: todoCount, color: .orange)
-                        tagFilterChip(id: "DOING", title: "DOING", count: doingCount, color: .blue)
+                        tagFilterChip(id: "DOING", title: "DOING", count: doingCount, color: MN.accent)
                         tagFilterChip(id: "DONE", title: "DONE", count: doneCount, color: .green)
                         ForEach(store.allCustomTags, id: \.self) { ct in
                             let c = docs.filter { d in d.customTags.contains { $0.caseInsensitiveCompare(ct) == .orderedSame } }.count
                             if c > 0 {
-                                tagFilterChip(id: ct, title: "#" + ct, count: c, color: .purple)
+                                tagFilterChip(id: ct, title: "#" + ct, count: c, color: .teal)
                             }
                         }
                     }
@@ -392,7 +443,7 @@ struct iOSBookshelfView: View {
                 let doneW = w * CGFloat(doneCount) / CGFloat(total)
                 HStack(spacing: 0) {
                     if todoCount > 0 { Rectangle().fill(Color.orange).frame(width: todoW) }
-                    if doingCount > 0 { Rectangle().fill(Color.blue).frame(width: doingW) }
+                    if doingCount > 0 { Rectangle().fill(MN.accent).frame(width: doingW) }
                     if doneCount > 0 { Rectangle().fill(Color.green).frame(width: doneW) }
                     Spacer(minLength: 0)
                 }
@@ -402,7 +453,8 @@ struct iOSBookshelfView: View {
             .frame(height: 6)
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 14).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+        .background(RoundedRectangle(cornerRadius: 14).fill(MN.panel))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.06), lineWidth: 0.6))
     }
 
     private func tagFilterChip(id: String, title: String, count: Int, color: Color) -> some View {
@@ -446,9 +498,10 @@ struct iOSBookshelfView: View {
                     Label(L("导入 PDF"), systemImage: "plus")
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(MN.accent)
 
                 Button {
-                    cloud.syncNow()
+                    cloud.syncNow(silent: false)
                 } label: {
                     Label(L("同步 iCloud"), systemImage: "arrow.triangle.2.circlepath.icloud")
                 }
@@ -457,7 +510,7 @@ struct iOSBookshelfView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 44)
-        .background(RoundedRectangle(cornerRadius: 16).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+        .background(RoundedRectangle(cornerRadius: 16).fill(MN.panel))
     }
 }
 
@@ -472,7 +525,7 @@ struct iOSDocCardView: View {
     private func statusColor(_ st: DocStatusTag?) -> Color {
         switch st {
         case .todo: return .orange
-        case .doing: return .blue
+        case .doing: return MN.accent
         case .done: return .green
         case nil: return .secondary
         }
@@ -509,6 +562,7 @@ struct iOSDocCardView: View {
 
             Text(doc.title)
                 .font(.footnote.weight(.semibold))
+                .foregroundStyle(.primary)
                 .lineLimit(2)
                 .frame(minHeight: 34, alignment: .topLeading)
                 .onTapGesture { onTap() }
@@ -521,8 +575,8 @@ struct iOSDocCardView: View {
                                 .font(.system(size: 10, weight: .medium))
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(Capsule().fill(Color.purple.opacity(0.14)))
-                                .foregroundStyle(.purple)
+                                .background(Capsule().fill(MN.accent.opacity(0.12)))
+                                .foregroundStyle(MN.accent)
                         }
                     }
                 }
@@ -550,7 +604,8 @@ struct iOSDocCardView: View {
             }
         }
         .padding(10)
-        .background(RoundedRectangle(cornerRadius: 14).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+        .background(RoundedRectangle(cornerRadius: 14).fill(MN.panel))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.06), lineWidth: 0.6))
         .contextMenu {
             Button { onTap() } label: { Label(L("打开阅读"), systemImage: "book") }
             Divider()
@@ -574,7 +629,6 @@ struct iOSDocCardView: View {
 
 struct iOSDocThumb: View {
     let docId: UUID
-    @ObservedObject private var cloud = CloudSync.shared
     @State private var image: UIImage?
 
     var body: some View {
@@ -587,27 +641,36 @@ struct iOSDocThumb: View {
             } else {
                 Image(systemName: "doc.richtext")
                     .font(.system(size: 32))
-                    .foregroundStyle(.secondary.opacity(0.4))
+                    .foregroundStyle(Color.gray.opacity(0.45))
             }
         }
-        .task(id: "\(docId.uuidString)-\(image == nil ? (cloud.lastSyncedAt?.timeIntervalSince1970 ?? 0) : 0)") {
+        .task(id: docId) {
             guard image == nil else { return }
-            let thumbFile = Paths.docDir(docId).appendingPathComponent("thumb.png")
-            if let d = try? Data(contentsOf: thumbFile), let ui = UIImage(data: d) {
-                image = ui
+            if let loaded = await Self.loadOrRender(docId: docId) {
+                image = loaded
                 return
             }
-            let pdfURL = Paths.pdf(docId)
-            let generated = await Task.detached(priority: .utility) { () -> UIImage? in
-                guard let doc = PDFDocument(url: pdfURL), let p0 = doc.safePage(0) else { return nil }
-                if let png = PlatformPDF.thumbnailPNG(p0, size: CGSize(width: 280, height: 372)) {
-                    try? png.write(to: thumbFile, options: .atomic)
-                    return UIImage(data: png)
-                }
-                return nil
-            }.value
-            image = generated
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            if image == nil, let retryLoaded = await Self.loadOrRender(docId: docId) {
+                image = retryLoaded
+            }
         }
+    }
+
+    private static func loadOrRender(docId: UUID) async -> UIImage? {
+        let thumbFile = Paths.docDir(docId).appendingPathComponent("thumb.png")
+        if let d = try? Data(contentsOf: thumbFile), let ui = UIImage(data: d) {
+            return ui
+        }
+        let pdfURL = Paths.pdf(docId)
+        return await Task.detached(priority: .utility) { () -> UIImage? in
+            guard let doc = PDFDocument(url: pdfURL), let p0 = doc.safePage(0) else { return nil }
+            if let png = PlatformPDF.thumbnailPNG(p0, size: CGSize(width: 280, height: 372)) {
+                try? png.write(to: thumbFile, options: .atomic)
+                return UIImage(data: png)
+            }
+            return nil
+        }.value
     }
 }
 
@@ -620,6 +683,7 @@ struct iOSDocumentStudyView: View {
 
     @ObservedObject private var rc = ReaderController.shared
     @ObservedObject private var narrator = Narrator.shared
+    @ObservedObject private var themeCenter = iOSThemeCenter.shared
     @State private var viewMode: Int = 0 // 0 = PDF, 1 = Split, 2 = MindMap
     @State private var showCopilotSheet = false
     @State private var showOutlineSheet = false
@@ -631,164 +695,75 @@ struct iOSDocumentStudyView: View {
 
     var body: some View {
         NavigationStack {
-            ZStack(alignment: .bottom) {
-                Group {
-                    if viewMode == 0 {
-                        iOSPDFContainerView(store: store, rc: rc, session: session)
-                    } else if viewMode == 1 {
-                        GeometryReader { geo in
-                            if geo.size.width > geo.size.height {
-                                HStack(spacing: 0) {
-                                    iOSPDFContainerView(store: store, rc: rc, session: session)
-                                        .frame(width: geo.size.width * 0.56)
-                                    Divider()
-                                    MindMapView(store: store)
-                                }
-                            } else {
-                                VStack(spacing: 0) {
-                                    iOSPDFContainerView(store: store, rc: rc, session: session)
-                                        .frame(height: geo.size.height * 0.58)
-                                    Divider()
-                                    MindMapView(store: store)
+            VStack(spacing: 0) {
+                topReaderControlBar
+
+                ZStack(alignment: .bottom) {
+                    Group {
+                        if viewMode == 0 {
+                            iOSThemedPDFView(store: store, rc: rc, session: session, theme: themeCenter.theme)
+                        } else if viewMode == 1 {
+                            GeometryReader { geo in
+                                if geo.size.width > geo.size.height {
+                                    HStack(spacing: 0) {
+                                        iOSThemedPDFView(store: store, rc: rc, session: session, theme: themeCenter.theme)
+                                            .frame(width: geo.size.width * 0.56)
+                                        Divider()
+                                        MindMapView(store: store)
+                                    }
+                                } else {
+                                    VStack(spacing: 0) {
+                                        iOSThemedPDFView(store: store, rc: rc, session: session, theme: themeCenter.theme)
+                                            .frame(height: geo.size.height * 0.58)
+                                        Divider()
+                                        MindMapView(store: store)
+                                    }
                                 }
                             }
+                        } else {
+                            MindMapView(store: store)
                         }
-                    } else {
-                        MindMapView(store: store)
-                    }
-                }
-
-                VStack(spacing: 10) {
-                    if !rc.selectionText.isEmpty {
-                        iOSSelectionExcerptBar(
-                            rc: rc,
-                            onAskAI: {
-                                showCopilotSheet = true
-                            }
-                        )
-                        .padding(.horizontal, 12)
                     }
 
-                    if narrator.state != .idle && narrator.docId == docId {
-                        iOSNarratorBar(narrator: narrator, rc: rc)
+                    VStack(spacing: 10) {
+                        if !rc.selectionText.isEmpty {
+                            iOSSelectionExcerptBar(
+                                rc: rc,
+                                onAskAI: {
+                                    showCopilotSheet = true
+                                }
+                            )
                             .padding(.horizontal, 12)
-                    }
+                        }
 
-                    bottomReaderControlBar
-                }
-            }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        onClose()
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "chevron.left")
-                            Text(L("书架"))
+                        if narrator.state != .idle && narrator.docId == docId {
+                            iOSNarratorBar(narrator: narrator, rc: rc)
+                                .padding(.horizontal, 12)
                         }
-                    }
-                }
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button {
-                        rc.setVariant(rc.variant == .bilingual ? .original : .bilingual)
-                    } label: {
-                        Image(systemName: rc.variant == .bilingual ? "character.bubble.fill" : "character.bubble")
-                            .foregroundStyle(rc.variant == .bilingual ? .blue : .primary)
-                    }
 
-                    Button {
-                        toggleNarration()
-                    } label: {
-                        Image(systemName: narrator.state != .idle && narrator.docId == docId ? "waveform.circle.fill" : "headphones")
-                            .foregroundStyle(narrator.state != .idle && narrator.docId == docId ? .purple : .primary)
-                    }
-
-                    Button {
-                        showCopilotSheet = true
-                    } label: {
-                        Image(systemName: "sparkles")
-                            .foregroundStyle(.purple)
-                    }
-
-                    Menu {
-                        Section(L("视图切换")) {
-                            Button { viewMode = 0 } label: { Label(L("仅看 PDF"), systemImage: viewMode == 0 ? "checkmark" : "doc.richtext") }
-                            Button { viewMode = 1 } label: { Label(L("PDF + 脑图分屏"), systemImage: viewMode == 1 ? "checkmark" : "rectangle.split.2x1") }
-                            Button { viewMode = 2 } label: { Label(L("仅看脑图"), systemImage: viewMode == 2 ? "checkmark" : "point.3.connected.trianglepath.dotted") }
-                        }
-                        Section(L("阅读状态标签")) {
-                            ForEach(DocStatusTag.allCases) { st in
-                                Button {
-                                    store.setStatusTag(docId, doc?.statusTag == st ? nil : st)
-                                } label: {
-                                    Label(st.rawValue, systemImage: doc?.statusTag == st ? "checkmark.circle.fill" : st.icon)
-                                }
-                            }
-                        }
-                        if rc.variant == .bilingual, let ses = session {
-                            Section(L("双语对照")) {
-                                Button {
-                                    ses.translateWholeDocument(from: rc.currentPageIndex)
-                                } label: {
-                                    Label(L("全文翻译"), systemImage: "character.bubble")
-                                }
-                                Button {
-                                    Task { await ses.retranslate(rc.currentPageIndex) }
-                                } label: {
-                                    Label(L("重新翻译本页"), systemImage: "arrow.clockwise")
-                                }
-                            }
-                        }
-                        if let ses = session {
-                            Section(L("PDF 页面编辑")) {
-                                Button {
-                                    let box = ses.original.safePage(rc.currentPageIndex)?.bounds(for: .cropBox) ?? CGRect(x: 0, y: 0, width: 600, height: 800)
-                                    _ = PDFEditor.truncateFromHereToEnd(session: ses, pageIndex: rc.currentPageIndex, origY: box.midY)
-                                } label: {
-                                    Label(L("从本页中部截断后续内容"), systemImage: "scissors")
-                                }
-                                if ses.pageCount > 1 {
-                                    Button(role: .destructive) {
-                                        _ = PDFEditor.deletePage(session: ses, pageIndex: rc.currentPageIndex)
-                                    } label: {
-                                        Label(L("删除当前页"), systemImage: "trash")
-                                    }
-                                    if rc.currentPageIndex + 1 < ses.pageCount {
-                                        Button(role: .destructive) {
-                                            _ = PDFEditor.deletePagesAfter(session: ses, pageIndex: rc.currentPageIndex)
-                                        } label: {
-                                            Label(L("删除本页之后的全部页面"), systemImage: "arrow.down.to.line")
-                                        }
-                                    }
-                                }
-                                if PDFEditor.hasBackup(docId) {
-                                    Button {
-                                        _ = PDFEditor.restoreOriginal(session: ses)
-                                    } label: {
-                                        Label(L("恢复未裁剪的原版 PDF"), systemImage: "arrow.uturn.backward")
-                                    }
-                                }
-                            }
-                        }
-                        Section(L("学习工具")) {
-                            Button { showOutlineSheet = true } label: { Label(L("目录与摘录卡片"), systemImage: "list.bullet.indent") }
-                            Button { showFlashcardsSheet = true } label: { Label(L("AI 学习闪卡"), systemImage: "rectangle.on.rectangle.angled") }
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
+                        bottomReaderControlBar
                     }
                 }
             }
+            .toolbar(.hidden, for: .navigationBar)
             .onAppear {
                 rc.bind(docId: docId)
                 DocWindows.shared.activeDocId = docId
+                if ProcessInfo.processInfo.arguments.contains("--narrate") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                        if narrator.state == .idle {
+                            toggleNarration()
+                        }
+                    }
+                }
             }
             .sheet(isPresented: $showCopilotSheet) {
                 iOSCopilotSheet(store: store, rc: rc, docId: docId)
+                    .preferredColorScheme(themeCenter.colorScheme)
             }
             .sheet(isPresented: $showOutlineSheet) {
                 iOSOutlineAndCardsSheet(store: store, rc: rc, docId: docId)
+                    .preferredColorScheme(themeCenter.colorScheme)
             }
             .sheet(isPresented: $showFlashcardsSheet) {
                 NavigationStack {
@@ -801,16 +776,204 @@ struct iOSDocumentStudyView: View {
                             }
                         }
                 }
+                .preferredColorScheme(themeCenter.colorScheme)
             }
+        }
+    }
+
+    private var topReaderControlBar: some View {
+        HStack(spacing: 8) {
+            Button {
+                onClose()
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(MN.ink.opacity(0.85))
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(L("书架"))
+
+            Text(doc?.title ?? "")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(MN.ink.opacity(0.75))
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            Spacer(minLength: 6)
+
+            HStack(spacing: 6) {
+                Button {
+                    rc.setVariant(rc.variant == .bilingual ? .original : .bilingual)
+                } label: {
+                    let isBi = rc.variant == .bilingual
+                    Image(systemName: "translate")
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundStyle(isBi ? MN.accent : MN.ink.opacity(0.8))
+                        .frame(width: 28, height: 28)
+                        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(isBi ? MN.accent.opacity(0.15) : Color.clear))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(L("双语"))
+
+                Button {
+                    toggleNarration()
+                } label: {
+                    let isPlaying = narrator.state != .idle && narrator.docId == docId
+                    Image(systemName: isPlaying ? "waveform" : "headphones")
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundStyle(isPlaying ? MN.accent : MN.ink.opacity(0.8))
+                        .frame(width: 28, height: 28)
+                        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(isPlaying ? MN.accent.opacity(0.15) : Color.clear))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(L("AI 解读"))
+
+                Button {
+                    showCopilotSheet = true
+                } label: {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundStyle(MN.ink.opacity(0.8))
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(L("AI 阅读助手"))
+
+                Menu {
+                    Section(L("界面主题")) {
+                        ForEach(AppTheme.allCases) { t in
+                            Button {
+                                themeCenter.set(t)
+                            } label: {
+                                if themeCenter.theme == t {
+                                    Label(t.name, systemImage: "checkmark")
+                                } else {
+                                    Text(t.name)
+                                }
+                            }
+                        }
+                    }
+                    Section(L("视图切换")) {
+                        Button { viewMode = 0 } label: { Label(L("仅看 PDF"), systemImage: viewMode == 0 ? "checkmark" : "doc.richtext") }
+                        Button { viewMode = 1 } label: { Label(L("PDF + 脑图分屏"), systemImage: viewMode == 1 ? "checkmark" : "rectangle.split.2x1") }
+                        Button { viewMode = 2 } label: { Label(L("仅看脑图"), systemImage: viewMode == 2 ? "checkmark" : "point.3.connected.trianglepath.dotted") }
+                    }
+                    Section(L("阅读状态标签")) {
+                        ForEach(DocStatusTag.allCases) { st in
+                            Button {
+                                store.setStatusTag(docId, doc?.statusTag == st ? nil : st)
+                            } label: {
+                                Label(st.rawValue, systemImage: doc?.statusTag == st ? "checkmark.circle.fill" : st.icon)
+                            }
+                        }
+                    }
+                    if rc.variant == .bilingual, let ses = session {
+                        Section(L("双语对照")) {
+                            Button {
+                                ses.translateWholeDocument(from: rc.currentPageIndex)
+                            } label: {
+                                Label(L("全文翻译"), systemImage: "translate")
+                            }
+                            Button {
+                                Task { await ses.retranslate(rc.currentPageIndex) }
+                            } label: {
+                                Label(L("重新翻译本页"), systemImage: "arrow.clockwise")
+                            }
+                        }
+                    }
+                    if let ses = session {
+                        Section(L("PDF 页面编辑")) {
+                            Button {
+                                let box = ses.original.safePage(rc.currentPageIndex)?.bounds(for: .cropBox) ?? CGRect(x: 0, y: 0, width: 600, height: 800)
+                                _ = PDFEditor.truncateFromHereToEnd(session: ses, pageIndex: rc.currentPageIndex, origY: box.midY)
+                            } label: {
+                                Label(L("从本页中部截断后续内容"), systemImage: "scissors")
+                            }
+                            if ses.pageCount > 1 {
+                                Button(role: .destructive) {
+                                    _ = PDFEditor.deletePage(session: ses, pageIndex: rc.currentPageIndex)
+                                } label: {
+                                    Label(L("删除当前页"), systemImage: "trash")
+                                }
+                                if rc.currentPageIndex + 1 < ses.pageCount {
+                                    Button(role: .destructive) {
+                                        _ = PDFEditor.deletePagesAfter(session: ses, pageIndex: rc.currentPageIndex)
+                                    } label: {
+                                        Label(L("删除本页之后的全部页面"), systemImage: "arrow.down.to.line")
+                                    }
+                                }
+                            }
+                            if PDFEditor.hasBackup(docId) {
+                                Button {
+                                    _ = PDFEditor.restoreOriginal(session: ses)
+                                } label: {
+                                    Label(L("恢复未裁剪的原版 PDF"), systemImage: "arrow.uturn.backward")
+                                }
+                            }
+                        }
+                    }
+                    Section(L("学习工具")) {
+                        Button { showOutlineSheet = true } label: { Label(L("目录与摘录卡片"), systemImage: "list.bullet.indent") }
+                        Button { showFlashcardsSheet = true } label: { Label(L("AI 学习闪卡"), systemImage: "rectangle.on.rectangle.angled") }
+                    }
+                    if let ses = session {
+                        Section(L("AI 语音解读")) {
+                            Button {
+                                let curPage = rc.syncCurrentPageFromView()
+                                narrator.start(docId: docId, doc: ses.document(rc.variant), title: ses.doc.title, from: curPage, resume: false)
+                            } label: {
+                                Label(LF("从当前页开始讲 (p.%d)", rc.currentPageIndex + 1), systemImage: "text.line.first.and.arrowtriangle.forward")
+                            }
+                            if let saved = Narrator.savedProgress(docId), (saved.page > 0 || saved.seg > 0) {
+                                Button {
+                                    narrator.start(docId: docId, doc: ses.document(rc.variant), title: ses.doc.title, from: saved.page, resume: true)
+                                } label: {
+                                    Label(LF("继续上次讲解 (p.%d · 第 %d 段)", saved.page + 1, saved.seg + 1), systemImage: "play.circle")
+                                }
+                            }
+                            if narrator.state != .idle && narrator.docId == docId {
+                                Button(role: .destructive) {
+                                    narrator.stop()
+                                    rc.clearNarrationHighlight()
+                                } label: {
+                                    Label(L("退出 AI 解读"), systemImage: "stop.circle")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundStyle(MN.ink.opacity(0.8))
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 36)
+        .background(MN.status)
+        .overlay(alignment: .bottom) {
+            Divider()
         }
     }
 
     private func toggleNarration() {
         guard let ses = session else { return }
+        let curPage = rc.syncCurrentPageFromView()
         if narrator.state != .idle && narrator.docId == docId {
-            narrator.togglePause()
+            if curPage != narrator.page {
+                narrator.narrateFromReaderPage()
+            } else {
+                narrator.togglePause()
+            }
         } else {
-            narrator.start(docId: docId, doc: ses.document(rc.variant), title: ses.doc.title, from: rc.currentPageIndex)
+            narrator.start(docId: docId, doc: ses.document(rc.variant), title: ses.doc.title, from: curPage)
         }
     }
 
@@ -826,6 +989,7 @@ struct iOSDocumentStudyView: View {
 
             Text("p.\(rc.currentPageIndex + 1) / \(max(1, rc.pageCount))")
                 .font(.caption.monospacedDigit().weight(.semibold))
+                .foregroundStyle(MN.ink)
 
             Button {
                 rc.goToPage(rc.currentPageIndex + 1)
@@ -842,7 +1006,7 @@ struct iOSDocumentStudyView: View {
                 }
                 Text(ses.progressText.isEmpty ? L("双语") : ses.progressText)
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(MN.statusText)
                     .lineLimit(1)
             }
 
@@ -858,36 +1022,89 @@ struct iOSDocumentStudyView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(.ultraThinMaterial)
+        .background(MN.status)
+        .overlay(alignment: .top) {
+            Divider()
+        }
     }
 }
 
 // MARK: - PDFKit UIViewRepresentable & Floating Reader Bars
 
+struct iOSThemedPDFView: View {
+    @ObservedObject var store: Store
+    @ObservedObject var rc: ReaderController
+    let session: DocSession?
+    let theme: AppTheme
+
+    var body: some View {
+        ZStack {
+            iOSPDFContainerView(store: store, rc: rc, session: session, theme: theme)
+            if theme == .sepia {
+                Color(red: 0.97, green: 0.91, blue: 0.80)
+                    .blendMode(.multiply)
+                    .allowsHitTesting(false)
+            } else if theme == .dark {
+                Color(white: 0.92)
+                    .blendMode(.difference)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+}
+
+final class iOSPDFHostView: UIView {
+    weak var rc: ReaderController?
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if bounds.width > 10 && bounds.height > 10 {
+            rc?.applyPendingInitialPageIfNeeded()
+        }
+    }
+}
+
 struct iOSPDFContainerView: UIViewRepresentable {
     @ObservedObject var store: Store
     @ObservedObject var rc: ReaderController
     let session: DocSession?
+    let theme: AppTheme
 
-    func makeUIView(context: Context) -> UIView {
-        let container = UIView()
-        container.backgroundColor = UIColor.systemGroupedBackground
+    private var preBlendBackgroundColor: UIColor {
+        switch theme {
+        case .light:
+            return MN.paperNS
+        case .sepia:
+            return UIColor(srgbRed: 0.93, green: 0.93, blue: 0.92, alpha: 1)
+        case .dark:
+            return UIColor(calibratedWhite: 0.98, alpha: 1)
+        }
+    }
+
+    func makeUIView(context: Context) -> iOSPDFHostView {
+        let container = iOSPDFHostView()
+        container.rc = rc
+        let bg = preBlendBackgroundColor
+        container.backgroundColor = bg
+        rc.view.backgroundColor = bg
+        for sub in rc.view.subviews { sub.backgroundColor = bg }
         rc.view.frame = container.bounds
         rc.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         container.addSubview(rc.view)
         return container
     }
 
-    func updateUIView(_ uiView: UIView, context: Context) {
+    func updateUIView(_ uiView: iOSPDFHostView, context: Context) {
+        uiView.rc = rc
+        let bg = preBlendBackgroundColor
+        uiView.backgroundColor = bg
+        rc.view.backgroundColor = bg
+        for sub in rc.view.subviews { sub.backgroundColor = bg }
         guard let session else { return }
-        let targetDoc = session.document(rc.variant)
-        if rc.view.document !== targetDoc {
-            let savedPage = rc.currentPageIndex
-            rc.view.document = targetDoc
-            rc.view.autoScales = true
-            if let pg = targetDoc.safePage(savedPage) {
-                rc.view.go(to: pg)
-            }
+        if rc.docId != session.doc.id {
+            rc.bind(docId: session.doc.id)
+        } else {
+            rc.applyPendingInitialPageIfNeeded()
         }
     }
 }
@@ -927,19 +1144,21 @@ struct iOSSelectionExcerptBar: View {
                 .font(.caption.weight(.semibold))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(Capsule().fill(Color.purple))
+                .background(Capsule().fill(MN.accent))
                 .foregroundStyle(.white)
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(Capsule().fill(.regularMaterial).shadow(color: .black.opacity(0.18), radius: 8, y: 3))
+        .background(Capsule().fill(MN.panel).shadow(color: .black.opacity(0.18), radius: 8, y: 3))
     }
 }
 
 struct iOSNarratorBar: View {
     @ObservedObject var narrator: Narrator
     @ObservedObject var rc: ReaderController
+    @ObservedObject private var themeCenter = iOSThemeCenter.shared
+    @Environment(\.colorScheme) private var colorScheme
 
     private var currentSubtitle: String {
         if narrator.listening {
@@ -960,48 +1179,170 @@ struct iOSNarratorBar: View {
         return L("AI 语音解读中…")
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(currentSubtitle)
-                .font(.footnote)
-                .lineLimit(3)
-                .frame(maxWidth: .infinity, alignment: .leading)
+    private var cardSurfaceColor: Color {
+        switch themeCenter.theme {
+        case .dark:
+            return Color(red: 0.13, green: 0.15, blue: 0.20)
+        case .sepia:
+            return Color(red: 0.95, green: 0.90, blue: 0.80)
+        case .light:
+            return Color(red: 0.96, green: 0.975, blue: 1.0)
+        }
+    }
 
-            if let err = narrator.error, !err.isEmpty {
-                Text(err)
-                    .font(.caption2)
-                    .foregroundStyle(.red)
-                    .lineLimit(1)
+    private var subtitleBoxColor: Color {
+        switch themeCenter.theme {
+        case .dark:
+            return Color.white.opacity(0.06)
+        case .sepia:
+            return Color(red: 0.985, green: 0.96, blue: 0.90)
+        case .light:
+            return Color.white
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Row 1: Header with AI badge, page/segment counter, "From here" action, and Close button
+            HStack(spacing: 8) {
+                HStack(spacing: 5) {
+                    Image(systemName: "waveform")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 20, height: 20)
+                        .background(Circle().fill(MN.accent))
+
+                    Text("p.\(narrator.page + 1) · \(narrator.segIndex + 1)/\(max(1, narrator.segments.count))")
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+
+                Spacer(minLength: 4)
+
+                Button {
+                    _ = rc.syncCurrentPageFromView()
+                    if rc.currentPageIndex != narrator.page {
+                        narrator.narrateFromReaderPage()
+                    } else {
+                        narrator.restartFromCurrentPage()
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "text.line.first.and.arrowtriangle.forward")
+                            .font(.caption2.weight(.bold))
+                        Text(rc.currentPageIndex != narrator.page
+                             ? LF("从第 %d 页讲", rc.currentPageIndex + 1)
+                             : L("从本页讲"))
+                            .font(.caption.weight(.semibold))
+                            .lineLimit(1)
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(MN.accent.opacity(0.14)))
+                    .overlay(Capsule().stroke(MN.accent.opacity(0.3), lineWidth: 0.8))
+                    .foregroundStyle(MN.accent)
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    narrator.stop()
+                    rc.clearNarrationHighlight()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
             }
 
-            HStack(spacing: 14) {
+            if let r = narrator.resumedFrom, r.page == narrator.page {
                 Button {
-                    narrator.previous()
+                    narrator.restartFromCurrentPage()
                 } label: {
-                    Image(systemName: "backward.fill")
-                }
-
-                Button {
-                    narrator.togglePause()
-                } label: {
-                    if narrator.state == .preparing {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Image(systemName: narrator.state == .playing ? "pause.circle.fill" : "play.circle.fill")
-                            .font(.title2)
-                            .foregroundStyle(.purple)
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.counterclockwise")
+                        Text(LF("已从第 %d 页第 %d 段继续 · 点击从本页开头重新讲", r.page + 1, r.seg + 1))
+                            .lineLimit(1)
                     }
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(MN.accent)
                 }
+                .buttonStyle(.plain)
+            }
 
-                Button {
-                    narrator.next()
-                } label: {
-                    Image(systemName: "forward.fill")
+            // Row 2: Elevated inner subtitle box for clear reading hierarchy
+            VStack(alignment: .leading, spacing: 4) {
+                Text(currentSubtitle)
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(Color.primary)
+                    .lineLimit(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if let err = narrator.error, !err.isEmpty {
+                    Text(err)
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                        .lineLimit(1)
                 }
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(subtitleBoxColor)
+                    .shadow(color: .black.opacity(colorScheme == .dark ? 0.2 : 0.05), radius: 3, y: 1)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(MN.accent.opacity(0.16), lineWidth: 1)
+            )
 
-                Text("p.\(narrator.page + 1) · \(narrator.segIndex + 1)/\(max(1, narrator.segments.count))")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
+            // Row 3: Spacious Transport & Voice Controls
+            HStack(spacing: 16) {
+                HStack(spacing: 18) {
+                    Button {
+                        narrator.previous()
+                    } label: {
+                        Image(systemName: "backward.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .frame(width: 32, height: 32)
+                            .background(Circle().fill(Color.primary.opacity(0.07)))
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        narrator.togglePause()
+                    } label: {
+                        if narrator.state == .preparing {
+                            ProgressView()
+                                .controlSize(.small)
+                                .frame(width: 38, height: 38)
+                                .background(Circle().fill(MN.accent.opacity(0.14)))
+                        } else {
+                            Image(systemName: narrator.state == .playing ? "pause.fill" : "play.fill")
+                                .font(.callout.weight(.bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 38, height: 38)
+                                .background(Circle().fill(MN.accent).shadow(color: MN.accent.opacity(0.35), radius: 5, y: 2))
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        narrator.next()
+                    } label: {
+                        Image(systemName: "forward.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .frame(width: 32, height: 32)
+                            .background(Circle().fill(Color.primary.opacity(0.07)))
+                    }
+                    .buttonStyle(.plain)
+                }
 
                 Spacer()
 
@@ -1021,10 +1362,11 @@ struct iOSNarratorBar: View {
                 } label: {
                     Text(String(format: "%.2gx", narrator.rate))
                         .font(.caption.monospacedDigit().weight(.bold))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(Color.purple.opacity(0.15)))
-                        .foregroundStyle(.purple)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(MN.accent.opacity(0.14)))
+                        .foregroundStyle(MN.accent)
                 }
 
                 Button {
@@ -1034,22 +1376,33 @@ struct iOSNarratorBar: View {
                         narrator.beginQuestion()
                     }
                 } label: {
-                    Image(systemName: narrator.listening ? "mic.fill" : "mic")
-                        .foregroundStyle(narrator.listening ? .red : .primary)
-                        .padding(6)
-                        .background(Circle().fill(narrator.listening ? Color.red.opacity(0.15) : Color.secondary.opacity(0.12)))
+                    HStack(spacing: 4) {
+                        Image(systemName: narrator.listening ? "mic.fill" : "mic")
+                            .font(.caption.weight(.bold))
+                        Text(narrator.listening ? L("松开发送") : L("提问"))
+                            .font(.caption.weight(.semibold))
+                            .lineLimit(1)
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+                    .foregroundStyle(narrator.listening ? .white : MN.accent)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(narrator.listening ? Color.red : MN.accent.opacity(0.14)))
                 }
-
-                Button {
-                    narrator.stop()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                }
+                .buttonStyle(.plain)
             }
         }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 16).fill(.regularMaterial).shadow(color: .black.opacity(0.15), radius: 10, y: 4))
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(cardSurfaceColor)
+                .shadow(color: .black.opacity(colorScheme == .dark ? 0.45 : 0.18), radius: 18, y: 6)
+                .shadow(color: MN.accent.opacity(0.12), radius: 4, y: 1)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(MN.accent.opacity(colorScheme == .dark ? 0.45 : 0.35), lineWidth: 1.5)
+        )
     }
 }
 
@@ -1151,6 +1504,7 @@ struct iOSOutlineAndCardsSheet: View {
                     }
                 }
             }
+            .background(MN.shelf)
             .navigationTitle(L("目录与卡片"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1273,12 +1627,14 @@ struct iOSFlashcardsTabView: View {
                                                     .font(.caption2.monospacedDigit().weight(.bold))
                                                     .padding(.horizontal, 5)
                                                     .padding(.vertical, 1)
-                                                    .background(Capsule().fill(active ? Color.white.opacity(0.24) : Color.purple.opacity(0.15)))
+                                                    .background(Capsule().fill(active ? Color.white.opacity(0.22) : MN.accent.opacity(0.12)))
+                                                    .foregroundStyle(active ? Color.white : MN.accent)
                                             }
                                         }
                                         .padding(.horizontal, 12)
                                         .padding(.vertical, 7)
-                                        .background(Capsule().fill(active ? Color.purple : Color(uiColor: .secondarySystemGroupedBackground)))
+                                        .background(Capsule().fill(active ? MN.accent : MN.panel))
+                                        .overlay(Capsule().stroke(active ? Color.clear : Color.primary.opacity(0.06), lineWidth: 0.6))
                                         .foregroundStyle(active ? Color.white : Color.primary)
                                     }
                                     .buttonStyle(.plain)
@@ -1287,7 +1643,7 @@ struct iOSFlashcardsTabView: View {
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
                         }
-                        .background(Color(uiColor: .systemGroupedBackground))
+                        .background(MN.shelf)
 
                         Divider()
 
@@ -1304,6 +1660,7 @@ struct iOSFlashcardsTabView: View {
                     }
                 }
             }
+            .background(MN.shelf)
             .navigationTitle(L("AI 学习闪卡"))
             .navigationBarTitleDisplayMode(.inline)
         }
@@ -1324,7 +1681,7 @@ struct iOSMobileFlashcardsContent: View {
 
     var body: some View {
         ZStack {
-            Color(uiColor: .systemGroupedBackground).ignoresSafeArea()
+            MN.shelf.ignoresSafeArea()
             if let di = selectedDeckIndex, di < decks.count {
                 iOSMobileDeckStudyView(
                     docId: docId,
@@ -1342,9 +1699,14 @@ struct iOSMobileFlashcardsContent: View {
                         generatorCard
                         if decks.isEmpty && !fs.generating {
                             VStack(spacing: 12) {
-                                Image(systemName: "rectangle.stack.badge.sparkles")
-                                    .font(.system(size: 38))
-                                    .foregroundStyle(LinearGradient(colors: [.purple, .blue], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                ZStack {
+                                    Circle()
+                                        .fill(MN.accent.opacity(0.10))
+                                        .frame(width: 56, height: 56)
+                                    Image(systemName: "rectangle.on.rectangle.angled")
+                                        .font(.system(size: 24, weight: .semibold))
+                                        .foregroundStyle(MN.accent)
+                                }
                                 Text(L("还没有卡组。生成后可以像翻卡片一样自测，标记「记住了 / 再看看」，进度会保存。"))
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
@@ -1353,20 +1715,23 @@ struct iOSMobileFlashcardsContent: View {
                             }
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 36)
-                            .background(RoundedRectangle(cornerRadius: 16).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+                            .background(RoundedRectangle(cornerRadius: 14).fill(MN.panel))
+                            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.06), lineWidth: 0.6))
                         } else {
                             VStack(spacing: 12) {
                                 ForEach(Array(decks.enumerated()), id: \.offset) { i, d in
                                     let known = d.cards.filter { $0.status == 2 }.count
+                                    let allMastered = known == d.cards.count && !d.cards.isEmpty
                                     Button {
                                         withAnimation(.easeInOut(duration: 0.2)) {
                                             selectedDeckIndex = i
                                         }
                                     } label: {
                                         VStack(alignment: .leading, spacing: 10) {
-                                            HStack {
+                                            HStack(spacing: 8) {
                                                 Image(systemName: "rectangle.stack.fill")
-                                                    .foregroundStyle(LinearGradient(colors: [.purple, .blue], startPoint: .top, endPoint: .bottom))
+                                                    .font(.subheadline)
+                                                    .foregroundStyle(MN.accent)
                                                 Text(d.title)
                                                     .font(.subheadline.weight(.semibold))
                                                     .foregroundStyle(.primary)
@@ -1383,13 +1748,14 @@ struct iOSMobileFlashcardsContent: View {
                                                 Spacer()
                                                 Text(LF("已掌握 %d/%d", known, d.cards.count))
                                                     .font(.caption.monospacedDigit().weight(.medium))
-                                                    .foregroundStyle(known == d.cards.count && !d.cards.isEmpty ? .green : .secondary)
+                                                    .foregroundStyle(allMastered ? .green : MN.accent)
                                             }
                                             ProgressView(value: Double(known), total: Double(max(1, d.cards.count)))
-                                                .tint(.green)
+                                                .tint(allMastered ? .green : MN.accent)
                                         }
                                         .padding(14)
-                                        .background(RoundedRectangle(cornerRadius: 14).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+                                        .background(RoundedRectangle(cornerRadius: 14).fill(MN.panel))
+                                        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.06), lineWidth: 0.6))
                                     }
                                     .buttonStyle(.plain)
                                     .contextMenu {
@@ -1410,8 +1776,13 @@ struct iOSMobileFlashcardsContent: View {
     private var generatorCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label(L("生成新卡组"), systemImage: "sparkles")
-                    .font(.subheadline.weight(.semibold))
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles")
+                        .foregroundStyle(MN.accent)
+                    Text(L("生成新卡组"))
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                }
                 Spacer()
                 HStack(spacing: 8) {
                     Button {
@@ -1427,7 +1798,7 @@ struct iOSMobileFlashcardsContent: View {
                         if count < 30 { count += 1 }
                     } label: {
                         Image(systemName: "plus.circle.fill")
-                            .foregroundStyle(.purple)
+                            .foregroundStyle(MN.accent)
                     }
                 }
             }
@@ -1456,7 +1827,7 @@ struct iOSMobileFlashcardsContent: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 11)
-                .background(RoundedRectangle(cornerRadius: 12).fill(LinearGradient(colors: [.purple, .blue], startPoint: .leading, endPoint: .trailing)))
+                .background(RoundedRectangle(cornerRadius: 12).fill(MN.accent))
                 .foregroundStyle(.white)
             }
             .disabled(fs.generating)
@@ -1468,7 +1839,8 @@ struct iOSMobileFlashcardsContent: View {
             }
         }
         .padding(14)
-        .background(RoundedRectangle(cornerRadius: 16).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+        .background(RoundedRectangle(cornerRadius: 14).fill(MN.panel))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.06), lineWidth: 0.6))
     }
 }
 
@@ -1490,10 +1862,10 @@ struct iOSMobileDeckStudyView: View {
 
     private func kindColor(_ kind: String) -> Color {
         switch kind {
-        case "概念": return .blue
+        case "概念": return MN.accent
         case "应用": return .orange
         case "数据": return .teal
-        default: return .purple
+        default: return MN.accent
         }
     }
 
@@ -1508,6 +1880,7 @@ struct iOSMobileDeckStudyView: View {
                         Text(L("全部卡组"))
                     }
                     .font(.subheadline.weight(.medium))
+                    .foregroundStyle(MN.accent)
                 }
                 Spacer()
                 Button {
@@ -1518,7 +1891,8 @@ struct iOSMobileDeckStudyView: View {
                         .font(.caption.weight(.semibold))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
-                        .background(Capsule().fill(onlyReview ? Color.purple : Color(uiColor: .secondarySystemGroupedBackground)))
+                        .background(Capsule().fill(onlyReview ? MN.accent : MN.panel))
+                        .overlay(Capsule().stroke(onlyReview ? Color.clear : Color.primary.opacity(0.08), lineWidth: 0.6))
                         .foregroundStyle(onlyReview ? Color.white : Color.primary)
                 }
                 Button {
@@ -1528,8 +1902,10 @@ struct iOSMobileDeckStudyView: View {
                 } label: {
                     Image(systemName: "shuffle")
                         .font(.subheadline)
+                        .foregroundStyle(.secondary)
                         .padding(7)
-                        .background(Circle().fill(Color(uiColor: .secondarySystemGroupedBackground)))
+                        .background(Circle().fill(MN.panel))
+                        .overlay(Circle().stroke(Color.primary.opacity(0.08), lineWidth: 0.6))
                 }
             }
 
@@ -1538,7 +1914,7 @@ struct iOSMobileDeckStudyView: View {
                 VStack(spacing: 12) {
                     Image(systemName: "checkmark.seal.fill")
                         .font(.system(size: 48))
-                        .foregroundStyle(.green)
+                        .foregroundStyle(MN.accent)
                     Text(L("全部掌握了！"))
                         .font(.title3.weight(.semibold))
                     Button(L("重新学习全部")) {
@@ -1546,7 +1922,7 @@ struct iOSMobileDeckStudyView: View {
                         reset()
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(.purple)
+                    .tint(MN.accent)
                 }
                 Spacer()
             } else if pos >= cards.count {
@@ -1555,7 +1931,7 @@ struct iOSMobileDeckStudyView: View {
                 VStack(spacing: 14) {
                     Image(systemName: "flag.checkered")
                         .font(.system(size: 44))
-                        .foregroundStyle(.purple)
+                        .foregroundStyle(MN.accent)
                     Text(L("本轮完成"))
                         .font(.title3.weight(.semibold))
                     Text(LF("已掌握 %d/%d", known, deck.cards.count))
@@ -1567,7 +1943,7 @@ struct iOSMobileDeckStudyView: View {
                             reset()
                         }
                         .buttonStyle(.borderedProminent)
-                        .tint(.purple)
+                        .tint(MN.accent)
 
                         Button(L("再来一遍")) {
                             reset()
@@ -1583,7 +1959,7 @@ struct iOSMobileDeckStudyView: View {
                         .font(.caption.monospacedDigit().weight(.semibold))
                         .foregroundStyle(.secondary)
                     ProgressView(value: Double(pos + 1), total: Double(max(1, cards.count)))
-                        .tint(.purple)
+                        .tint(MN.accent)
                 }
 
                 // 3D Flip Flashcard
@@ -1610,7 +1986,8 @@ struct iOSMobileDeckStudyView: View {
                         Image(systemName: "chevron.left")
                             .font(.subheadline.weight(.bold))
                             .frame(width: 42, height: 44)
-                            .background(RoundedRectangle(cornerRadius: 12).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+                            .background(RoundedRectangle(cornerRadius: 12).fill(MN.panel))
+                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08), lineWidth: 0.6))
                     }
                     .disabled(pos == 0)
 
@@ -1621,7 +1998,8 @@ struct iOSMobileDeckStudyView: View {
                             Label(L("再看看"), systemImage: "arrow.counterclockwise")
                                 .font(.subheadline.weight(.semibold))
                                 .frame(maxWidth: .infinity, minHeight: 44)
-                                .background(RoundedRectangle(cornerRadius: 12).fill(Color.orange.opacity(0.18)))
+                                .background(RoundedRectangle(cornerRadius: 12).fill(Color.orange.opacity(0.14)))
+                                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.orange.opacity(0.28), lineWidth: 0.8))
                                 .foregroundStyle(.orange)
                         }
 
@@ -1631,7 +2009,7 @@ struct iOSMobileDeckStudyView: View {
                             Label(L("记住了"), systemImage: "checkmark")
                                 .font(.subheadline.weight(.semibold))
                                 .frame(maxWidth: .infinity, minHeight: 44)
-                                .background(RoundedRectangle(cornerRadius: 12).fill(Color.green))
+                                .background(RoundedRectangle(cornerRadius: 12).fill(MN.accent))
                                 .foregroundStyle(.white)
                         }
                     } else {
@@ -1643,7 +2021,7 @@ struct iOSMobileDeckStudyView: View {
                             Text(L("查看答案"))
                                 .font(.subheadline.weight(.semibold))
                                 .frame(maxWidth: .infinity, minHeight: 44)
-                                .background(RoundedRectangle(cornerRadius: 12).fill(Color.purple))
+                                .background(RoundedRectangle(cornerRadius: 12).fill(MN.accent))
                                 .foregroundStyle(.white)
                         }
                     }
@@ -1654,7 +2032,8 @@ struct iOSMobileDeckStudyView: View {
                         Image(systemName: "chevron.right")
                             .font(.subheadline.weight(.bold))
                             .frame(width: 42, height: 44)
-                            .background(RoundedRectangle(cornerRadius: 12).fill(Color(uiColor: .secondarySystemGroupedBackground)))
+                            .background(RoundedRectangle(cornerRadius: 12).fill(MN.panel))
+                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08), lineWidth: 0.6))
                     }
                 }
             }
@@ -1671,7 +2050,7 @@ struct iOSMobileDeckStudyView: View {
                     .font(.caption.weight(.bold))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .background(Capsule().fill(kCol.opacity(0.16)))
+                    .background(Capsule().fill(kCol.opacity(0.12)))
                     .foregroundStyle(kCol)
                 if let p = card.page {
                     Text("p.\(p)")
@@ -1681,6 +2060,9 @@ struct iOSMobileDeckStudyView: View {
                 Spacer()
                 Text(front ? L("问题") : L("答案"))
                     .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.primary.opacity(0.05)))
                     .foregroundStyle(.secondary)
             }
 
@@ -1716,13 +2098,13 @@ struct iOSMobileDeckStudyView: View {
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(Color(uiColor: .secondarySystemGroupedBackground))
-                .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
+            RoundedRectangle(cornerRadius: 18)
+                .fill(MN.panel)
+                .shadow(color: .black.opacity(0.05), radius: 8, y: 2)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 20)
-                .stroke(front ? Color.primary.opacity(0.08) : kCol.opacity(0.45), lineWidth: front ? 1 : 1.5)
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(front ? Color.primary.opacity(0.08) : MN.accent.opacity(0.32), lineWidth: front ? 0.8 : 1.2)
         )
     }
 
@@ -1751,6 +2133,8 @@ struct iOSSettingsView: View {
     @ObservedObject var store: Store
     @ObservedObject var cloud: CloudSync
     @ObservedObject var narrator = Narrator.shared
+    @ObservedObject var lang = LangCenter.shared
+    @ObservedObject var themeCenter = iOSThemeCenter.shared
 
     @State private var baseURL = Settings.baseURL
     @State private var apiKey = Settings.apiKey
@@ -1770,6 +2154,19 @@ struct iOSSettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section(L("外观与语言")) {
+                    Picker(L("语言"), selection: Binding(get: { lang.lang }, set: { lang.set($0) })) {
+                        ForEach(UILang.allCases) { l in
+                            Text(l.name).tag(l)
+                        }
+                    }
+                    Picker(L("界面主题"), selection: Binding(get: { themeCenter.theme }, set: { themeCenter.set($0) })) {
+                        ForEach(AppTheme.allCases) { t in
+                            Text(t.name).tag(t)
+                        }
+                    }
+                }
+
                 Section {
                     Toggle(L("启用 iCloud 多端自动同步"), isOn: $cloud.isEnabled)
                     HStack {
@@ -1790,13 +2187,13 @@ struct iOSSettingsView: View {
                     HStack {
                         Text(L("已同步内容"))
                         Spacer()
-                        Text("\(store.lib.docs.count) 篇文档 · \(store.lib.cards.count) 张摘录卡片 · \(store.lib.notebooks.count) 个笔记本")
+                        Text(LF("%d 篇文档 · %d 张摘录卡片 · %d 个笔记本", store.lib.docs.count, store.lib.cards.count, store.lib.notebooks.count))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Button {
                         saveSettings()
-                        cloud.syncNow()
+                        cloud.syncNow(silent: false)
                     } label: {
                         Label(L("立即与 Mac / iCloud 同步"), systemImage: "arrow.triangle.2.circlepath.icloud")
                     }
@@ -1908,6 +2305,8 @@ struct iOSSettingsView: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(MN.shelf)
             .navigationTitle(L("设置与同步"))
             .onAppear {
                 reloadFromSettings()

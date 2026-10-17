@@ -241,17 +241,48 @@ struct CopilotPanel: View {
                 Spacer()
             }
         }
-        .background(MN.panel)
+        .background(panelBackgroundColor)
+        .onAppear {
+            #if os(iOS)
+            if quote == nil, !rc.selectionText.isEmpty {
+                quote = rc.selectionText
+            }
+            #endif
+        }
         .onReceive(NotificationCenter.default.publisher(for: .copilotAsk)) { n in
             guard (n.object as? UUID) == rc.docId else { return }
             if let s = n.userInfo?["quote"] as? String { quote = s; inputFocus = true }
         }
     }
 
+    private var panelBackgroundColor: Color {
+        #if os(iOS)
+        return Color(uiColor: .systemGroupedBackground)
+        #else
+        return MN.panel
+        #endif
+    }
+
+    private var cardBackgroundColor: Color {
+        #if os(iOS)
+        return Color(uiColor: .secondarySystemGroupedBackground)
+        #else
+        return MN.t.isDark ? Color(white: 0.22) : Color.white
+        #endif
+    }
+
+    private var strokeBorderColor: Color {
+        #if os(iOS)
+        return Color(uiColor: .separator).opacity(0.45)
+        #else
+        return MN.t.isDark ? Color.white.opacity(0.14) : Color.black.opacity(0.1)
+        #endif
+    }
+
     var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: "sparkles").foregroundStyle(LinearGradient(colors: [.purple, .blue], startPoint: .topLeading, endPoint: .bottomTrailing))
-            Text(L("AI 助手")).font(.system(size: 13, weight: .semibold))
+            Image(systemName: "sparkles").foregroundStyle(MN.accent)
+            Text(L("AI 助手")).font(.system(size: 13, weight: .semibold)).foregroundStyle(Color.primary)
             Spacer()
             if cp.streaming != nil {
                 Button { cp.stop() } label: { Label(L("停止"), systemImage: "stop.circle") }.buttonStyle(.borderless).font(.system(size: 11))
@@ -259,20 +290,22 @@ struct CopilotPanel: View {
             Menu {
                 Button(L("清空对话"), role: .destructive) { if let id = docId { cp.clear(id) } }
             } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            #if os(macOS)
             Button { withAnimation(.easeInOut(duration: 0.2)) { open = false } } label: { Image(systemName: "sidebar.right") }
                 .buttonStyle(.borderless).help(L("收起 AI 助手"))
+            #endif
         }
         .padding(.horizontal, 12).frame(height: 36)
     }
 
     var welcome: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(L("我可以帮你读懂这份文档")).font(.system(size: 15, weight: .semibold))
+            Text(L("我可以帮你读懂这份文档")).font(.system(size: 15, weight: .semibold)).foregroundStyle(Color.primary)
             Text(L("· 总结当前页或整份文档\n· 在 PDF 中选中文字，点「问 AI」针对它提问\n· 直接问任何关于文档的问题，回答会标注页码\n\n所有对话都会保存在本文档中。"))
                 .font(.system(size: 12.5)).foregroundStyle(.secondary).lineSpacing(3)
         }
         .padding(14)
-        .background(RoundedRectangle(cornerRadius: 10).fill(LinearGradient(colors: [Color.purple.opacity(0.07), Color.blue.opacity(0.07)], startPoint: .topLeading, endPoint: .bottomTrailing)))
+        .background(RoundedRectangle(cornerRadius: 10).fill(MN.accent.opacity(0.08)))
     }
 
     var quickActions: some View {
@@ -292,32 +325,33 @@ struct CopilotPanel: View {
         VStack(alignment: .leading, spacing: 6) {
             if let q = quote {
                 HStack(alignment: .top, spacing: 6) {
-                    Rectangle().fill(Color.purple.opacity(0.6)).frame(width: 2.5)
+                    Rectangle().fill(MN.accent.opacity(0.6)).frame(width: 2.5)
                     Text(q).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(3)
                     Spacer()
                     Button { quote = nil } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }.buttonStyle(.plain)
                 }
                 .padding(8)
-                .background(RoundedRectangle(cornerRadius: 7).fill(Color.purple.opacity(0.06)))
+                .background(RoundedRectangle(cornerRadius: 7).fill(MN.accent.opacity(0.08)))
             }
             HStack(alignment: .bottom, spacing: 8) {
                 TextField(quote == nil ? L("问任何关于这份文档的问题…") : L("针对选中内容提问（留空则直接解释）"), text: $input, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
+                    .foregroundStyle(Color.primary)
                     .lineLimit(1...6)
                     .focused($inputFocus)
                     .onSubmit { send() }
                 Button(action: send) {
                     Image(systemName: "arrow.up.circle.fill").font(.system(size: 22))
-                        .foregroundStyle(canSend ? AnyShapeStyle(LinearGradient(colors: [.purple, .blue], startPoint: .top, endPoint: .bottom)) : AnyShapeStyle(Color.secondary.opacity(0.4)))
+                        .foregroundStyle(canSend ? AnyShapeStyle(MN.accent) : AnyShapeStyle(Color.secondary.opacity(0.4)))
                 }
                 .buttonStyle(.plain)
                 .disabled(!canSend)
                 .keyboardShortcut(.return, modifiers: .command)
             }
             .padding(10)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Color.white))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(inputFocus ? Color.purple.opacity(0.5) : Color.black.opacity(0.1), lineWidth: inputFocus ? 1.5 : 1))
+            .background(RoundedRectangle(cornerRadius: 10).fill(cardBackgroundColor))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(inputFocus ? MN.accent.opacity(0.6) : strokeBorderColor, lineWidth: inputFocus ? 1.5 : 1))
         }
         .padding(.horizontal, 12).padding(.bottom, 12)
     }
@@ -346,12 +380,33 @@ struct Chip: View {
     let text: String
     let action: () -> Void
     @State private var hover = false
+
+    private var fillBg: Color {
+        if hover { return MN.accent.opacity(0.14) }
+        #if os(iOS)
+        return Color(uiColor: .secondarySystemGroupedBackground)
+        #else
+        return MN.t.isDark ? Color(white: 0.22) : Color.white
+        #endif
+    }
+
+    private var strokeColor: Color {
+        #if os(iOS)
+        return Color(uiColor: .separator).opacity(0.45)
+        #else
+        return MN.t.isDark ? Color.white.opacity(0.14) : Color.black.opacity(0.1)
+        #endif
+    }
+
     var body: some View {
         Button(action: action) {
-            Label(text, systemImage: icon).font(.system(size: 11.5)).lineLimit(1)
+            Label(text, systemImage: icon)
+                .font(.system(size: 11.5))
+                .foregroundStyle(Color.primary)
+                .lineLimit(1)
                 .padding(.horizontal, 10).padding(.vertical, 5)
-                .background(Capsule().fill(hover ? Color.purple.opacity(0.12) : Color.white))
-                .overlay(Capsule().stroke(Color.black.opacity(0.1)))
+                .background(Capsule().fill(fillBg))
+                .overlay(Capsule().stroke(strokeColor))
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
@@ -364,19 +419,36 @@ struct MessageView: View {
     let onJump: (Int) -> Void
     @State private var hover = false
 
+    private var assistantTextColor: Color {
+        if message.failed { return .red }
+        #if os(iOS)
+        return Color(uiColor: .label)
+        #else
+        return MN.ink
+        #endif
+    }
+
+    private var assistantBubbleBg: Color {
+        #if os(iOS)
+        return Color(uiColor: .secondarySystemGroupedBackground)
+        #else
+        return Color.clear
+        #endif
+    }
+
     var body: some View {
         if message.role == .user {
             VStack(alignment: .trailing, spacing: 4) {
                 if let b = message.badge {
-                    Text(L(b)).font(.system(size: 10, weight: .medium)).foregroundStyle(.purple)
+                    Text(L(b)).font(.system(size: 10, weight: .medium)).foregroundStyle(MN.accent)
                 }
                 if let q = message.quote {
                     Text("「\(q)」").font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(4)
-                        .padding(8).background(RoundedRectangle(cornerRadius: 8).fill(Color.purple.opacity(0.06)))
+                        .padding(8).background(RoundedRectangle(cornerRadius: 8).fill(MN.accent.opacity(0.08)))
                 }
                 Text(message.text).font(.system(size: 13)).textSelection(.enabled)
                     .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(LinearGradient(colors: [Color(nsColor: NSColor(srgbRed: 0.44, green: 0.36, blue: 0.95, alpha: 1)), Color(nsColor: NSColor(srgbRed: 0.27, green: 0.47, blue: 0.98, alpha: 1))], startPoint: .topLeading, endPoint: .bottomTrailing)))
+                    .background(RoundedRectangle(cornerRadius: 12).fill(MN.accent))
                     .foregroundStyle(.white)
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
@@ -384,25 +456,30 @@ struct MessageView: View {
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
-                    Image(systemName: "sparkles").font(.system(size: 11)).foregroundStyle(.purple)
+                    Image(systemName: "sparkles").font(.system(size: 11)).foregroundStyle(MN.accent)
                     if streaming && message.text.isEmpty { TypingDots() }
                 }
                 if !message.text.isEmpty {
                     MarkdownText(message.text, onJump: onJump)
-                        .foregroundStyle(message.failed ? Color.red : Color(white: 0.12))
+                        .foregroundStyle(assistantTextColor)
                 }
                 if !streaming && !message.text.isEmpty {
-                    // always laid out (fixed height) and only faded in, so hovering never shifts the list
                     HStack(spacing: 10) {
                         Button { PlatformClipboard.copy(message.text) } label: { Label(L("复制"), systemImage: "doc.on.doc") }
                     }
                     .buttonStyle(.borderless).font(.system(size: 10.5)).foregroundStyle(.secondary)
                     .frame(height: 16)
+                    #if os(macOS)
                     .opacity(hover ? 1 : 0)
                     .animation(.easeInOut(duration: 0.12), value: hover)
                     .allowsHitTesting(hover)
+                    #endif
                 }
             }
+            #if os(iOS)
+            .padding(12)
+            .background(RoundedRectangle(cornerRadius: 12).fill(assistantBubbleBg))
+            #endif
             .frame(maxWidth: .infinity, alignment: .leading)
             .onHover { hover = $0 }
         }
@@ -414,7 +491,7 @@ struct TypingDots: View {
     var body: some View {
         HStack(spacing: 3) {
             ForEach(0..<3) { i in
-                Circle().fill(Color.purple.opacity(0.6)).frame(width: 5, height: 5)
+                Circle().fill(MN.accent.opacity(0.6)).frame(width: 5, height: 5)
                     .opacity(0.3 + 0.7 * max(0, sin(phase + Double(i) * 0.9)))
             }
         }
@@ -445,11 +522,15 @@ struct MarkdownText: View {
         let parts = s.components(separatedBy: "**")
         for (i, part) in parts.enumerated() {
             let linked = part.replacingOccurrences(of: "第\\s*(\\d+)\\s*页", with: "[第 $1 页](page://$1)", options: .regularExpression)
-            var a = (try? AttributedString(markdown: linked, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(part)
+            var a = (try? AttributedString(markdown: linked, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttStringFallback(part)
             if i % 2 == 1 && parts.count > 2 { a.inlinePresentationIntent = .stronglyEmphasized }
             out += a
         }
         return out
+    }
+
+    private func AttStringFallback(_ s: String) -> AttributedString {
+        AttributedString(s)
     }
 
     func blocks() -> [AnyView] {
@@ -458,7 +539,7 @@ struct MarkdownText: View {
         for raw in text.components(separatedBy: "\n") {
             let line = raw
             if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
-                if let c = code { out.append(AnyView(Text(c.joined(separator: "\n")).font(.system(size: 11.5, design: .monospaced)).textSelection(.enabled).padding(8).frame(maxWidth: .infinity, alignment: .leading).background(RoundedRectangle(cornerRadius: 6).fill(Color.black.opacity(0.05))))); code = nil }
+                if let c = code { out.append(AnyView(Text(c.joined(separator: "\n")).font(.system(size: 11.5, design: .monospaced)).textSelection(.enabled).padding(8).frame(maxWidth: .infinity, alignment: .leading).background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06))))); code = nil }
                 else { code = [] }
                 continue
             }
@@ -472,17 +553,17 @@ struct MarkdownText: View {
             } else if t.hasPrefix("- ") || t.hasPrefix("* ") || t.hasPrefix("• ") {
                 let indent = CGFloat(line.prefix(while: { $0 == " " }).count / 2) * 12
                 out.append(AnyView(HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("•").foregroundStyle(.purple)
+                    Text("•").foregroundStyle(MN.accent)
                     Text(inline(String(t.dropFirst(2)))).font(.system(size: 13)).lineSpacing(2).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 }.padding(.leading, indent)))
             } else if let r = t.range(of: "^\\d+[.)、]\\s*", options: .regularExpression) {
                 let num = t[r].trimmingCharacters(in: .whitespaces)
                 out.append(AnyView(HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(num).foregroundStyle(.purple).font(.system(size: 12.5, weight: .medium)).monospacedDigit()
+                    Text(num).foregroundStyle(MN.accent).font(.system(size: 12.5, weight: .medium)).monospacedDigit()
                     Text(inline(String(t[r.upperBound...]))).font(.system(size: 13)).lineSpacing(2).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 }))
             } else if t.hasPrefix(">") {
-                out.append(AnyView(HStack(spacing: 6) { Rectangle().fill(Color.purple.opacity(0.4)).frame(width: 2.5); Text(inline(String(t.dropFirst()).trimmingCharacters(in: .whitespaces))).font(.system(size: 12.5)).foregroundStyle(.secondary) }))
+                out.append(AnyView(HStack(spacing: 6) { Rectangle().fill(MN.accent.opacity(0.4)).frame(width: 2.5); Text(inline(String(t.dropFirst()).trimmingCharacters(in: .whitespaces))).font(.system(size: 12.5)).foregroundStyle(.secondary) }))
             } else {
                 out.append(AnyView(Text(inline(t)).font(.system(size: 13)).lineSpacing(2.5).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)))
             }

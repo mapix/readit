@@ -237,7 +237,14 @@ struct NodeView: View {
 
     var fill: Color {
         if let c = card { return Color(nsColor: cardFill(c.color)) }
-        return laid.depth == 0 ? Color(nsColor: NSColor(srgbRed: 0.86, green: 0.90, blue: 0.97, alpha: 1)) : Color.white
+        if MN.t.isDark {
+            return laid.depth == 0 ? MN.c(0.18, 0.24, 0.34) : MN.panel
+        }
+        return laid.depth == 0 ? Color(nsColor: NSColor(srgbRed: 0.86, green: 0.90, blue: 0.97, alpha: 1)) : MN.panel
+    }
+
+    private var nodeTextColor: Color {
+        card != nil ? Color(white: 0.1) : MN.ink
     }
 
     var body: some View {
@@ -246,13 +253,13 @@ struct NodeView: View {
             RoundedRectangle(cornerRadius: 6).fill(fill)
                 .shadow(color: .black.opacity(selected ? 0.2 : 0.1), radius: selected ? 3 : 1.2, y: 1)
             RoundedRectangle(cornerRadius: 6)
-                .stroke(isDrop || selected ? MN.accent : Color.black.opacity(0.1), lineWidth: isDrop || selected ? 2 : 0.6)
+                .stroke(isDrop || selected ? MN.accent : Color.primary.opacity(0.12), lineWidth: isDrop || selected ? 2 : 0.6)
             VStack(alignment: .leading, spacing: 3) {
                 if isEditing {
                     TextField(L("标题"), text: $draft, axis: .vertical)
                         .textFieldStyle(.plain)
                         .font(.system(size: laid.depth == 0 ? 15 : 13, weight: .semibold))
-                        .foregroundStyle(Color(white: 0.1))
+                        .foregroundStyle(nodeTextColor)
                         .focused($editing)
                         .onSubmit { commit() }
                         .onAppear { draft = node.title; editing = true }
@@ -260,7 +267,7 @@ struct NodeView: View {
                 } else if !node.title.isEmpty || card == nil {
                     Text(store.nodeTitle(node))
                         .font(.system(size: laid.depth == 0 ? 15 : 13, weight: .semibold))
-                        .foregroundStyle(Color(white: 0.1))
+                        .foregroundStyle(nodeTextColor)
                         .lineLimit(4)
                         .fixedSize(horizontal: false, vertical: true)
                 }

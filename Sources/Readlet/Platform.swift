@@ -190,6 +190,8 @@ final class ReaderController: NSObject, ObservableObject {
     @Published var narrationQuote: String?
     var segmentMentionsFigure = false
     private var narrationAnnotations: [PDFAnnotation] = []
+    private var loading = false
+    private var pendingInitialPage: Int? = nil
 
     override init() {
         super.init()
@@ -212,30 +214,75 @@ final class ReaderController: NSObject, ObservableObject {
 
     func bind(docId id: UUID) {
         guard let ses = Store.shared.session(id) else { return }
+        // Read saved page BEFORE mutating docId or view.document so PDFViewPageChanged for page 0 cannot overwrite it
+        let savedPage = Store.shared.doc(id)?.resolvedReadPage ?? 0
+        loading = true
         if docId != id {
             docId = id
             let savedVar = Variant(rawValue: UserDefaults.standard.string(forKey: "variant-" + id.uuidString) ?? "") ?? Store.shared.variant
             variant = savedVar
         }
         let targetDoc = ses.document(variant)
+        pageCount = ses.pageCount
+        let clamped = min(max(0, savedPage), max(0, pageCount - 1))
+        currentPageIndex = clamped
+        pendingInitialPage = clamped
         if view.document !== targetDoc {
             view.document = targetDoc
             view.autoScales = true
         }
-        pageCount = ses.pageCount
-        let savedPage = Store.shared.doc(id)?.resolvedReadPage ?? 0
-        let clamped = min(max(0, savedPage), max(0, pageCount - 1))
-        if currentPageIndex != clamped, let pg = targetDoc.safePage(clamped) {
+        if let pg = targetDoc.safePage(clamped) {
             view.go(to: pg)
-            currentPageIndex = clamped
         }
         if variant == .bilingual {
-            ses.startBilingual(from: currentPageIndex)
+            ses.startBilingual(from: clamped)
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.applyPendingInitialPageIfNeeded()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
+            guard let self else { return }
+            self.applyPendingInitialPageIfNeeded()
+            self.loading = false
         }
     }
 
+    func applyPendingInitialPageIfNeeded() {
+        guard let target = pendingInitialPage, let doc = view.document else { return }
+        let clamped = min(max(0, target), max(0, doc.pageCount - 1))
+        if let pg = doc.safePage(clamped) {
+            let curIdx = view.currentPage.map { doc.index(for: $0) } ?? NSNotFound
+            if curIdx != clamped {
+                let wasLoading = loading
+                loading = true
+                view.go(to: pg)
+                loading = wasLoading
+            }
+            if currentPageIndex != clamped {
+                currentPageIndex = clamped
+            }
+        }
+        if view.bounds.width > 10 && view.bounds.height > 10 {
+            pendingInitialPage = nil
+        }
+    }
+
+    @discardableResult
+    func syncCurrentPageFromView() -> Int {
+        if !loading, pendingInitialPage == nil, let doc = view.document, let cur = view.currentPage {
+            let idx = doc.index(for: cur)
+            if idx != NSNotFound && idx >= 0 && idx < doc.pageCount {
+                if currentPageIndex != idx {
+                    currentPageIndex = idx
+                }
+                return idx
+            }
+        }
+        return currentPageIndex
+    }
+
     @objc private func pageChanged() {
-        guard let doc = view.document, let cur = view.currentPage else { return }
+        guard !loading, pendingInitialPage == nil, let doc = view.document, let cur = view.currentPage else { return }
         let idx = doc.index(for: cur)
         guard idx != NSNotFound, idx >= 0 else { return }
         if currentPageIndex != idx {
@@ -277,6 +324,7 @@ final class ReaderController: NSObject, ObservableObject {
             return
         }
         let curPage = currentPageIndex
+        loading = true
         variant = v
         UserDefaults.standard.set(v.rawValue, forKey: "variant-" + id.uuidString)
         let targetDoc = ses.document(v)
@@ -285,6 +333,8 @@ final class ReaderController: NSObject, ObservableObject {
         if let pg = targetDoc.safePage(curPage) {
             view.go(to: pg)
         }
+        currentPageIndex = curPage
+        loading = false
         if v == .bilingual {
             ses.startBilingual(from: curPage)
         }
@@ -293,9 +343,13 @@ final class ReaderController: NSObject, ObservableObject {
     func goToPage(_ i: Int) {
         guard let doc = view.document else { return }
         let clamped = min(max(0, i), max(0, doc.pageCount - 1))
+        pendingInitialPage = nil
         if let pg = doc.safePage(clamped) {
+            let wasLoading = loading
+            loading = true
             view.go(to: pg)
             currentPageIndex = clamped
+            loading = wasLoading
             if let id = docId {
                 UserDefaults.standard.set(clamped, forKey: "page-" + id.uuidString)
                 Store.shared.updateReadingProgress(docId: id, page: clamped, pageCount: doc.pageCount)
@@ -335,18 +389,24 @@ final class ReaderController: NSObject, ObservableObject {
     func documentReplaced(_ s: DocSession) {
         guard docId == s.doc.id, variant == .bilingual else { return }
         let curPage = currentPageIndex
+        let wasLoading = loading
+        loading = true
         view.document = s.bilingual
         view.autoScales = true
         if let pg = s.bilingual.safePage(curPage) {
             view.go(to: pg)
         }
+        currentPageIndex = curPage
+        loading = wasLoading
     }
 
     func reloadAfterPDFEdit(session: DocSession, targetPage: Int) {
         guard docId == session.doc.id else { return }
         let d = session.document(variant)
+        loading = true
         view.document = d
         pageCount = session.pageCount
+        loading = false
         goToPage(targetPage)
     }
 

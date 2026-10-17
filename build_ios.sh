@@ -78,6 +78,8 @@ JSON
   local OSB=$(sw_vers -buildVersion 2>/dev/null || echo "")
   [ ${#XC} -eq 2 ] && XC="${XC}00"; [ ${#XC} -eq 3 ] && XC="0${XC}"
 
+  mkdir -p "$APP_DIR/en.lproj" "$APP_DIR/zh-Hans.lproj" "$APP_DIR/ja.lproj"
+
   cat > "$APP_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -91,7 +93,7 @@ JSON
   <key>CFBundleExecutable</key><string>$NAME</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-  <key>CFBundleDevelopmentRegion</key><string>zh-Hans</string>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundleLocalizations</key>
   <array>
     <string>en</string>

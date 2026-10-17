@@ -69,9 +69,18 @@ final class CloudSync: ObservableObject {
     private var debounceWork: DispatchWorkItem?
     private var timer: Timer?
     private var isApplyingRemoteChanges = false
+    private var isRunningSync = false
     private var started = false
 
     private init() {}
+
+    nonisolated private static func writeDataIfChanged(_ data: Data, to url: URL) {
+        if let existing = try? Data(contentsOf: url), existing == data {
+            return
+        }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
+    }
 
     // MARK: - Cloud Container Resolution
 
@@ -185,7 +194,7 @@ final class CloudSync: ObservableObject {
                 object: NSUbiquitousKeyValueStore.default,
                 queue: .main
             ) { [weak self] _ in
-                Task { @MainActor in self?.scheduleSync(delay: 0.3) }
+                Task { @MainActor in self?.scheduleSync(delay: 0.8, silent: true) }
             }
             NSUbiquitousKeyValueStore.default.synchronize()
         }
@@ -193,13 +202,13 @@ final class CloudSync: ObservableObject {
         // Periodic background sync every 15 seconds so edits on Mac / iPhone propagate automatically
         timer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self, self.isEnabled, !self.state.isSyncing else { return }
-                self.syncNow()
+                guard let self, self.isEnabled, !self.isRunningSync else { return }
+                self.syncNow(silent: true)
             }
         }
 
         // Initial sync shortly after launch
-        scheduleSync(delay: 0.5)
+        scheduleSync(delay: 0.5, silent: lastSyncedAt != nil)
     }
 
     func setCustomCloudFolder(_ url: URL) {
@@ -213,20 +222,20 @@ final class CloudSync: ObservableObject {
             UserDefaults.standard.set(bm, forKey: "icloud.customFolderBookmark")
         }
         cloudLocationDescription = url.path
-        syncNow()
+        syncNow(silent: false)
     }
 
     /// Schedules a debounced sync after local data changes (`Store.save()` / `Store.saveNow()`).
     func notifyLocalChange() {
         guard isEnabled, !isApplyingRemoteChanges else { return }
-        scheduleSync(delay: 1.2)
+        scheduleSync(delay: 1.5, silent: true)
     }
 
-    func scheduleSync(delay: TimeInterval = 1.0) {
+    func scheduleSync(delay: TimeInterval = 1.0, silent: Bool = true) {
         guard isEnabled else { return }
         debounceWork?.cancel()
         let w = DispatchWorkItem { [weak self] in
-            Task { @MainActor in self?.syncNow() }
+            Task { @MainActor in self?.syncNow(silent: silent) }
         }
         debounceWork = w
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: w)
@@ -248,7 +257,7 @@ final class CloudSync: ObservableObject {
 
     nonisolated static func saveTombstones(_ set: TombstoneSet, to file: URL) {
         if let d = try? JSONEncoder().encode(set) {
-            try? d.write(to: file, options: .atomic)
+            writeDataIfChanged(d, to: file)
         }
     }
 
@@ -312,6 +321,30 @@ final class CloudSync: ObservableObject {
                     mergedDoc.readPage = max(lp, r.readPage ?? 0)
                 } else if l.readPage != nil || r.readPage != nil {
                     mergedDoc.readPage = max(l.readPage ?? 0, r.readPage ?? 0)
+                }
+                // Merge AI Narration progress (ignoring trivial page 0 seg 0 when non-zero progress exists)
+                let lHasNarr = (l.narrationPage ?? 0) > 0 || (l.narrationSeg ?? 0) > 0
+                let rHasNarr = (r.narrationPage ?? 0) > 0 || (r.narrationSeg ?? 0) > 0
+                if lHasNarr && rHasNarr {
+                    let lnt = l.narrationUpdatedAt ?? lTime
+                    let rnt = r.narrationUpdatedAt ?? rTime
+                    if rnt > lnt {
+                        mergedDoc.narrationPage = r.narrationPage
+                        mergedDoc.narrationSeg = r.narrationSeg
+                        mergedDoc.narrationUpdatedAt = r.narrationUpdatedAt
+                    } else {
+                        mergedDoc.narrationPage = l.narrationPage
+                        mergedDoc.narrationSeg = l.narrationSeg
+                        mergedDoc.narrationUpdatedAt = l.narrationUpdatedAt
+                    }
+                } else if rHasNarr {
+                    mergedDoc.narrationPage = r.narrationPage
+                    mergedDoc.narrationSeg = r.narrationSeg
+                    mergedDoc.narrationUpdatedAt = r.narrationUpdatedAt
+                } else if lHasNarr {
+                    mergedDoc.narrationPage = l.narrationPage
+                    mergedDoc.narrationSeg = l.narrationSeg
+                    mergedDoc.narrationUpdatedAt = l.narrationUpdatedAt
                 }
                 docsById[r.id] = mergedDoc
             } else {
@@ -458,26 +491,31 @@ final class CloudSync: ObservableObject {
 
     // MARK: - Full Bidirectional Sync Execution
 
-    func syncNow() {
+    func syncNow(silent: Bool = false) {
         guard isEnabled else { return }
-        if state.isSyncing { return }
+        if isRunningSync { return }
 
         let cloudDirs = Self.resolveCloudDirectories()
         let hasKVS = Bundle.main.bundleIdentifier != nil && ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
         if let primaryCloud = cloudDirs.first {
-            cloudLocationDescription = primaryCloud.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+            let desc = primaryCloud.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+            if cloudLocationDescription != desc { cloudLocationDescription = desc }
         } else if hasKVS {
-            cloudLocationDescription = "iCloud (BDH2HLQA9V.io.novarock.readlet)"
+            let desc = "iCloud (BDH2HLQA9V.io.novarock.readlet)"
+            if cloudLocationDescription != desc { cloudLocationDescription = desc }
         } else {
             state = .unavailable("未检测到 iCloud Drive 目录")
             return
         }
-        state = .syncing
+        isRunningSync = true
+        if !silent || lastSyncedAt == nil {
+            state = .syncing
+        }
 
         let currentLib = Store.shared.lib
         let localBase = Paths.base
         let localSettings = captureCurrentSettings()
-        if hasKVS {
+        if hasKVS && !silent {
             NSUbiquitousKeyValueStore.default.synchronize()
         }
         let kvsLibData = hasKVS ? NSUbiquitousKeyValueStore.default.data(forKey: "readlet.kvs.library") : nil
@@ -486,6 +524,7 @@ final class CloudSync: ObservableObject {
 
         syncTask?.cancel()
         syncTask = Task {
+            defer { self.isRunningSync = false }
             let result = await Task.detached(priority: .utility) { () -> (Library, Bool, CloudSettingsPayload?, Data?, Data?, Data?, String?) in
                 let fm = FileManager.default
 
@@ -571,19 +610,34 @@ final class CloudSync: ObservableObject {
                     }
                 }
 
-                // 4. Write merged `library.json` back to all cloud directories and local
+                // 4. Write merged `library.json` back to all cloud directories and local only if changed
                 let encodedLib = try? JSONEncoder().encode(workingLib)
                 if let encodedLib {
-                    try? encodedLib.write(to: localBase.appendingPathComponent("library.json"), options: .atomic)
+                    Self.writeDataIfChanged(encodedLib, to: localBase.appendingPathComponent("library.json"))
                     for dir in cloudDirs {
-                        try? encodedLib.write(to: dir.appendingPathComponent("library.json"), options: .atomic)
+                        Self.writeDataIfChanged(encodedLib, to: dir.appendingPathComponent("library.json"))
                     }
                 }
 
                 // 5. Sync document files (`original.pdf`, `thumb.png`, `narration/`, `bi2-*/`, `flashcards.json`) for all valid docs
-                for doc in workingLib.docs {
+                for docIdx in workingLib.docs.indices {
+                    let doc = workingLib.docs[docIdx]
                     let localDocDir = localBase.appendingPathComponent("docs/\(doc.id.uuidString)", isDirectory: true)
                     try? fm.createDirectory(at: localDocDir, withIntermediateDirectories: true)
+                    let lNarr = localDocDir.appendingPathComponent("narration", isDirectory: true)
+                    let lProgURL = lNarr.appendingPathComponent("progress.json")
+
+                    if let np = doc.narrationPage, (np > 0 || (doc.narrationSeg ?? 0) > 0) {
+                        let existing = (try? Data(contentsOf: lProgURL)).flatMap { try? JSONDecoder().decode(Narrator.Progress.self, from: $0) }
+                        let existingNonZero = (existing?.page ?? 0) > 0 || (existing?.seg ?? 0) > 0
+                        if !existingNonZero || (doc.narrationUpdatedAt ?? .distantPast) > (existing?.date ?? .distantPast) {
+                            try? fm.createDirectory(at: lNarr, withIntermediateDirectories: true)
+                            let p = Narrator.Progress(page: np, seg: doc.narrationSeg ?? 0, date: doc.narrationUpdatedAt ?? Date())
+                            if let d = try? JSONEncoder().encode(p) {
+                                Self.writeDataIfChanged(d, to: lProgURL)
+                            }
+                        }
+                    }
 
                     for dir in cloudDirs {
                         let cloudDocDir = dir.appendingPathComponent("docs/\(doc.id.uuidString)", isDirectory: true)
@@ -597,12 +651,23 @@ final class CloudSync: ObservableObject {
                         }
 
                         // Sync narration scripts & progress
-                        let lNarr = localDocDir.appendingPathComponent("narration", isDirectory: true)
                         let cNarr = cloudDocDir.appendingPathComponent("narration", isDirectory: true)
                         Self.syncDirectoryFilesBidirectional(localDir: lNarr, cloudDir: cNarr, extensions: ["json"])
 
                         // Sync bilingual page cache (`bi2-*`)
                         Self.syncMatchingSubdirectories(localParent: localDocDir, cloudParent: cloudDocDir, prefix: "bi2-")
+                    }
+
+                    if let syncedProgData = try? Data(contentsOf: lProgURL),
+                       let syncedProg = try? JSONDecoder().decode(Narrator.Progress.self, from: syncedProgData),
+                       (syncedProg.page > 0 || syncedProg.seg > 0) {
+                        let curNonZero = (workingLib.docs[docIdx].narrationPage ?? 0) > 0 || (workingLib.docs[docIdx].narrationSeg ?? 0) > 0
+                        if !curNonZero || syncedProg.date > (workingLib.docs[docIdx].narrationUpdatedAt ?? .distantPast) {
+                            workingLib.docs[docIdx].narrationPage = syncedProg.page
+                            workingLib.docs[docIdx].narrationSeg = syncedProg.seg
+                            workingLib.docs[docIdx].narrationUpdatedAt = syncedProg.date
+                            anyLocalChange = true
+                        }
                     }
                 }
 
@@ -654,9 +719,9 @@ final class CloudSync: ObservableObject {
                 }
                 let encodedSet = try? JSONEncoder().encode(bestSettings)
                 if let encodedSet {
-                    try? encodedSet.write(to: localBase.appendingPathComponent("cloud-settings.json"), options: .atomic)
+                    Self.writeDataIfChanged(encodedSet, to: localBase.appendingPathComponent("cloud-settings.json"))
                     for dir in cloudDirs {
-                        try? encodedSet.write(to: dir.appendingPathComponent("cloud-settings.json"), options: .atomic)
+                        Self.writeDataIfChanged(encodedSet, to: dir.appendingPathComponent("cloud-settings.json"))
                     }
                 }
 
@@ -678,16 +743,22 @@ final class CloudSync: ObservableObject {
 
             let (mergedLib, localChanged, remoteSettings, outLibData, outTombData, outSetData, err) = result
             if hasKVS {
-                if let outLibData, outLibData.count < 500_000 {
+                var kvsModified = false
+                if let outLibData, outLibData.count < 500_000, outLibData != kvsLibData {
                     NSUbiquitousKeyValueStore.default.set(outLibData, forKey: "readlet.kvs.library")
+                    kvsModified = true
                 }
-                if let outTombData, outTombData.count < 100_000 {
+                if let outTombData, outTombData.count < 100_000, outTombData != kvsTombData {
                     NSUbiquitousKeyValueStore.default.set(outTombData, forKey: "readlet.kvs.tombstones")
+                    kvsModified = true
                 }
-                if let outSetData {
+                if let outSetData, outSetData != kvsSetData {
                     NSUbiquitousKeyValueStore.default.set(outSetData, forKey: "readlet.cloud.settings")
+                    kvsModified = true
                 }
-                NSUbiquitousKeyValueStore.default.synchronize()
+                if kvsModified {
+                    NSUbiquitousKeyValueStore.default.synchronize()
+                }
             }
             if let err {
                 self.state = .error(err)
@@ -706,11 +777,13 @@ final class CloudSync: ObservableObject {
             }
 
             let now = Date()
-            self.lastSyncedAt = now
-            self.syncedDocsCount = Store.shared.lib.docs.count
-            self.syncedCardsCount = Store.shared.lib.cards.count
-            UserDefaults.standard.set(now, forKey: "icloud.sync.lastDate")
-            self.state = .synced(now)
+            if !silent || localChanged || remoteSettings != nil || self.lastSyncedAt == nil {
+                self.lastSyncedAt = now
+                self.syncedDocsCount = Store.shared.lib.docs.count
+                self.syncedCardsCount = Store.shared.lib.cards.count
+                UserDefaults.standard.set(now, forKey: "icloud.sync.lastDate")
+                self.state = .synced(now)
+            }
         }
     }
 

@@ -36,10 +36,14 @@ struct Doc: Codable, Identifiable, Hashable {
     var pageCount: Int? = nil
     /// 0-indexed current / furthest page read
     var readPage: Int? = nil
+    /// 0-indexed page and segment for AI Narration progress (synced across Mac & iOS)
+    var narrationPage: Int? = nil
+    var narrationSeg: Int? = nil
+    var narrationUpdatedAt: Date? = nil
     /// last modified timestamp for conflict-free iCloud sync
     var updatedAt: Date? = nil
 
-    init(id: UUID = UUID(), title: String, added: Date = Date(), source: String? = nil, tags: [String] = [], pageCount: Int? = nil, readPage: Int? = nil, updatedAt: Date? = Date()) {
+    init(id: UUID = UUID(), title: String, added: Date = Date(), source: String? = nil, tags: [String] = [], pageCount: Int? = nil, readPage: Int? = nil, narrationPage: Int? = nil, narrationSeg: Int? = nil, narrationUpdatedAt: Date? = nil, updatedAt: Date? = Date()) {
         self.id = id
         self.title = title
         self.added = added
@@ -47,10 +51,13 @@ struct Doc: Codable, Identifiable, Hashable {
         self.tags = tags
         self.pageCount = pageCount
         self.readPage = readPage
+        self.narrationPage = narrationPage
+        self.narrationSeg = narrationSeg
+        self.narrationUpdatedAt = narrationUpdatedAt
         self.updatedAt = updatedAt
     }
 
-    enum CodingKeys: String, CodingKey { case id, title, added, source, tags, pageCount, readPage, updatedAt }
+    enum CodingKeys: String, CodingKey { case id, title, added, source, tags, pageCount, readPage, narrationPage, narrationSeg, narrationUpdatedAt, updatedAt }
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -60,6 +67,9 @@ struct Doc: Codable, Identifiable, Hashable {
         tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
         pageCount = try c.decodeIfPresent(Int.self, forKey: .pageCount)
         readPage = try c.decodeIfPresent(Int.self, forKey: .readPage)
+        narrationPage = try c.decodeIfPresent(Int.self, forKey: .narrationPage)
+        narrationSeg = try c.decodeIfPresent(Int.self, forKey: .narrationSeg)
+        narrationUpdatedAt = try c.decodeIfPresent(Date.self, forKey: .narrationUpdatedAt)
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt)
     }
 
@@ -294,12 +304,21 @@ final class Store: ObservableObject {
     func refreshMissingPageCounts() {
         var changed = false
         for i in lib.docs.indices {
-            if lib.docs[i].pageCount == nil, let pdf = PDFDocument(url: Paths.pdf(lib.docs[i].id)) {
+            let docId = lib.docs[i].id
+            if lib.docs[i].pageCount == nil, let pdf = PDFDocument(url: Paths.pdf(docId)) {
                 lib.docs[i].pageCount = pdf.pageCount
                 changed = true
             }
-            if lib.docs[i].readPage == nil, UserDefaults.standard.object(forKey: "page-" + lib.docs[i].id.uuidString) != nil {
-                lib.docs[i].readPage = UserDefaults.standard.integer(forKey: "page-" + lib.docs[i].id.uuidString)
+            if lib.docs[i].readPage == nil, UserDefaults.standard.object(forKey: "page-" + docId.uuidString) != nil {
+                lib.docs[i].readPage = UserDefaults.standard.integer(forKey: "page-" + docId.uuidString)
+                changed = true
+            }
+            if lib.docs[i].narrationPage == nil,
+               let prog = Narrator.savedDiskProgress(docId),
+               (prog.page > 0 || prog.seg > 0) {
+                lib.docs[i].narrationPage = prog.page
+                lib.docs[i].narrationSeg = prog.seg
+                lib.docs[i].narrationUpdatedAt = prog.date
                 changed = true
             }
         }
@@ -523,6 +542,27 @@ final class Store: ObservableObject {
             lib.docs[i].updatedAt = Date()
             save()
         }
+    }
+
+    func updateNarrationProgress(docId: UUID, page: Int, seg: Int, date: Date = Date()) {
+        guard let i = lib.docs.firstIndex(where: { $0.id == docId }) else { return }
+        let clampedPage = max(0, page)
+        let clampedSeg = max(0, seg)
+        guard lib.docs[i].narrationPage != clampedPage || lib.docs[i].narrationSeg != clampedSeg else { return }
+        lib.docs[i].narrationPage = clampedPage
+        lib.docs[i].narrationSeg = clampedSeg
+        lib.docs[i].narrationUpdatedAt = date
+        lib.docs[i].updatedAt = date
+        save()
+    }
+
+    func clearNarrationProgress(docId: UUID) {
+        guard let i = lib.docs.firstIndex(where: { $0.id == docId }) else { return }
+        lib.docs[i].narrationPage = nil
+        lib.docs[i].narrationSeg = nil
+        lib.docs[i].narrationUpdatedAt = Date()
+        lib.docs[i].updatedAt = Date()
+        save()
     }
 
     func addDocToNotebook(_ docId: UUID, notebook: UUID? = nil) {
