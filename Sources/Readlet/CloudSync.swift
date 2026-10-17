@@ -650,9 +650,11 @@ final class CloudSync: ObservableObject {
                             Self.syncFileBidirectional(local: lFile, cloud: cFile)
                         }
 
-                        // Sync narration scripts & progress
+                        // Sync narration scripts & progress, plus audio clips for the active narration window
                         let cNarr = cloudDocDir.appendingPathComponent("narration", isDirectory: true)
                         Self.syncDirectoryFilesBidirectional(localDir: lNarr, cloudDir: cNarr, extensions: ["json"])
+                        let activePage = workingLib.docs[docIdx].narrationPage ?? workingLib.docs[docIdx].readPage ?? 0
+                        Self.syncActiveNarrationClips(localDir: lNarr, cloudDir: cNarr, aroundPage: activePage)
 
                         // Sync bilingual page cache (`bi2-*`)
                         Self.syncMatchingSubdirectories(localParent: localDocDir, cloudParent: cloudDocDir, prefix: "bi2-")
@@ -844,6 +846,32 @@ final class CloudSync: ObservableObject {
         try? fm.createDirectory(at: localDir, withIntermediateDirectories: true)
         try? fm.createDirectory(at: cloudDir, withIntermediateDirectories: true)
         for name in allNames {
+            syncFileBidirectional(
+                local: localDir.appendingPathComponent(name),
+                cloud: cloudDir.appendingPathComponent(name)
+            )
+        }
+    }
+
+    nonisolated static func syncActiveNarrationClips(localDir: URL, cloudDir: URL, aroundPage page: Int) {
+        let fm = FileManager.default
+        let pages = Set([0, max(0, page), max(0, page + 1)])
+        let prefixes = pages.map { "p\($0)-s" }
+        let lFiles = (try? fm.contentsOfDirectory(at: localDir, includingPropertiesForKeys: nil)) ?? []
+        let cFiles = (try? fm.contentsOfDirectory(at: cloudDir, includingPropertiesForKeys: nil)) ?? []
+        var clipNames = Set<String>()
+        for u in lFiles + cFiles {
+            let name = u.lastPathComponent
+            let ext = u.pathExtension.lowercased()
+            guard ext == "m4a" || ext == "wav" else { continue }
+            if prefixes.contains(where: { name.hasPrefix($0) }) {
+                clipNames.insert(name)
+            }
+        }
+        guard !clipNames.isEmpty else { return }
+        try? fm.createDirectory(at: localDir, withIntermediateDirectories: true)
+        try? fm.createDirectory(at: cloudDir, withIntermediateDirectories: true)
+        for name in clipNames {
             syncFileBidirectional(
                 local: localDir.appendingPathComponent(name),
                 cloud: cloudDir.appendingPathComponent(name)

@@ -118,7 +118,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     /// "" for the default narration style (original cache names), else a per-style suffix
     var scriptSuffix: String { NarrationStyle.cacheSuffix(style: Settings.narrationStyle, extra: Settings.narrationExtraPrompt) }
     func scriptFileName(_ p: Int) -> String { "p\(p)\(scriptSuffix).json" }
-    func scriptURL(_ p: Int) -> URL { cacheDir().appendingPathComponent(scriptFileName(p)) }
+    func scriptURL(_ p: Int, docId: UUID? = nil) -> URL { cacheDir(for: docId).appendingPathComponent(scriptFileName(p)) }
     /// entries for the voice menus
     var voiceOptions: [VoiceOption] {
         let p = effectiveProvider
@@ -368,6 +368,18 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
 
     func stop() {
         runToken = UUID()
+        prefetchToken = UUID()
+        prefetchTask?.cancel()
+        prefetchTask = nil
+        for t in scriptTasks.values { t.cancel() }
+        scriptTasks.removeAll()
+        for t in audioTasks.values { t.cancel() }
+        audioTasks.removeAll()
+        while !systemQueue.isEmpty {
+            let r = systemQueue.removeFirst()
+            r.cont.resume(throwing: CancellationError())
+        }
+        systemBusy = false
         qaPlayer?.stop(); qaPlayer = nil
         if listening { listening = false; VoiceInput.shared.stop { _ in } }
         player?.stop(); player = nil
@@ -508,12 +520,22 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
 
     private func play(page p: Int, seg: Int) {
         let token = UUID(); runToken = token
+        // Cancel background prefetch so the current segment gets immediate network priority
+        prefetchToken = UUID()
+        prefetchTask?.cancel()
+        prefetchTask = nil
         player?.stop(); player = nil
+        error = nil
         page = p
         state = .preparing
         if Narrator.reader.currentPageIndex != p { Narrator.reader.goToPage(p) }
-        // next pages' scripts start while this one loads (fresh token: never re-plans audio with stale segments)
-        kickScripts(after: p, token: UUID())
+        if let cached = cachedScript(p), !ScriptParser.looksBroken(cached.map(\.text)), !cached.isEmpty {
+            segments = cached
+            segIndex = seg < 0 ? cached.count - 1 : min(seg, cached.count - 1)
+        } else {
+            segments = []
+            segIndex = 0
+        }
         Task {
             do {
                 let segs = try await script(for: p)
@@ -523,7 +545,10 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
                 let i = seg < 0 ? segs.count - 1 : min(seg, segs.count - 1)
                 segIndex = i
                 if let id = docId { Narrator.saveProgress(id, page: p, seg: i) }
-                prefetch(page: p, from: i + 1)
+                let t = segs[i].text
+                Narrator.reader.segmentMentionsFigure = t.range(of: "(图|表|横轴|纵轴|曲线|柱状|折线|示意|figure|table)", options: [.regularExpression, .caseInsensitive]) != nil
+                Narrator.reader.highlightNarration(page: p, quote: segs[i].focus)
+                // Synthesize the urgent current segment FIRST before starting look-ahead prefetch
                 let wav = try await audio(page: p, seg: i, text: segs[i].text, urgent: true)
                 guard token == runToken else { return }
                 let pl = try makePlayer(wav)
@@ -531,11 +556,12 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
                 currentWav = wav
                 player = pl
                 state = .playing
-                let t = segs[i].text
-                Narrator.reader.segmentMentionsFigure = t.range(of: "(图|表|横轴|纵轴|曲线|柱状|折线|示意|figure|table)", options: [.regularExpression, .caseInsensitive]) != nil
-                Narrator.reader.highlightNarration(page: p, quote: segs[i].focus)
                 if recording { recorded.insert("\(p)-\(i)") }
                 pl.play()
+                // Start look-ahead buffering only after the current segment is actively playing
+                prefetch(page: p, from: i + 1)
+            } catch is CancellationError {
+                return
             } catch {
                 guard token == runToken else { return }
                 self.error = error.localizedDescription
@@ -584,6 +610,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     /// kept for the UI counter
     static var bufferAhead: Int { maxBufferSegments }
     private var prefetchToken = UUID()
+    private var prefetchTask: Task<Void, Never>?
 
     /// what "全部准备" still has to generate (for the confirmation estimate)
     struct PreparePlan { var pages = 0; var missingScripts = 0; var missingChars = 0 }
@@ -602,24 +629,24 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         return plan
     }
 
-    private func cachedScript(_ p: Int) -> [Segment]? {
-        guard let d = try? Data(contentsOf: scriptURL(p)) else { return nil }
+    private func cachedScript(_ p: Int, docId: UUID? = nil) -> [Segment]? {
+        guard let d = try? Data(contentsOf: scriptURL(p, docId: docId)) else { return nil }
         return try? JSONDecoder().decode([Segment].self, from: d)
     }
     // MARK: clip cache — AAC (.m4a) since 0.2; WAV clips from older builds are still read
 
     private func clipStem(_ p: Int, _ i: Int, tag: String) -> String { "p\(p)-s\(i)-\(tag)" }
-    private func clipURLs(_ p: Int, _ i: Int, tag: String) -> (m4a: URL, wav: URL) {
-        let d = cacheDir(), stem = clipStem(p, i, tag: tag)
+    private func clipURLs(_ p: Int, _ i: Int, tag: String, docId: UUID? = nil) -> (m4a: URL, wav: URL) {
+        let d = cacheDir(for: docId), stem = clipStem(p, i, tag: tag)
         return (d.appendingPathComponent(stem + "-v3.m4a"), d.appendingPathComponent(stem + "-v2.wav"))
     }
-    func hasClip(page p: Int, seg i: Int, tag: String) -> Bool {
-        let u = clipURLs(p, i, tag: tag)
+    func hasClip(page p: Int, seg i: Int, tag: String, docId: UUID? = nil) -> Bool {
+        let u = clipURLs(p, i, tag: tag, docId: docId)
         return FileManager.default.fileExists(atPath: u.m4a.path) || FileManager.default.fileExists(atPath: u.wav.path)
     }
     /// cached clip as a clean WAV (decoded from AAC when needed)
-    func clipData(page p: Int, seg i: Int, tag: String) -> Data? {
-        let u = clipURLs(p, i, tag: tag)
+    func clipData(page p: Int, seg i: Int, tag: String, docId: UUID? = nil) -> Data? {
+        let u = clipURLs(p, i, tag: tag, docId: docId)
         if FileManager.default.fileExists(atPath: u.m4a.path) {
             if let w = AudioCodec.decodeFile(u.m4a), w.count > 1000 { return w }
             try? FileManager.default.removeItem(at: u.m4a)          // unreadable: synthesize again
@@ -628,31 +655,37 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         return nil
     }
     private var clipsWritten = 0
-    private func storeClip(_ wav: Data, page p: Int, seg i: Int, tag: String) {
-        let u = clipURLs(p, i, tag: tag)
+    private func storeClip(_ wav: Data, page p: Int, seg i: Int, tag: String, docId: UUID? = nil) {
+        let u = clipURLs(p, i, tag: tag, docId: docId)
         if Settings.ttsCacheFormat == "wav" || !AudioCodec.writeAAC(wav: wav, to: u.m4a) {
             try? wav.write(to: u.wav, options: .atomic)
         }
         clipsWritten += 1
-        if clipsWritten % 40 == 0 { let keep = docId; Task.detached(priority: .utility) { StorageManager.enforceAudioLimit(keep: keep) } }
+        if clipsWritten % 40 == 0 { let keep = docId ?? self.docId; Task.detached(priority: .utility) { StorageManager.enforceAudioLimit(keep: keep) } }
     }
 
     /// start writing scripts for the pages after `p` (parallel, deduplicated by `script(for:)`)
     private func kickScripts(after p: Int, token: UUID) {
         guard pageCount > 0 else { return }
-        for k in 1...Narrator.scriptPagesAhead where p + k < pageCount {
+        let activeDoc = docId
+        for k in 1...min(2, Narrator.scriptPagesAhead) where p + k < pageCount {
             let pg = p + k
             if chars(ofPage: pg) != nil { continue }       // already written (in flight ones are joined below)
             Task {
+                guard self.docId == activeDoc, self.state != .idle else { return }
                 guard let segs = try? await self.script(for: pg), !segs.isEmpty else { return }
                 // a new script widens what the audio pipeline can buffer
-                if token == self.prefetchToken, self.page == p { self.prefetch(page: p, from: self.segIndex + 1) }
+                if token == self.prefetchToken, self.docId == activeDoc, self.page == p, self.state == .playing {
+                    self.prefetch(page: p, from: self.segIndex + 1)
+                }
             }
         }
     }
 
     private func prefetch(page p: Int, from i: Int) {
+        prefetchTask?.cancel()
         let token = UUID(); prefetchToken = token
+        let activeDoc = docId
         kickScripts(after: p, token: token)
         let first = segments, tag = voiceTag
         let pace = Narrator.pace, speed = Double(max(0.25, rate)), target = Narrator.bufferSeconds
@@ -663,26 +696,26 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         while count < Narrator.maxBufferSegments && (ahead < target || count < Narrator.minBufferSegments) {
             if k < segs.count {
                 let t = segs[k].text
-                if !hasClip(page: pg, seg: k, tag: tag) { plan.append((pg, k, t)) }
+                if !hasClip(page: pg, seg: k, tag: tag, docId: activeDoc) { plan.append((pg, k, t)) }
                 ahead += Double(t.count) * pace / speed; count += 1; k += 1
                 continue
             }
             pg += 1; k = 0
-            guard pg < pageCount, let next = cachedScript(pg) else { break }   // not written yet → kickScripts re-triggers
+            guard pg < pageCount, let next = cachedScript(pg, docId: activeDoc) else { break }   // not written yet → kickScripts re-triggers
             segs = next
         }
         guard !plan.isEmpty else { refreshBuffered(); return }
-        let width = effectiveProvider.isRemote ? 4 : 2
-        Task {
+        let width = effectiveProvider.isRemote ? 2 : 1
+        prefetchTask = Task {
             // sliding window: start the next request as soon as one finishes, in playback order
             await withTaskGroup(of: Void.self) { g in
                 var it = plan.makeIterator()
                 for _ in 0..<width {
-                    guard let x = it.next() else { break }
+                    guard !Task.isCancelled, token == self.prefetchToken, self.docId == activeDoc, let x = it.next() else { break }
                     g.addTask { _ = try? await self.audio(page: x.0, seg: x.1, text: x.2) }
                 }
                 while await g.next() != nil {
-                    guard token == self.prefetchToken, let x = it.next() else { continue }
+                    guard !Task.isCancelled, token == self.prefetchToken, self.docId == activeDoc, let x = it.next() else { continue }
                     g.addTask { _ = try? await self.audio(page: x.0, seg: x.1, text: x.2) }
                 }
             }
@@ -712,25 +745,26 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     // MARK: script (Claude, with the page image so figures/tables are explained)
 
     /// remove every synthesized clip of a page (all engines / voices)
-    private func dropAudio(page p: Int) {
-        let dir = cacheDir(), prefix = "p\(p)-s"
+    private func dropAudio(page p: Int, docId: UUID? = nil) {
+        let dir = cacheDir(for: docId), prefix = "p\(p)-s"
         let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
         for f in files where f.hasPrefix(prefix) && (f.hasSuffix(".wav") || f.hasSuffix(".m4a")) { try? FileManager.default.removeItem(at: dir.appendingPathComponent(f)) }
     }
 
-    private func cacheDir() -> URL {
-        let u = Paths.docDir(docId ?? UUID()).appendingPathComponent("narration", isDirectory: true)
+    private func cacheDir(for targetDocId: UUID? = nil) -> URL {
+        let u = Paths.docDir(targetDocId ?? docId ?? UUID()).appendingPathComponent("narration", isDirectory: true)
         try? FileManager.default.createDirectory(at: u, withIntermediateDirectories: true)
         return u
     }
 
     func script(for p: Int) async throws -> [Segment] {
-        let url = scriptURL(p)
+        let targetDocId = docId
+        let url = scriptURL(p, docId: targetDocId)
         if let d = try? Data(contentsOf: url), let s = try? JSONDecoder().decode([Segment].self, from: d) {
             guard ScriptParser.looksBroken(s.map(\.text)) else { return s }
             // written by an older build whose fallback kept the raw JSON as one segment: repair it in place
             let fixed = ScriptParser.salvage(s.map(\.text).joined(separator: "\n")).map { Segment(text: $0.text, focus: $0.focus) }
-            dropAudio(page: p)
+            dropAudio(page: p, docId: targetDocId)
             if !fixed.isEmpty {
                 if let d = try? JSONEncoder().encode(fixed) { try? d.write(to: url, options: .atomic) }
                 pageChars[p] = fixed.reduce(0) { $0 + $1.text.count }; pageCharsMissing.remove(p)
@@ -738,7 +772,8 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
             }
             try? FileManager.default.removeItem(at: url)
         }
-        let taskKey = "\(p)\(scriptSuffix)"
+        let docPrefix = targetDocId?.uuidString ?? ""
+        let taskKey = "\(docPrefix)-\(p)\(scriptSuffix)"
         if let t = scriptTasks[taskKey] { return try await t.value }
         guard let doc = sourceDoc ?? doc, let pg = doc.safePage(p) else { return [] }
         let text = pg.string ?? ""
@@ -760,17 +795,21 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         scriptTasks[taskKey] = task
         defer { scriptTasks[taskKey] = nil }
         let segs = try await task.value
-        if let d = try? JSONEncoder().encode(segs) { try? d.write(to: url) }
-        pageChars[p] = segs.reduce(0) { $0 + $1.text.count }; pageCharsMissing.remove(p)
+        if let d = try? JSONEncoder().encode(segs) { try? d.write(to: url, options: .atomic) }
+        if self.docId == targetDocId {
+            pageChars[p] = segs.reduce(0) { $0 + $1.text.count }; pageCharsMissing.remove(p)
+        }
         return segs
     }
 
     // MARK: TTS (gemini-3.8-flash-tts via gateway, OpenAI-compatible /v1/audio/speech)
 
     func audio(page p: Int, seg i: Int, text: String, urgent: Bool = false) async throws -> Data {
+        let targetDocId = docId
         let tag = voiceTag
-        let key = clipStem(p, i, tag: tag)
-        if let w = clipData(page: p, seg: i, tag: tag) { learnPace(key: key, text: text, wav: w); return w }
+        let stem = clipStem(p, i, tag: tag)
+        let key = "\(targetDocId?.uuidString ?? "")-\(stem)"
+        if let w = clipData(page: p, seg: i, tag: tag, docId: targetDocId) { learnPace(key: stem, text: text, wav: w); return w }
         if let t = audioTasks[key] {
             if urgent { promoteSystem(text) }                   // the clip we are waiting on jumps the queue
             return try await t.value
@@ -790,9 +829,11 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
             if !fallbackToSystem { fallbackToSystem = true; fallbackReason = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription }
             return try await audio(page: p, seg: i, text: text, urgent: urgent)
         }
-        storeClip(d, page: p, seg: i, tag: tag)
-        learnPace(key: key, text: text, wav: d)
-        refreshBuffered()
+        storeClip(d, page: p, seg: i, tag: tag, docId: targetDocId)
+        learnPace(key: stem, text: text, wav: d)
+        if self.docId == targetDocId {
+            refreshBuffered()
+        }
         return d
     }
 

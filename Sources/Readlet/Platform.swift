@@ -190,6 +190,9 @@ final class ReaderController: NSObject, ObservableObject {
     @Published var narrationQuote: String?
     var segmentMentionsFigure = false
     private var narrationAnnotations: [PDFAnnotation] = []
+    private var focusPage: Int?
+    private var focusRect: CGRect = .zero
+    private var focusView: UIView?
     private var loading = false
     private var pendingInitialPage: Int? = nil
 
@@ -210,6 +213,16 @@ final class ReaderController: NSObject, ObservableObject {
             name: .PDFViewSelectionChanged,
             object: view
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(scaleChanged),
+            name: .PDFViewScaleChanged,
+            object: view
+        )
+    }
+
+    @objc private func scaleChanged() {
+        layoutFocus(animated: false)
     }
 
     func bind(docId id: UUID) {
@@ -218,6 +231,7 @@ final class ReaderController: NSObject, ObservableObject {
         let savedPage = Store.shared.doc(id)?.resolvedReadPage ?? 0
         loading = true
         if docId != id {
+            clearNarrationHighlight()
             docId = id
             let savedVar = Variant(rawValue: UserDefaults.standard.string(forKey: "variant-" + id.uuidString) ?? "") ?? Store.shared.variant
             variant = savedVar
@@ -264,6 +278,7 @@ final class ReaderController: NSObject, ObservableObject {
         }
         if view.bounds.width > 10 && view.bounds.height > 10 {
             pendingInitialPage = nil
+            layoutFocus(animated: false)
         }
     }
 
@@ -288,6 +303,7 @@ final class ReaderController: NSObject, ObservableObject {
         if currentPageIndex != idx {
             currentPageIndex = idx
         }
+        layoutFocus(animated: false)
         if let id = docId {
             UserDefaults.standard.set(idx, forKey: "page-" + id.uuidString)
             Store.shared.updateReadingProgress(docId: id, page: idx, pageCount: max(1, doc.pageCount))
@@ -324,6 +340,8 @@ final class ReaderController: NSObject, ObservableObject {
             return
         }
         let curPage = currentPageIndex
+        let activeFocusPage = focusPage
+        let activeQuote = narrationQuote
         loading = true
         variant = v
         UserDefaults.standard.set(v.rawValue, forKey: "variant-" + id.uuidString)
@@ -337,6 +355,11 @@ final class ReaderController: NSObject, ObservableObject {
         loading = false
         if v == .bilingual {
             ses.startBilingual(from: curPage)
+        }
+        if let fp = activeFocusPage {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                self?.highlightNarration(page: fp, quote: activeQuote)
+            }
         }
     }
 
@@ -389,6 +412,8 @@ final class ReaderController: NSObject, ObservableObject {
     func documentReplaced(_ s: DocSession) {
         guard docId == s.doc.id, variant == .bilingual else { return }
         let curPage = currentPageIndex
+        let activeFocusPage = focusPage
+        let activeQuote = narrationQuote
         let wasLoading = loading
         loading = true
         view.document = s.bilingual
@@ -398,6 +423,11 @@ final class ReaderController: NSObject, ObservableObject {
         }
         currentPageIndex = curPage
         loading = wasLoading
+        if let fp = activeFocusPage {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+                self?.highlightNarration(page: fp, quote: activeQuote)
+            }
+        }
     }
 
     func reloadAfterPDFEdit(session: DocSession, targetPage: Int) {
@@ -410,28 +440,225 @@ final class ReaderController: NSObject, ObservableObject {
         goToPage(targetPage)
     }
 
-    func highlightNarration(page: Int, quote: String?) {
-        clearNarrationHighlight()
+    func highlightNarration(page i: Int, quote: String?) {
+        clearNarrationAnnotationsOnly()
         narrationQuote = quote
-        guard let q = quote?.trimmingCharacters(in: .whitespacesAndNewlines), !q.isEmpty,
-              let doc = view.document, let pg = doc.safePage(page) else { return }
-        let selections = doc.findString(q, withOptions: [.caseInsensitive, .diacriticInsensitive])
-        for sel in selections where sel.pages.contains(pg) {
-            let b = sel.bounds(for: pg)
-            guard b.isSane else { continue }
-            let ann = PDFAnnotation(bounds: b.insetBy(dx: -2, dy: -1), forType: .highlight, withProperties: nil)
-            ann.color = UIColor.systemOrange.withAlphaComponent(0.35)
-            pg.addAnnotation(ann)
-            narrationAnnotations.append(ann)
+        guard let d = view.document,
+              let shown = d.safePage(i),
+              let id = docId,
+              let ses = Store.shared.session(id),
+              let orig = ses.original.safePage(i) else {
+            clearNarrationHighlight()
+            return
+        }
+
+        // Locate quote on the ORIGINAL page (matching macOS Reader.swift)
+        var target: CGRect?
+        if let q = quote?.trimmingCharacters(in: .whitespacesAndNewlines), q.count >= 3 {
+            let opts: NSString.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+            var found = ses.original.findString(q, withOptions: opts).first { $0.pages.contains(orig) }
+            if found == nil, q.count > 10 {
+                found = ses.original.findString(String(q.prefix(10)), withOptions: opts).first { $0.pages.contains(orig) }
+            }
+            if found == nil {
+                let firstClause = q.split(whereSeparator: { ".,;:!?，。；：！？\n—–-()（）\"'“”".contains($0) })
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .first { $0.count >= 4 }
+                if let fc = firstClause {
+                    found = ses.original.findString(String(fc.prefix(14)), withOptions: opts).first { $0.pages.contains(orig) }
+                }
+            }
+            if let sel = found {
+                target = blockRect(around: sel.bounds(for: orig), page: orig, isFigure: segmentMentionsFigure)
+            }
+        }
+        let origBox = orig.bounds(for: .cropBox)
+        target = target?.sanitized(in: origBox)
+        if target == nil {
+            target = orig.selection(for: origBox)?.bounds(for: orig).insetBy(dx: -6, dy: -6).sanitized(in: origBox)
+        }
+        guard var r = target else {
+            clearNarrationHighlight()
+            return
+        }
+
+        // Map into displayed page when viewing bilingual mode
+        if shown !== orig, let ins = ses.insertions[i], !ins.isEmpty {
+            let H0 = orig.bounds(for: .cropBox).maxY, H1 = shown.bounds(for: .cropBox).maxY
+            let top = H1 - DocSession.fromOriginal(H0 - r.maxY, ins)
+            let bottomTD = DocSession.fromOriginal(H0 - r.minY, ins)
+            var extra: CGFloat = 0
+            let cutAfter = ins.filter { $0.count >= 2 && CGFloat($0[0]) >= H0 - r.minY - 2 }.min { $0[0] < $1[0] }
+            if let c = cutAfter, CGFloat(c[0]) - (H0 - r.minY) < 24 {
+                extra = CGFloat(c[1]) + (CGFloat(c[0]) - (H0 - r.minY))
+            }
+            r = CGRect(
+                x: r.minX,
+                y: H1 - bottomTD - extra,
+                width: r.width,
+                height: (H1 - bottomTD - extra < top) ? top - (H1 - bottomTD - extra) : r.height
+            )
+        }
+        guard let safe = r.sanitized(in: shown.bounds(for: .cropBox)) else {
+            clearNarrationHighlight()
+            return
+        }
+        r = safe
+        focusPage = i
+        focusRect = r
+
+        // 1. Add a crisp page-locked PDFAnnotation frame so pinch-zoom and scrolling stay 100% locked
+        let ann = PDFAnnotation(bounds: r, forType: .square, withProperties: nil)
+        ann.color = UIColor.systemPurple.withAlphaComponent(0.65)
+        ann.interiorColor = UIColor.systemPurple.withAlphaComponent(0.06)
+        let border = PDFBorder()
+        border.lineWidth = 1.6
+        ann.border = border
+        shown.addAnnotation(ann)
+        narrationAnnotations.append(ann)
+
+        // 2. Also install the breathing focus layer on documentView and smoothly scroll the paragraph into view
+        installFocusLayer()
+        layoutFocus(animated: true)
+        centerSmoothly(r, on: shown)
+    }
+
+    private func blockRect(around hit: CGRect, page: PDFPage, isFigure: Bool) -> CGRect {
+        let full = page.bounds(for: .cropBox)
+        let lines = (page.selection(for: full)?.selectionsByLine() ?? [])
+            .map { $0.bounds(for: page) }
+            .filter { $0.width > 0 && $0.height > 0 }
+        guard let start = lines.firstIndex(where: { $0.intersects(hit.insetBy(dx: -1, dy: -1)) }) else {
+            return hit.insetBy(dx: -6, dy: -4)
+        }
+        let h = lines[start].height
+        guard h.isSane, h > 0 else { return hit.insetBy(dx: -6, dy: -4) }
+        let colL = lines.filter { abs($0.midY - lines[start].midY) < h * 0.6 }.map { $0.minX }.min() ?? lines[start].minX
+        let colR = lines.filter { abs($0.midY - lines[start].midY) < h * 0.6 }.map { $0.maxX }.max() ?? lines[start].maxX
+        func sameBlock(_ a: CGRect, _ b: CGRect) -> Bool {
+            let gap = abs(a.midY - b.midY)
+            let ov = min(a.maxX, b.maxX) - max(a.minX, b.minX)
+            return gap < h * 1.9 && gap > 0.3 * h && ov > 0.15 * min(a.width, b.width) && abs(a.height - b.height) < h * 0.6
+        }
+        var r = lines[start]
+        var k = start
+        while k > 0, sameBlock(lines[k - 1], lines[k]) { k -= 1; r = r.union(lines[k]) }
+        k = start
+        while k + 1 < lines.count, sameBlock(lines[k + 1], lines[k]) { k += 1; r = r.union(lines[k]) }
+        let blockText = (page.selection(for: r)?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let isCaption = blockText.range(of: "^(Figure|Fig\\.|Table)\\s*\\d", options: [.regularExpression, .caseInsensitive]) != nil
+        var isFig = isFigure || isCaption
+        if isFig && !isCaption,
+           let cap = lines.first(where: { (page.selection(for: $0)?.string ?? "").range(of: "^(Figure|Fig\\.)\\s*\\d", options: [.regularExpression, .caseInsensitive]) != nil }) {
+            r = cap
+            isFig = true
+        }
+        r = r.union(CGRect(x: colL, y: r.minY, width: colR - colL, height: r.height))
+        if r.width < full.width * 0.45 {
+            let cx = r.midX, w = full.width * 0.45
+            r = CGRect(x: max(full.minX + 20, cx - w / 2), y: r.minY, width: w, height: r.height)
+        }
+        if r.height < h * 2.2 {
+            r = r.insetBy(dx: 0, dy: -(h * 2.2 - r.height) / 2)
+        }
+        if isFig {
+            let bodyW = full.width * 0.55
+            let above = lines.filter { $0.minY > r.maxY + 2 && $0.width > bodyW }.map { $0.minY }.min() ?? full.maxY - 30
+            r = CGRect(x: min(r.minX, full.minX + 40), y: r.minY, width: max(r.width, full.width - 80), height: max(h, above - 4 - r.minY))
+        }
+        return r.insetBy(dx: -8, dy: -6)
+    }
+
+    private func installFocusLayer() {
+        guard let dv = view.documentView else { return }
+        if let existing = focusView, existing.superview === dv { return }
+        focusView?.removeFromSuperview()
+        let v = UIView(frame: .zero)
+        v.isUserInteractionEnabled = false
+        let l = v.layer
+        l.cornerRadius = 6
+        l.borderWidth = 1.6
+        l.borderColor = UIColor.systemPurple.withAlphaComponent(0.55).cgColor
+        l.backgroundColor = UIColor.systemPurple.withAlphaComponent(0.035).cgColor
+        l.shadowColor = UIColor.systemPurple.cgColor
+        l.shadowOffset = .zero
+        l.shadowRadius = 6
+        l.shadowOpacity = 0.0
+        let border = CABasicAnimation(keyPath: "borderColor")
+        border.fromValue = UIColor.systemPurple.withAlphaComponent(0.22).cgColor
+        border.toValue = UIColor.systemPurple.withAlphaComponent(0.70).cgColor
+        let glow = CABasicAnimation(keyPath: "shadowOpacity")
+        glow.fromValue = 0.0
+        glow.toValue = 0.35
+        let g = CAAnimationGroup()
+        g.animations = [border, glow]
+        g.duration = 1.4
+        g.autoreverses = true
+        g.repeatCount = .infinity
+        g.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        l.add(g, forKey: "breathe")
+        dv.addSubview(v)
+        focusView = v
+    }
+
+    func layoutFocus(animated: Bool = false) {
+        guard let v = focusView,
+              let i = focusPage,
+              let page = view.document?.safePage(i),
+              let dv = view.documentView else { return }
+        guard focusRect.isSane else { v.isHidden = true; return }
+        let inView = view.convert(focusRect, from: page)
+        let f = dv.convert(inView, from: view)
+        guard f.isSane else { v.isHidden = true; return }
+        v.isHidden = false
+        if animated {
+            UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseInOut, .allowUserInteraction]) {
+                v.frame = f
+            }
+        } else {
+            v.frame = f
         }
     }
 
-    func clearNarrationHighlight() {
-        narrationQuote = nil
+    private func findScrollView(in root: UIView) -> UIScrollView? {
+        if let sv = root as? UIScrollView { return sv }
+        for sub in root.subviews {
+            if let found = findScrollView(in: sub) { return found }
+        }
+        return nil
+    }
+
+    private func centerSmoothly(_ r: CGRect, on page: PDFPage) {
+        guard r.isSane, let sv = findScrollView(in: view) else { return }
+        let inView = view.convert(r, from: page)
+        let inScroll = sv.convert(inView, from: view)
+        guard inScroll.isSane, sv.bounds.height > 40 else { return }
+        // Reserve ~190pt at the bottom for the floating narrator card + bottom bar
+        let bottomCovered: CGFloat = min(sv.bounds.height * 0.48, 195)
+        let usableH = max(80, sv.bounds.height - bottomCovered)
+        let topPad: CGFloat = inScroll.height > usableH * 0.85 ? 18 : (usableH - inScroll.height) / 2
+        let targetY = inScroll.minY - topPad
+        let minY = -sv.adjustedContentInset.top
+        let maxY = max(minY, sv.contentSize.height - sv.bounds.height + sv.adjustedContentInset.bottom)
+        let clampedY = min(max(minY, targetY), maxY)
+        guard clampedY.isSane, abs(clampedY - sv.contentOffset.y) > 10 else { return }
+        sv.setContentOffset(CGPoint(x: sv.contentOffset.x, y: clampedY), animated: true)
+    }
+
+    private func clearNarrationAnnotationsOnly() {
         for ann in narrationAnnotations {
             ann.page?.removeAnnotation(ann)
         }
         narrationAnnotations.removeAll()
+    }
+
+    func clearNarrationHighlight() {
+        narrationQuote = nil
+        focusPage = nil
+        focusRect = .zero
+        focusView?.removeFromSuperview()
+        focusView = nil
+        clearNarrationAnnotationsOnly()
     }
 }
 

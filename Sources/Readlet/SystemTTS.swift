@@ -296,9 +296,13 @@ private final class SystemTTSJob: NSObject, AVSpeechSynthesizerDelegate, @unchec
     func run(_ u: AVSpeechUtterance, continuation c: CheckedContinuation<Data, Error>) {
         continuation = c
         keepAlive = self
+        #if os(iOS)
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.allowBluetoothA2DP, .defaultToSpeaker])
+        try? AVAudioSession.sharedInstance().setActive(true)
+        #endif
         synth.delegate = self
         synth.write(u) { [weak self] buf in self?.receive(buf) }
-        q.asyncAfter(deadline: .now() + 120) { [weak self] in self?.finish() }   // safety net
+        q.asyncAfter(deadline: .now() + 20) { [weak self] in self?.finish() }   // safety net
     }
 
     private func receive(_ buf: AVAudioBuffer) {

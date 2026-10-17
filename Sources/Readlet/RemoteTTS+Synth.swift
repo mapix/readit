@@ -16,7 +16,7 @@ extension RemoteTTS {
         switch t {
         case .noKey: return true
         case .bad(let m): return !m.hasPrefix("TTS:")          // local validation (URL, voice, App ID); bad audio is retried
-        case .http(let c, _): return (400..<500).contains(c) && c != 429
+        case .http(let c, _): return [401, 403, 404].contains(c)
         }
     }
 

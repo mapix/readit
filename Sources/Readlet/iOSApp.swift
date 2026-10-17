@@ -91,6 +91,10 @@ struct iOSRootView: View {
                         onOpenDoc: { id in
                             DocWindows.shared.open(id)
                             activeReaderDocId = id
+                        },
+                        onOpenNotebookMindMap: { nbId in
+                            store.currentNotebookId = nbId
+                            selectedTab = 1
                         }
                     )
                     .tabItem {
@@ -111,16 +115,16 @@ struct iOSRootView: View {
                     .tag(1)
 
                     iOSFlashcardsTabView(store: store)
-                        .tabItem {
-                            Label(L("闪卡"), systemImage: "rectangle.on.rectangle.angled")
-                        }
-                        .tag(2)
+                    .tabItem {
+                        Label(L("闪卡"), systemImage: "rectangle.on.rectangle.angled")
+                    }
+                    .tag(2)
 
                     iOSSettingsView(store: store, cloud: cloud)
-                        .tabItem {
-                            Label(L("设置与同步"), systemImage: "icloud.and.arrow.up")
-                        }
-                        .tag(3)
+                    .tabItem {
+                        Label(L("设置与同步"), systemImage: "icloud.and.arrow.up")
+                    }
+                    .tag(3)
                 }
             }
         }
@@ -183,24 +187,46 @@ struct iOSBookshelfView: View {
     @ObservedObject var lang = LangCenter.shared
     @ObservedObject var themeCenter = iOSThemeCenter.shared
     let onOpenDoc: (UUID) -> Void
+    var onOpenNotebookMindMap: ((UUID) -> Void)? = nil
 
+    @State private var selectedNotebookId: UUID? = nil
     @State private var selectedTagFilter: String = "ALL"
     @State private var showFileImporter = false
     @State private var showWebImportSheet = false
     @State private var showNewTagAlert = false
     @State private var tagTargetDocId: UUID?
     @State private var newTagText = ""
+    @State private var showNewNotebookAlert = false
+    @State private var newNotebookName = ""
+    @State private var showRenameNotebookAlert = false
+    @State private var renamingNotebookId: UUID?
+    @State private var renameNotebookText = ""
+    @State private var managingNotebookId: UUID?
     @State private var searchText = ""
 
+    private var activeNotebook: Notebook? {
+        guard let nbId = selectedNotebookId else { return nil }
+        return store.lib.notebooks.first { $0.id == nbId }
+    }
+
+    private var notebookScopedDocs: [Doc] {
+        if let nb = activeNotebook {
+            let idSet = Set(nb.docIds)
+            return store.lib.docs.filter { idSet.contains($0.id) }
+        }
+        return store.lib.docs
+    }
+
     private var filteredDocs: [Doc] {
+        let pool = notebookScopedDocs
         let base: [Doc]
         switch selectedTagFilter {
         case "ALL":
-            base = store.lib.docs
+            base = pool
         case "UNTAGGED":
-            base = store.lib.docs.filter { $0.tags.isEmpty }
+            base = pool.filter { $0.tags.isEmpty }
         default:
-            base = store.lib.docs.filter { d in
+            base = pool.filter { d in
                 d.tags.contains { $0.caseInsensitiveCompare(selectedTagFilter) == .orderedSame }
             }
         }
@@ -212,8 +238,9 @@ struct iOSBookshelfView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 14) {
                     iCloudBanner
+                    notebookShelfStrip
                     workflowRatioCard
                     if filteredDocs.isEmpty {
                         emptyStateView
@@ -223,7 +250,13 @@ struct iOSBookshelfView: View {
                                 iOSDocCardView(
                                     store: store,
                                     doc: doc,
-                                    onTap: { onOpenDoc(doc.id) },
+                                    activeNotebookId: selectedNotebookId,
+                                    onTap: {
+                                        if let nbId = selectedNotebookId {
+                                            store.currentNotebookId = nbId
+                                        }
+                                        onOpenDoc(doc.id)
+                                    },
                                     onAddCustomTag: {
                                         tagTargetDocId = doc.id
                                         newTagText = ""
@@ -300,6 +333,12 @@ struct iOSBookshelfView: View {
                         } label: {
                             Label(L("从网页链接导入…"), systemImage: "globe")
                         }
+                        Button {
+                            newNotebookName = ""
+                            showNewNotebookAlert = true
+                        } label: {
+                            Label(L("新建笔记本…"), systemImage: "book.closed")
+                        }
                         Divider()
                         Button {
                             cloud.syncNow(silent: false)
@@ -318,10 +357,16 @@ struct iOSBookshelfView: View {
                 allowsMultipleSelection: true
             ) { result in
                 guard case .success(let urls) = result else { return }
+                if let nbId = selectedNotebookId {
+                    store.currentNotebookId = nbId
+                }
                 for u in urls {
                     _ = u.startAccessingSecurityScopedResource()
                     defer { u.stopAccessingSecurityScopedResource() }
                     if let id = store.importPDF(u, open: false) {
+                        if let nbId = selectedNotebookId {
+                            store.addDocToNotebook(id, notebook: nbId)
+                        }
                         if urls.count == 1 { onOpenDoc(id) }
                     }
                 }
@@ -329,10 +374,22 @@ struct iOSBookshelfView: View {
             .sheet(isPresented: $showWebImportSheet) {
                 iOSWebImportSheet { importedDocId in
                     if let id = importedDocId {
+                        if let nbId = selectedNotebookId {
+                            store.addDocToNotebook(id, notebook: nbId)
+                        }
                         onOpenDoc(id)
                     }
                 }
                 .preferredColorScheme(themeCenter.colorScheme)
+            }
+            .sheet(isPresented: Binding(
+                get: { managingNotebookId != nil },
+                set: { if !$0 { managingNotebookId = nil } }
+            )) {
+                if let nbId = managingNotebookId {
+                    iOSNotebookDocsSheet(store: store, notebookId: nbId)
+                        .preferredColorScheme(themeCenter.colorScheme)
+                }
             }
             .alert(L("添加标签"), isPresented: $showNewTagAlert) {
                 TextField(L("标签名称（如 AI、精读）"), text: $newTagText)
@@ -343,7 +400,205 @@ struct iOSBookshelfView: View {
                     }
                 }
             }
+            .alert(L("新建笔记本"), isPresented: $showNewNotebookAlert) {
+                TextField(L("笔记本名称"), text: $newNotebookName)
+                Button(L("取消"), role: .cancel) {}
+                Button(L("创建")) {
+                    let trimmed = newNotebookName.trimmingCharacters(in: .whitespacesAndNewlines)
+                    store.newNotebook(name: trimmed.isEmpty ? L("新笔记本") : trimmed)
+                    selectedNotebookId = store.currentNotebookId
+                }
+            }
+            .alert(L("重命名笔记本"), isPresented: $showRenameNotebookAlert) {
+                TextField(L("笔记本名称"), text: $renameNotebookText)
+                Button(L("取消"), role: .cancel) {}
+                Button(L("保存")) {
+                    let trimmed = renameNotebookText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let id = renamingNotebookId, !trimmed.isEmpty {
+                        store.renameNotebook(id, trimmed)
+                    }
+                }
+            }
         }
+    }
+
+    private var notebookShelfStrip: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "books.vertical.fill")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.orange)
+                Text(L("笔记本"))
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if let nb = activeNotebook {
+                    Button {
+                        onOpenNotebookMindMap?(nb.id)
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "point.3.connected.trianglepath.dotted")
+                            Text(L("查看脑图"))
+                        }
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(MN.accent)
+                    }
+                    .buttonStyle(.plain)
+
+                    Text("·")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    Button {
+                        managingNotebookId = nb.id
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "checklist")
+                            Text(L("管理笔记本文档"))
+                        }
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(MN.accent)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Button {
+                        newNotebookName = ""
+                        showNewNotebookAlert = true
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "plus")
+                            Text(L("新建笔记本"))
+                        }
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(MN.accent)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    // "All PDFs" pill
+                    let allSelected = (selectedNotebookId == nil)
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.16)) {
+                            selectedNotebookId = nil
+                        }
+                    } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: "square.grid.2x2.fill")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(allSelected ? .white : MN.accent)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(L("全部文档"))
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(allSelected ? .white : .primary)
+                                    .lineLimit(1)
+                                Text(LF("%d 篇", store.lib.docs.count))
+                                    .font(.system(size: 10).monospacedDigit())
+                                    .foregroundStyle(allSelected ? .white.opacity(0.85) : .secondary)
+                            }
+                        }
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(allSelected ? MN.accent : Color.primary.opacity(0.05))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(allSelected ? MN.accent : Color.primary.opacity(0.08), lineWidth: 0.8)
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    // Each Notebook card
+                    ForEach(store.lib.notebooks) { nb in
+                        let isSelected = (selectedNotebookId == nb.id)
+                        let docCount = nb.docIds.filter { store.doc($0) != nil }.count
+                        let cardCount = store.lib.cards.filter { nb.docIds.contains($0.docId) }.count
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.16)) {
+                                if selectedNotebookId == nb.id {
+                                    selectedNotebookId = nil
+                                } else {
+                                    selectedNotebookId = nb.id
+                                    store.currentNotebookId = nb.id
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 7) {
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(isSelected ? Color.white : Color.orange)
+                                    .frame(width: 3.5, height: 24)
+                                Image(systemName: "book.closed.fill")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(isSelected ? .white : .orange)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(nb.name)
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(isSelected ? .white : .primary)
+                                        .lineLimit(1)
+                                    Text(LF("%d 篇 · %d 卡片", docCount, cardCount))
+                                        .font(.system(size: 10).monospacedDigit())
+                                        .foregroundStyle(isSelected ? .white.opacity(0.85) : .secondary)
+                                }
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(isSelected ? Color.orange : Color.primary.opacity(0.05))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(isSelected ? Color.orange : Color.primary.opacity(0.08), lineWidth: 0.8)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            Button {
+                                selectedNotebookId = nb.id
+                                store.currentNotebookId = nb.id
+                            } label: {
+                                Label(L("打开"), systemImage: "folder")
+                            }
+                            Button {
+                                onOpenNotebookMindMap?(nb.id)
+                            } label: {
+                                Label(L("查看脑图"), systemImage: "point.3.connected.trianglepath.dotted")
+                            }
+                            Button {
+                                managingNotebookId = nb.id
+                            } label: {
+                                Label(L("管理笔记本文档"), systemImage: "checklist")
+                            }
+                            Button {
+                                renamingNotebookId = nb.id
+                                renameNotebookText = nb.name
+                                showRenameNotebookAlert = true
+                            } label: {
+                                Label(L("重命名笔记本"), systemImage: "pencil")
+                            }
+                            if store.lib.notebooks.count > 1 {
+                                Divider()
+                                Button(role: .destructive) {
+                                    if selectedNotebookId == nb.id {
+                                        selectedNotebookId = nil
+                                    }
+                                    store.deleteNotebook(nb.id)
+                                } label: {
+                                    Label(L("删除笔记本"), systemImage: "trash")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(11)
+        .background(RoundedRectangle(cornerRadius: 14).fill(MN.panel))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.06), lineWidth: 0.6))
     }
 
     private var iCloudBannerSubtitle: String {
@@ -407,7 +662,7 @@ struct iOSBookshelfView: View {
     }
 
     private var workflowRatioCard: some View {
-        let docs = store.lib.docs
+        let docs = notebookScopedDocs
         let total = max(1, docs.count)
         let todoCount = docs.filter { $0.statusTag == .todo }.count
         let doingCount = docs.filter { $0.statusTag == .doing }.count
@@ -481,10 +736,10 @@ struct iOSBookshelfView: View {
 
     private var emptyStateView: some View {
         VStack(spacing: 14) {
-            Image(systemName: "doc.richtext")
+            Image(systemName: activeNotebook != nil ? "book.closed" : "doc.richtext")
                 .font(.system(size: 42))
                 .foregroundStyle(.secondary)
-            Text(L("暂无匹配的 PDF 文档"))
+            Text(activeNotebook != nil ? L("此笔记本还没有文档") : L("暂无匹配的 PDF 文档"))
                 .font(.headline)
             Text(L("点击右上角 + 导入 PDF 或网页链接，或在 Mac 上添加文档后通过 iCloud 自动同步到手机。"))
                 .font(.subheadline)
@@ -492,13 +747,23 @@ struct iOSBookshelfView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
             HStack(spacing: 12) {
-                Button {
-                    showFileImporter = true
-                } label: {
-                    Label(L("导入 PDF"), systemImage: "plus")
+                if let nb = activeNotebook, !store.lib.docs.isEmpty {
+                    Button {
+                        managingNotebookId = nb.id
+                    } label: {
+                        Label(L("添加文档到笔记本…"), systemImage: "checklist")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                } else {
+                    Button {
+                        showFileImporter = true
+                    } label: {
+                        Label(L("导入 PDF"), systemImage: "plus")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(MN.accent)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(MN.accent)
 
                 Button {
                     cloud.syncNow(silent: false)
@@ -514,11 +779,66 @@ struct iOSBookshelfView: View {
     }
 }
 
+struct iOSNotebookDocsSheet: View {
+    @ObservedObject var store: Store
+    let notebookId: UUID
+    @Environment(\.dismiss) private var dismiss
+
+    private var notebook: Notebook? {
+        store.lib.notebooks.first { $0.id == notebookId }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(store.lib.docs) { doc in
+                    let inNotebook = notebook?.docIds.contains(doc.id) ?? false
+                    Button {
+                        if inNotebook {
+                            store.currentNotebookId = notebookId
+                            store.removeDocFromNotebook(doc.id)
+                        } else {
+                            store.addDocToNotebook(doc.id, notebook: notebookId)
+                        }
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: inNotebook ? "checkmark.circle.fill" : "circle")
+                                .font(.title3)
+                                .foregroundStyle(inNotebook ? MN.accent : .secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(doc.title)
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(2)
+                                if let total = doc.pageCount {
+                                    Text("p.\(min(total, (doc.resolvedReadPage ?? 0) + 1))/\(total) · \(doc.progressPercent)%")
+                                        .font(.caption2.monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer()
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .navigationTitle(notebook?.name ?? L("管理笔记本文档"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(L("完成")) { dismiss() }
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Bookshelf Document Card & Thumbnail
 
 struct iOSDocCardView: View {
     @ObservedObject var store: Store
     let doc: Doc
+    var activeNotebookId: UUID? = nil
     let onTap: () -> Void
     let onAddCustomTag: () -> Void
 
@@ -617,6 +937,31 @@ struct iOSDocCardView: View {
                 }
             }
             Button { onAddCustomTag() } label: { Label(L("添加自定义标签…"), systemImage: "tag.fill") }
+            if !store.lib.notebooks.isEmpty {
+                Menu(L("加入笔记本")) {
+                    ForEach(store.lib.notebooks) { nb in
+                        let inside = nb.docIds.contains(doc.id)
+                        Button {
+                            if inside {
+                                store.currentNotebookId = nb.id
+                                store.removeDocFromNotebook(doc.id)
+                            } else {
+                                store.addDocToNotebook(doc.id, notebook: nb.id)
+                            }
+                        } label: {
+                            Label(nb.name, systemImage: inside ? "checkmark.circle.fill" : "book.closed")
+                        }
+                    }
+                }
+            }
+            if let nbId = activeNotebookId {
+                Button {
+                    store.currentNotebookId = nbId
+                    store.removeDocFromNotebook(doc.id)
+                } label: {
+                    Label(L("从此笔记本移除"), systemImage: "folder.badge.minus")
+                }
+            }
             Divider()
             Button(role: .destructive) {
                 store.deleteDoc(doc.id)
@@ -1170,11 +1515,11 @@ struct iOSNarratorBar: View {
         if let qa = narrator.lastQA {
             return "💬 \(qa.a)"
         }
-        if narrator.state == .preparing {
-            return L("正在准备本页 AI 语音讲稿与合成…")
-        }
         if narrator.segIndex < narrator.segments.count {
             return narrator.segments[narrator.segIndex].text
+        }
+        if narrator.state == .preparing {
+            return L("正在阅读本页并组织讲解…")
         }
         return L("AI 语音解读中…")
     }
@@ -1275,17 +1620,29 @@ struct iOSNarratorBar: View {
 
             // Row 2: Elevated inner subtitle box for clear reading hierarchy
             VStack(alignment: .leading, spacing: 4) {
+                if narrator.state == .preparing && !narrator.segments.isEmpty {
+                    HStack(spacing: 5) {
+                        ProgressView()
+                            .controlSize(.mini)
+                        Text(L("正在生成语音…"))
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(MN.accent)
+                    }
+                }
+
                 Text(currentSubtitle)
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(Color.primary)
-                    .lineLimit(3)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 if let err = narrator.error, !err.isEmpty {
                     Text(err)
                         .font(.caption2)
                         .foregroundStyle(.red)
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(.horizontal, 11)
@@ -1299,6 +1656,7 @@ struct iOSNarratorBar: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .stroke(MN.accent.opacity(0.16), lineWidth: 1)
             )
+            .animation(.easeInOut(duration: 0.18), value: currentSubtitle)
 
             // Row 3: Spacious Transport & Voice Controls
             HStack(spacing: 16) {

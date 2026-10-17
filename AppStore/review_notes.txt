@@ -1,17 +1,35 @@
-Readlet is a reader for PDFs, EPUB and web articles with bilingual translation, AI page-by-page narration and MarginNote-style notes.
+Below is the information requested under Guideline 2.1 (also saved in App Review Notes and attached as Readlet_AppReview_Demo.mp4):
 
-HOW TO TEST
-• Without any setup: File → Import PDF or Document… (⌘O), or drag a PDF onto the library. Reading, excerpts (select text → pick a colour), the mind map, search (⌘F) and narration with the macOS system voice work offline.
-• AI features (bilingual translation ⌘2, AI Narration ⇧⌘L, AI Assistant ⌘J, flashcards ⇧⌘K) use the user's own AI service. For review we provide a test gateway:
-    Settings (⌘,) → General → Gateway
-    Base URL:  <REVIEW_GATEWAY_URL>
-    API Key:   <REVIEW_API_KEY>
-    Protocol:  Anthropic Messages   ·   Model: claude-haiku-5-5
-  Then press "Test Connection". Sample document: File → Import from Web… → https://jvns.ca/blog/2024/11/26/terminal-rules/
+1. PHYSICAL MAC SCREEN RECORDING
+- Attached in App Review Information as `Readlet_AppReview_Demo.mp4` (ID: 2c3298ac-edf6-4aef-a6d9-5fc00faca1ba) and viewable at:
+  https://readlet.novarock.io/Readlet_AppReview_Demo.mp4
+- Recorded on a physical MacBook Pro running the latest macOS. It begins by launching `Readlet.app` from `/Applications`, opening the study library, opening an open-access technical paper in Split View (Document + Mind Map), switching from Original to layout-preserving Bilingual view, starting AI Voice Narration (`AI Narration`) with synchronized paragraph highlighting and spoken audio, collapsing to the floating Desktop Mini-Player Widget and expanding back, using the AI Assistant with page citations, and reviewing Flashcards.
+- Accounts / Login / Deletion: Not applicable (no user accounts or login).
+- User-Generated Content (UGC): Not applicable (local personal reader, no shared UGC).
+- Paid Content / IAP: Not applicable (100% free app, no IAP or subscriptions).
 
-NOTES
-• Bring-your-own-AI app: the user enters their own API endpoint and key, or uses a local model (Ollama / LM Studio on localhost). This is why NSAllowsArbitraryLoads / NSAllowsLocalNetworking are set — the servers are chosen by the user and local servers use http://.
-• Before the first AI request the app asks for consent and explains which content is sent to the AI service the user configured (guideline 5.1.2). The app has no accounts, analytics or tracking.
-• Entitlements: network.client (AI / speech services, web import), network.server (loopback only: 127.0.0.1:1455 receives the OAuth redirect of the optional "Sign in with ChatGPT"), user-selected files (import/export), movies folder (MP4 export of narration), print (web articles are printed to PDF), audio-input (hold-to-ask voice questions).
-• Sign in with ChatGPT (optional, Settings → General → ChatGPT Account) lets users with a ChatGPT plan use it instead of an API key; it follows OpenAI's program for open-source apps (Readlet's source: https://github.com/mapix/readit). It is not an account for the app and is never required — the test gateway above covers every feature.
-• Microphone and speech recognition are used only while the user holds the mic button during narration.
+2. APP PURPOSE & TARGET AUDIENCE
+- Purpose & Value: Readlet is a native macOS study workspace for PDFs, EPUBs, and web articles. It solves the difficulty of reading dense foreign-language papers (two-column PDFs with math formulas and figures) by rendering layout-preserving bilingual translations under each paragraph, providing page-by-page AI Voice Narration (`AI Narration`) that explains text and figures aloud, and linking multi-color excerpts to a MarginNote-style Mind Map and flashcards.
+- Target Audience: Researchers, university students, engineers, and self-learners on macOS.
+
+3. SETUP & FEATURE INSTRUCTIONS
+- Offline Features (No Setup Required):
+  Press Cmd+O (File -> Import PDF or Document…) or Cmd+Shift+O (File -> Import from Web…, e.g. https://jvns.ca/blog/2024/11/26/terminal-rules/). Highlighting text in 8 colors, excerpt cards, Mind Maps, search (Cmd+F), and narration with the macOS system voice work offline without setup.
+- AI Features (Bilingual Translation, AI Voice Narration, AI Assistant & Flashcards):
+  Readlet is a Bring-Your-Own-Key (BYOK) / local-AI app. For App Review testing, configure Settings (Cmd+,) -> General -> Gateway:
+  • Base URL: https://llm-proxy.learnings.ai
+  • API Key: <REVIEW_API_KEY>
+  • Protocol: Anthropic Messages
+  • Chat / Translation Model: claude-haiku-5-5
+  • Speech (TTS) Engine: Gateway (Model: gemini-3.8-flash-tts, Voice: Zephyr) or macOS System Voice
+  Then press Cmd+2 for Bilingual view, click "AI Narration" (Cmd+Shift+L) for page-by-page voice explanation (click collapse for the Desktop Mini-Player), click "AI" (Cmd+J) for Q&A, or open Flashcards (Cmd+Shift+K).
+
+4. EXTERNAL SERVICES & PLATFORMS USED
+- Apple Native Frameworks: PDFKit (PDF & vector bilingual rendering), WebKit (web article import), AVFoundation / AVSpeechSynthesizer (audio playback, AAC cache, offline system TTS), Speech (optional hold-to-ask voice input during narration).
+- User-Configured AI Endpoints (BYOK): Users connect their own API endpoint (Anthropic, OpenAI-compatible, Gemini TTS, or local models via Ollama / LM Studio on localhost). Before the first AI request, Readlet asks for explicit user consent explaining what content is sent to the configured AI service. No analytics, tracking SDKs, authentication, or payment services are used.
+
+5. REGIONAL DIFFERENCES
+- Readlet functions consistently across all regions and territories worldwide with no regional feature or content differences (UI supports English, Simplified Chinese, and Japanese).
+
+6. REGULATED INDUSTRY / PROTECTED THIRD-PARTY MATERIAL
+- Readlet does not operate in any regulated industry and does not include or distribute protected third-party material. Users import their own local files or public web articles.
