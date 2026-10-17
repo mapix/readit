@@ -237,12 +237,32 @@ fi
 
 rm -f "dist/$NAME-$VERSION.zip"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/$NAME-$VERSION.zip"
+
+# Automatically notarize & staple when signed with Developer ID
+if codesign -dvvv "$APP" 2>&1 | grep -q "Authority=Developer ID Application"; then
+  ASC_P8=$(ls "$HOME/.asc/keys/AuthKey_"*.p8 2>/dev/null | head -1 || true)
+  ASC_KEY_ID=$(basename "$ASC_P8" .p8 2>/dev/null | sed 's/^AuthKey_//' || true)
+  ASC_ISSUER_ID=$(asc auth issuer-id 2>/dev/null || echo "38bb7382-e1d7-4fa2-8bf5-56c8c967ffb4")
+  if [ -n "${NOTARY_PROFILE:-}" ]; then
+    echo "notarizing with profile $NOTARY_PROFILE…"
+    xcrun notarytool submit "dist/$NAME-$VERSION.zip" --keychain-profile "$NOTARY_PROFILE" --wait
+    xcrun stapler staple "$APP"
+    rm -f "dist/$NAME-$VERSION.zip"
+    ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/$NAME-$VERSION.zip"
+  elif [ -n "$ASC_P8" ] && [ -f "$ASC_P8" ] && [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ]; then
+    echo "notarizing with App Store Connect API Key ($ASC_KEY_ID)…"
+    xcrun notarytool submit "dist/$NAME-$VERSION.zip" --key "$ASC_P8" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" --wait
+    xcrun stapler staple "$APP"
+    rm -f "dist/$NAME-$VERSION.zip"
+    ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/$NAME-$VERSION.zip"
+  fi
+fi
 echo "packaged dist/$NAME-$VERSION.zip"
 
 if [ "${INSTALL:-1}" = "1" ]; then
   rm -rf /Applications/BiReader.app /Applications/Readit.app "/Applications/$NAME.app"
   cp -R "$APP" /Applications/
   # register with LaunchServices so Finder offers Readlet in "Open With"
-  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "/Applications/$NAME.app" >/dev/null 2>&1 || true
+  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices/Support/lsregister -f "/Applications/$NAME.app" >/dev/null 2>&1 || true
   echo "installed /Applications/$NAME.app"
 fi
