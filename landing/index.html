@@ -1,563 +1,154 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-Hans" data-theme="blue">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Readlet · 读懂每一页，留下每一处思考</title>
-<link rel="alternate" hreflang="en" href="/?lang=en"><link rel="alternate" hreflang="ja" href="/?lang=ja"><link rel="alternate" hreflang="zh" href="/?lang=zh">
-<meta name="description" content="Readlet 是一款面向深度阅读的 Mac、iPhone 与 iPad 应用：保留原排版的双语 PDF、网页一键转 PDF、MarginNote 式摘录与脑图、AI 逐页语音讲解与闪卡自测，并通过 iCloud 多端自动同步。">
-<meta property="og:title" content="Readlet — AI 双语深度阅读 · macOS &amp; iOS / iPadOS">
-<meta property="og:description" content="保留原排版的双语对照 · 网页一键转 PDF · 摘录卡片与脑图 · AI 逐页语音讲解 · 闪卡自测 · iCloud 多端自动同步">
-<meta property="og:image" content="/assets/shot-split.jpg">
-<link rel="icon" href="/assets/favicon.png">
-<style>
-  :root {
-    --ink: #0b0b0c; --sub: #55575d; --mute: #8a8c92; --line: #e8e8ea; --bg: #ffffff; --soft: #f6f6f4;
-    --blue: #e2561f; --violet: #c2410c; --amber: #f59e0b; --pink: #ec4899; --green: #10b981;
-    --mono: ui-monospace, "SF Mono", Menlo, monospace;
-  }
-  * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
-  body { margin: 0; color: var(--ink); background: var(--bg);
-    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
-    -webkit-font-smoothing: antialiased; }
-  a { color: inherit; text-decoration: none; }
-  .wrap { max-width: 1160px; margin: 0 auto; padding: 0 24px; }
-
-  /* nav */
-  nav { position: sticky; top: 0; z-index: 50; background: rgba(255,255,255,.82); backdrop-filter: saturate(180%) blur(14px);
-    border-bottom: 1px solid var(--line); }
-  nav .wrap { display: flex; align-items: center; height: 64px; gap: 28px; }
-  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; }
-  .brand img { width: 30px; height: 30px; border-radius: 8px; }
-  nav .links { display: flex; gap: 22px; margin-left: 30px; color: #3a3b40; font-size: 14.5px; }
-  nav .links a, nav .btn { white-space: nowrap; }
-  @media (max-width: 1180px) { nav .links { gap: 16px; margin-left: 18px; font-size: 14px; } }
-  @media (max-width: 1060px) { nav .links a[href="#web"] { display: none; } }
-  nav .links a:hover { color: var(--ink); }
-  nav .spacer { flex: 1; }
-  .btn { display: inline-flex; align-items: center; gap: 8px; border-radius: 10px; font-weight: 600; font-size: 15px;
-    padding: 12px 22px; transition: transform .15s ease, box-shadow .15s ease, background .15s; cursor: pointer; border: 0; }
-  .btn.dark { background: var(--ink); color: #fff; }
-  .btn.dark:hover { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(0,0,0,.18); }
-  .btn.ghost { background: #fff; border: 1px solid #d9dadd; color: var(--ink); }
-  .btn.ghost:hover { background: var(--soft); }
-  .gh-link { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; margin-right: 10px; border: 1px solid var(--line); border-radius: 999px; color: #2a2b30; text-decoration: none; font: 500 13px -apple-system, sans-serif; transition: border-color .2s, background .2s; }
-  .gh-link:hover { border-color: rgba(226,86,31,.45); background: #fff; }
-  .gh-inline { color: inherit; vertical-align: -3px; opacity: .7; }
-  .gh-inline:hover { opacity: 1; }
-  .gh-foot { display: inline-flex; align-items: center; gap: 7px; color: inherit; text-decoration: none; }
-  .gh-foot:hover { color: var(--blue); }
-  .btn.small { padding: 9px 16px; font-size: 14px; }
-
-  .lang { position: relative; margin-right: 8px; }
-  .lang-btn { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px 0 10px; border: 1px solid var(--line); border-radius: 999px; background: rgba(255,255,255,.75); backdrop-filter: blur(8px); font: 500 13px -apple-system, sans-serif; color: #3a3b40; cursor: pointer; transition: border-color .2s, box-shadow .2s, background .2s; }
-  .lang-btn:hover, .lang.open .lang-btn { border-color: rgba(226,86,31,.45); background: #fff; box-shadow: 0 2px 10px rgba(226,86,31,.12); }
-  .lang-btn svg { width: 15px; height: 15px; flex: none; }
-  .lang-btn .chev { width: 10px; height: 10px; opacity: .55; transition: transform .2s; }
-  .lang.open .lang-btn .chev { transform: rotate(180deg); }
-  .lang-menu { position: absolute; right: 0; top: calc(100% + 8px); min-width: 168px; padding: 6px; background: #fff; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 14px 40px rgba(40,20,10,.16); opacity: 0; transform: translateY(-6px) scale(.98); transform-origin: top right; pointer-events: none; transition: opacity .16s, transform .16s; z-index: 50; }
-  .lang.open .lang-menu { opacity: 1; transform: none; pointer-events: auto; }
-  .lang-menu button { display: flex; align-items: center; width: 100%; gap: 10px; border: 0; background: none; padding: 9px 10px; border-radius: 9px; font: 14px -apple-system, sans-serif; color: #2a2b30; cursor: pointer; text-align: left; }
-  .lang-menu button:hover { background: #fbf1ea; }
-  .lang-menu button .code { font: 600 10.5px ui-monospace, monospace; color: #fff; background: #c9b8ad; border-radius: 5px; padding: 2px 5px; min-width: 22px; text-align: center; }
-  .lang-menu button .ck { margin-left: auto; color: var(--blue); opacity: 0; font-weight: 700; }
-  .lang-menu button.on .code { background: var(--blue); }
-  .lang-menu button.on .ck { opacity: 1; }
-  html[lang=en] h1, html[lang=en] h2 { letter-spacing: -0.035em; }
-  html[lang=ja] h1 { font-size: clamp(38px, 6.2vw, 74px); }
-
-  /* hero */
-  .hero { text-align: center; padding: 92px 0 40px; position: relative; overflow: hidden; }
-  .hero::before { content: ""; position: absolute; inset: -20% -10% auto; height: 620px; z-index: -1;
-    background: radial-gradient(600px 300px at 50% 30%, rgba(234,120,40,.12), transparent 70%),
-                radial-gradient(500px 260px at 70% 10%, rgba(244,63,94,.08), transparent 70%); }
-  .pill { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: #fff; border-radius: 999px;
-    padding: 6px 14px; font: 13.5px var(--mono); color: #3a3b40; }
-  .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px rgba(16,185,129,.18); }
-  h1 { font-size: clamp(42px, 7vw, 82px); line-height: 1.05; letter-spacing: -0.03em; margin: 26px 0 0; font-weight: 800; }
-  h1 .hl { background: linear-gradient(90deg, var(--blue), var(--violet)); -webkit-background-clip: text; background-clip: text; color: transparent; }
-  .lead { max-width: 720px; margin: 22px auto 0; font-size: 19px; color: var(--sub); }
-  .ctas { display: flex; justify-content: center; gap: 12px; margin-top: 34px; flex-wrap: wrap; }
-  .meta { margin-top: 14px; font-size: 13px; color: var(--mute); }
-  .shot { margin: 56px auto 0; max-width: 1100px; border-radius: 16px; overflow: hidden; border: 1px solid #e3e3e6;
-    box-shadow: 0 40px 80px -30px rgba(10,20,60,.35), 0 10px 30px -10px rgba(0,0,0,.12); background: #f2f2f0; }
-  .shot img { display: block; width: 100%; }
-  .caption { text-align: center; margin-top: 18px; font: 14px var(--mono); color: var(--sub); }
-  .caption b { color: var(--ink); font-weight: 600; }
-
-  /* section heading */
-  section { padding: 110px 0 40px; }
-  .eyebrow { font: 13px var(--mono); letter-spacing: .14em; color: var(--blue); text-transform: uppercase; text-align: center; }
-  h2 { font-size: clamp(30px, 4.2vw, 46px); line-height: 1.12; letter-spacing: -0.02em; margin: 14px auto 0; text-align: center; max-width: 900px; font-weight: 750; }
-  h2 .hl { color: var(--blue); }
-  .sublead { text-align: center; color: var(--sub); max-width: 700px; margin: 16px auto 0; font-size: 17px; }
-
-  /* AI section */
-  .ai { background: radial-gradient(1200px 500px at 50% 0%, #fff3e6 0%, #ffffff 70%); }
-  .ai .eyebrow { color: var(--violet); }
-  .ai h2 .hl { background: linear-gradient(90deg, var(--violet), var(--blue)); -webkit-background-clip: text; background-clip: text; color: transparent; }
-  .ai-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 20px; margin-top: 56px; }
-  .card { background: #fff; border: 1px solid var(--line); border-radius: 18px; padding: 28px; position: relative; overflow: hidden;
-    transition: transform .2s ease, box-shadow .2s ease; }
-  .card:hover { transform: translateY(-3px); box-shadow: 0 20px 40px -20px rgba(60,40,140,.25); }
-  .card h3 { margin: 14px 0 8px; font-size: 21px; letter-spacing: -0.01em; }
-  .card p { margin: 0; color: var(--sub); font-size: 15px; }
-  .card .ico { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; font-size: 21px; }
-  .card .tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 16px; }
-  .tag { font: 12px var(--mono); background: var(--soft); color: #4b4d53; padding: 4px 8px; border-radius: 6px; }
-  .card .media { margin: 22px -28px -28px; border-top: 1px solid var(--line); background: #f7f7f5; }
-  .card .media img { display: block; width: 100%; }
-  .c-narrate { grid-column: span 7; background: linear-gradient(160deg, #fffaf3, #ffffff 60%); }
-  .c-copilot { grid-column: span 5; }
-  .c-map { grid-column: span 5; }
-  .c-flash { grid-column: span 7; }
-  .wave { display: flex; gap: 4px; align-items: end; height: 26px; margin-top: 18px; }
-  .wave i { width: 4px; border-radius: 2px; background: linear-gradient(var(--violet), var(--blue)); animation: wv 1.1s ease-in-out infinite; }
-  @keyframes wv { 0%,100% { height: 6px } 50% { height: 26px } }
-  .breath { position: relative; margin: 22px 0 4px; padding: 16px 18px; border-radius: 10px; font: 14px/1.65 Georgia, "Times New Roman", serif; color: #222;
-    border: 1.2px solid rgba(226,86,31,.35); animation: br 2.6s ease-in-out infinite; background: rgba(226,86,31,.025); }
-  @keyframes br { 0%,100% { box-shadow: 0 0 0 0 rgba(226,86,31,0); border-color: rgba(226,86,31,.18) } 50% { box-shadow: 0 0 18px 0 rgba(226,86,31,.18); border-color: rgba(226,86,31,.5) } }
-  .bubble { margin-top: 14px; font-size: 14px; color: #7a2e0e; background: #fff1e6; border-radius: 12px 12px 12px 3px; padding: 10px 14px; display: inline-block; }
-
-  .flip { perspective: 1200px; margin-top: 22px; height: 230px; cursor: pointer; position: relative; }
-  .fc { position: absolute; inset: 0; border-radius: 16px; padding: 22px 24px; backface-visibility: hidden; transition: transform .6s cubic-bezier(.2,.7,.2,1);
-    border: 1px solid rgba(37,99,235,.2); background: #fff; box-shadow: 0 14px 30px -18px rgba(0,0,0,.25); display: flex; flex-direction: column; }
-  .fc.back { transform: rotateY(180deg); background: linear-gradient(140deg, #f6f2ff, #eef4ff); }
-  .flip.on .front { transform: rotateY(-180deg); } .flip.on .back { transform: rotateY(0); }
-  .flip:not(.on):hover .front { transform: rotateY(-8deg); }
-  .fc .kind { font: 600 12px var(--mono); color: var(--blue); background: #e8f0ff; padding: 3px 9px; border-radius: 999px; align-self: flex-start; }
-  .fc .pg { position: absolute; right: 22px; top: 22px; font-size: 12px; color: var(--blue); }
-  .fc .q { margin: auto 0; text-align: center; font-size: 19px; font-weight: 650; line-height: 1.45; }
-  .fc .q.a { font-size: 17px; font-weight: 600; margin-bottom: 6px; }
-  .fc .ex { text-align: center; color: var(--sub); font-size: 13.5px; margin-bottom: auto; }
-  .fc .hint { text-align: center; font-size: 12px; color: var(--mute); }
-  .fc .acts { display: flex; gap: 10px; justify-content: center; }
-  .fc .acts span { font-size: 13px; padding: 6px 14px; border-radius: 8px; }
-  .fc .again { background: #fff3e0; color: #b45309; } .fc .ok { background: #dcfce7; color: #047857; }
-
-  /* bilingual section */
-  .bi { background: var(--soft); }
-  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; margin-top: 56px; }
-  .split .text h3 { font-size: 30px; letter-spacing: -0.02em; margin: 0 0 14px; line-height: 1.2; }
-  .split .text p { color: var(--sub); font-size: 16.5px; }
-  .checks { list-style: none; padding: 0; margin: 22px 0 0; }
-  .checks li { padding: 8px 0 8px 30px; position: relative; color: #2a2b30; }
-  .checks li::before { content: ""; position: absolute; left: 0; top: 12px; width: 18px; height: 18px; border-radius: 50%;
-    background: var(--blue) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='white' stroke-width='2.2' d='M4 8.5l2.6 2.6L12 5.5'/%3E%3C/svg%3E") center/12px no-repeat; }
-  .demo { background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 30px 34px; box-shadow: 0 30px 60px -30px rgba(0,0,0,.18);
-    font: 15.5px/1.7 Georgia, "Times New Roman", serif; }
-  .demo .en { color: #111; }
-  .demo .zh { font: 14.5px/1.75 -apple-system, "PingFang SC", sans-serif; color: #333; border-left: 2px solid rgba(236,72,153,.6); padding-left: 12px; margin: 8px 0 18px; }
-  .demo h4 { font: 700 18px Georgia, serif; margin: 0 0 4px; }
-  .demo .eq { text-align: center; font-style: italic; margin: 6px 0 16px; color: #111; }
-
-  /* notes section */
-
-  /* web import */
-  .web { background: linear-gradient(180deg, #ffffff 0%, #f4f8ff 100%); }
-  .web .eyebrow { color: var(--blue); }
-  .wdemo { display: grid; grid-template-columns: 1fr 34px 0.78fr; align-items: center; gap: 6px; }
-  .wdemo .lbl { font: 12px var(--mono); color: var(--sub); text-align: center; margin-top: 10px; }
-  .browser { border: 1px solid var(--line); border-radius: 12px; background: #fff; box-shadow: 0 18px 40px -24px rgba(30,40,90,.35); overflow: hidden; position: relative; padding-bottom: 10px; }
-  .browser .bar { display: flex; align-items: center; gap: 5px; padding: 8px 10px; background: #f3f3f5; border-bottom: 1px solid var(--line); }
-  .browser .bar i { width: 8px; height: 8px; border-radius: 50%; background: #d9d9de; display: block; }
-  .browser .bar span { font: 10px var(--mono); color: #8e8e93; margin-left: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .browser .page { padding: 10px; position: relative; min-height: 210px; }
-  .browser .nav { height: 14px; border-radius: 4px; background: #e9e4ff; margin-bottom: 10px; }
-  .browser .cols { display: grid; grid-template-columns: 1fr 56px; gap: 10px; }
-  .browser .main b, .a4 b { display: block; height: 11px; width: 72%; background: #2a2b30; border-radius: 3px; margin-bottom: 9px; }
-  .browser .main p, .a4 p { height: 6px; background: #d4d6dc; border-radius: 3px; margin: 0 0 7px; }
-  .browser .main p.short, .a4 p.short { width: 58%; }
-  .browser .main .img, .a4 .img { height: 46px; border-radius: 6px; background: linear-gradient(135deg, #cfe0ff, #e9dcff); margin: 9px 0; }
-  .browser .side div { height: 38px; border-radius: 6px; background: #ffe6e1; margin-bottom: 8px; }
-  .browser .share { position: absolute; left: 8px; top: 64px; font-size: 11px; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px; writing-mode: vertical-rl; letter-spacing: 6px; }
-  .browser .cookie { position: absolute; left: 10px; right: 10px; bottom: 6px; font-size: 11px; background: #23242a; color: #fff; border-radius: 8px; padding: 7px 10px; }
-  .browser .x { opacity: .55; }
-  .browser .x::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(135deg, rgba(255,90,90,.0) 0 6px, rgba(255,90,90,.18) 6px 8px); border-radius: inherit; }
-  .browser .nav.x, .browser .side.x { position: relative; }
-  .wdemo .arrow { font-size: 24px; color: var(--blue); text-align: center; }
-  .a4 { background: #fff; border: 1px solid var(--line); border-radius: 6px; aspect-ratio: 1 / 1.414; padding: 16px 14px; box-shadow: 0 22px 44px -26px rgba(30,40,90,.45); position: relative; }
-  .a4 s { display: block; height: 5px; width: 44%; background: #a9acb5; border-radius: 3px; margin: -2px 0 12px; text-decoration: none; }
-  .a4 .lbl { position: absolute; left: 0; right: 0; bottom: -28px; }
-  .newv { background: #fff; }
-  .newv .eyebrow { color: var(--violet); }
-  .newv h2 .hl { background: linear-gradient(90deg, var(--violet), var(--blue)); -webkit-background-clip: text; background-clip: text; color: transparent; }
-  @media (max-width: 860px) { .wdemo { grid-template-columns: 1fr; } .wdemo .arrow { transform: rotate(90deg); } .a4 { max-width: 260px; margin: 0 auto 30px; } }
-  .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 52px; }
-  .feat { border: 1px solid var(--line); border-radius: 16px; padding: 24px; background: #fff; }
-  .feat .ico { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; font-size: 19px; }
-  .feat h4 { margin: 14px 0 6px; font-size: 17.5px; }
-  .feat p { margin: 0; color: var(--sub); font-size: 14.5px; }
-  .colors { display: flex; gap: 6px; margin-top: 14px; }
-  .colors i { width: 16px; height: 16px; border-radius: 50%; border: 1px solid rgba(0,0,0,.1); }
-
-  /* download */
-  .dl { text-align: center; padding: 110px 0 120px; }
-  .dl-card { max-width: 820px; margin: 46px auto 0; border-radius: 22px; padding: 46px; color: #fff; text-align: left;
-    background: radial-gradient(520px 230px at 85% 0%, rgba(234,120,40,.55), transparent 70%), linear-gradient(135deg, #1a1411, #2a1d17);
-    display: grid; grid-template-columns: 110px 1fr; gap: 28px; align-items: center; box-shadow: 0 40px 80px -30px rgba(20,20,60,.6); }
-  .dl-card img { width: 110px; height: 110px; border-radius: 26px; box-shadow: 0 14px 30px rgba(0,0,0,.4); }
-  .dl-card h3 { margin: 0; font-size: 28px; letter-spacing: -0.01em; }
-  .dl-card .v { font: 13px var(--mono); color: #b9bccb; margin-top: 4px; }
-  .dl-two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 1000px; margin: 0 auto; }
-  .dl-two { margin-top: 44px; align-items: stretch; }
-  .dl-two .dl-card { margin: 0; max-width: none; grid-template-columns: 72px 1fr; gap: 20px; padding: 30px 28px; align-items: start; }
-  .dl-two .dl-card img { width: 72px; height: 72px; border-radius: 17px; }
-  .dl-two .dl-card h3 { font-size: 22px; }
-  .dl-two .dl-card .v { font-family: inherit; font-size: 13px; line-height: 1.5; margin-top: 6px; }
-  .dl-card.store { background: linear-gradient(135deg, #1d1d2b, #2a2350); }
-  .btn.appstore[aria-disabled="true"] { opacity: .65; pointer-events: none; }
-  @media (max-width: 860px) { .dl-two { grid-template-columns: 1fr; } }
-  footer .legal a { color: inherit; opacity: .8; margin: 0 6px; }
-  .dl-card .row { display: flex; gap: 12px; margin-top: 20px; flex-wrap: wrap; align-items: center; }
-  .dl-card .btn.light { background: #fff; color: #111; }
-  .dl-card .btn.light:hover { transform: translateY(-1px); box-shadow: 0 10px 26px rgba(0,0,0,.35); }
-  .dl-card .note { font-size: 13px; color: #a7aabb; margin-top: 16px; line-height: 1.6; }
-  .dl-card code { font: 12.5px var(--mono); background: rgba(255,255,255,.08); padding: 2px 6px; border-radius: 5px; color: #e4e6f2; }
-  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; max-width: 820px; margin: 22px auto 0; text-align: left; }
-  .steps div { border: 1px solid var(--line); border-radius: 14px; padding: 18px; font-size: 14px; color: var(--sub); background: #fff; }
-  .steps b { display: block; color: var(--ink); font-size: 15px; margin-bottom: 4px; }
-
-  footer { border-top: 1px solid var(--line); padding: 30px 0 50px; color: var(--mute); font-size: 13.5px; }
-  footer .wrap { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
-
-  /* reveal */
-  .rv { opacity: 0; transform: translateY(18px); transition: opacity .7s ease, transform .7s ease; }
-  .rv.in { opacity: 1; transform: none; }
-
-  @media (max-width: 920px) {
-    nav .links { display: none; }
-    .ai-grid { grid-template-columns: 1fr; }
-    .c-narrate, .c-copilot, .c-map, .c-flash { grid-column: auto; }
-    .split, .features, .steps { grid-template-columns: 1fr; }
-    .dl-card { grid-template-columns: 1fr; text-align: center; }
-    .dl-card img { margin: 0 auto; }
-    .dl-card .row { justify-content: center; }
-  }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Readlet：macOS 与 iOS / iPadOS 原生 AI 双语深度阅读器。支持保留原排版双语 PDF、动态交互网页 URL 导入与自动净化、MarginNote 式摘录脑图、AI 逐页语音解读与 SM-2 闪卡，iCloud 自动同步。">
+  <meta property="og:title" content="Readlet — 读懂每一页，留下每一处思考。">
+  <meta property="og:description" content="探索 Readlet：矢量双语对照、动态交互网页精读、AI 逐页语音解读、摘录脑图、SM-2 闪卡与 iCloud 跨端同步。">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://readlet.novarock.io/">
+  <meta property="og:image" content="/assets/shot-split.jpg">
+  <link rel="canonical" href="https://readlet.novarock.io/">
+  <link rel="icon" href="assets/favicon.png?v=20261107">
+  <link rel="stylesheet" href="styles.css?v=20261107-smail1">
+  <title>Readlet — 读懂每一页，留下每一处思考。</title>
+  <script src="app.js?v=20261107-smail1" defer></script>
+  <script src="motion.js?v=20261107-smail1" defer></script>
 </head>
 <body>
-<nav>
-  <div class="wrap">
-    <a class="brand" href="#"><img src="/assets/icon.png" alt="">Readlet</a>
-    <div class="links">
-      <a href="#ai"><span data-i18n="1">AI 功能</span></a>
-      <a href="#bilingual"><span data-i18n="2">双语阅读</span></a>
-      <a href="#web"><span data-i18n="98">网页导入</span></a>
-      <a href="#notes"><span data-i18n="3">笔记与脑图</span></a>
-      <a href="#download"><span data-i18n="4">下载</span></a>
-    </div>
-    <div class="spacer"></div>
-    <div class="lang" aria-label="Language">
-      <button class="lang-btn" aria-haspopup="true" aria-expanded="false">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></svg>
-        <span class="cur">中文</span>
-        <svg class="chev" viewBox="0 0 10 10"><path d="M1.5 3.5L5 7l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-      </button>
-      <div class="lang-menu" role="menu">
-        <button data-lang="zh" role="menuitemradio"><span class="code">ZH</span>简体中文<span class="ck">✓</span></button>
-        <button data-lang="en" role="menuitemradio"><span class="code">EN</span>English<span class="ck">✓</span></button>
-        <button data-lang="ja" role="menuitemradio"><span class="code">JA</span>日本語<span class="ck">✓</span></button>
-      </div>
-    </div>
-    <a class="gh-link" href="https://github.com/mapix/readit" target="_blank" rel="noopener" title="GitHub"><svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg><span>GitHub</span></a>
-    <a class="btn dark small" href="#download"><span data-i18n="5">免费下载</span></a>
-  </div>
-</nav>
-
-<header class="hero">
-  <div class="wrap">
-    <span class="pill"><span class="dot"></span><span data-i18n="144">Readlet 1.0.0 · macOS 14+ &amp; iOS / iPadOS 17+ · iCloud 自动同步</span></span>
-    <h1><span data-i18n="6">读懂每一页，</span><br><span data-i18n="7">让</span> <span class="hl">AI</span> <span data-i18n="8">陪你读完。</span></h1>
-    <p class="lead"><span data-i18n="9">Readlet 把英文论文、书籍和网页文章变成保留原排版的双语对照；你可以像在 MarginNote 里一样摘录、批注、整理成脑图。AI 会讲解每一页、回答你的问题、为你出闪卡，并通过 iCloud 在 Mac、iPhone 与 iPad 间无缝同步。</span></p>
-    <div class="ctas">
-      <a class="btn dark" href="/download/Readlet-1.0.0.zip" data-dl>
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M11.2 8.5c0-1.6 1.3-2.4 1.4-2.4-.8-1.1-1.9-1.3-2.3-1.3-1-.1-1.9.6-2.4.6s-1.3-.6-2.1-.5c-1.1 0-2.1.6-2.6 1.6-1.1 1.9-.3 4.8.8 6.4.5.8 1.2 1.6 2 1.6.8 0 1.1-.5 2.1-.5s1.2.5 2.1.5c.9 0 1.4-.8 1.9-1.6.6-.9.9-1.8.9-1.8s-1.8-.7-1.8-2.6zM9.6 3.7c.4-.5.7-1.2.6-1.9-.6 0-1.4.4-1.8.9-.4.4-.8 1.1-.7 1.8.7.1 1.4-.3 1.9-.8z"/></svg>
-        <span data-i18n="10">下载 Readlet for Mac</span>
-      </a>
-      <a class="btn ghost" href="/download/Readlet-1.0.0-iOS.ipa" data-dl-ios>
-        <span data-i18n="145">📱 下载 iOS / iPadOS 版</span>
-      </a>
-      <a class="btn ghost" href="#demo-video"><span data-i18n="11">▶ 看看 AI 能做什么</span></a>
-    </div>
-    <div class="meta"><a class="gh-inline" href="https://github.com/mapix/readit" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a> <span data-i18n="12">免费开源 · 支持 macOS 与 iOS / iPadOS · iCloud 自动同步 · 使用你自己的模型网关（Anthropic / OpenAI 兼容）</span></div>
-    <div class="shot rv"><img src="/assets/shot-split.jpg?v=20261016" alt="Readlet: Outline, Bilingual PDF, AI Voice Narration &amp; Mind Map"></div>
-    <div class="caption"><span data-i18n="13">PDF 摘录 · 脑图节点 · 闪卡 —</span> <b><span data-i18n="14">同一张卡片，三种形态。</span></b></div>
-
-    <div id="demo-video" class="shot rv" style="margin-top:42px;background:#141418;padding:0">
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px;background:#1e1e24;border-bottom:1px solid rgba(255,255,255,.08);color:#e4e4e8;font:600 13.5px var(--mono)">
-        <span style="display:inline-flex;align-items:center;gap:8px"><span style="width:9px;height:9px;border-radius:50%;background:#a855f7;box-shadow:0 0 0 3px rgba(168,85,247,.25)"></span><span data-i18n="136">实机录屏演示 · AI 逐页语音讲解 + 双语对照 + 脑图与闪卡</span></span>
-        <span style="font-size:12px;color:#9ca3af">🔊 <span data-i18n="137">开启声音体验 AI 语音讲解</span></span>
-      </div>
-      <video src="/Readlet_AppReview_Demo.mp4?v=20261017" poster="/assets/shot-narrate.jpg?v=20261017" controls playsinline preload="metadata" style="display:block;width:100%;max-height:700px;background:#000"></video>
-    </div>
-  </div>
+<svg class="sr-only" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h15m-6-6 6 6-6 6"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 4v16M4 12h16"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="m5 5 14 14M19 5 5 19"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H12v17H6.5A2.5 2.5 0 0 0 4 22.5V5.5Zm16 0A2.5 2.5 0 0 0 17.5 3H12v17h5.5a2.5 2.5 0 0 1 2.5 2.5V5.5Z"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H5v18h14V8ZM14 3v5h5M8 12h8M8 16h6"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m4 12 5 5L20 6"/></symbol>
+</defs></svg>
+<a class="skip-link" href="#main" data-en="Skip to content">跳到内容</a>
+<header class="site-header">
+  <a class="brand" href="#main"><img src="assets/icon.png" width="30" height="30" alt=""><span>Readlet</span><span class="edition">Fall ’26</span></a>
+  <div class="header-explore"><button class="plain-button" id="menu-toggle" aria-expanded="false" aria-controls="chapter-menu"><span data-en="Explore">探索</span><svg class="icon chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button><button class="plain-button" id="search-open"><span data-en="Search">搜索</span><svg class="icon"><use href="#i-search"/></svg></button></div>
+  <div class="header-actions"><a class="source-link" href="https://github.com/mapix/readit" target="_blank" rel="noopener">GitHub</a><button id="language-toggle" class="plain-button" aria-label="Switch to English">EN</button><a class="pill light" href="#download"><span data-en="Get Readlet">下载 Readlet</span><svg class="icon"><use href="#i-arrow"/></svg></a></div>
+  <nav id="chapter-menu" class="chapter-menu" aria-label="功能目录" hidden>
+    <a href="#bilingual"><span data-en="Bilingual">双语精读</span><span>01</span></a><a href="#web"><span data-en="Live Web">动态网页</span><span>02</span></a><a href="#notes"><span data-en="Notes & Map">摘录与脑图</span><span>03</span></a><a href="#narrate"><span data-en="Narration & Chat">语音与对话</span><span>04</span></a><a href="#flashcards"><span data-en="Flashcards">闪卡记忆</span><span>05</span></a><a href="#responders"><span data-en="Clean & Edit">净化与编辑</span><span>06</span></a><a href="#models"><span data-en="Models & TTS">模型与语音</span><span>07</span></a><a href="#native"><span data-en="Mac & iOS">原生双端</span><span>08</span></a>
+  </nav>
 </header>
-
-<section id="ai" class="ai">
-  <div class="wrap">
-    <div class="eyebrow"><span data-i18n="15">AI 学习伙伴 · 新</span></div>
-    <h2><span data-i18n="16">不只是翻译，</span><span class="hl"><span data-i18n="17">AI 会讲给你听。</span></span></h2>
-    <p class="sublead"><span data-i18n="18">你读到哪一页，AI 就讲到哪一页：它会讲解图表、回答你随口一问、把整份文档画成脑图，再出一套题帮你检验有没有读懂。</span></p>
-
-    <div class="ai-grid">
-      <div class="card c-narrate rv">
-        <div class="ico" style="background:#efe9ff">🎧</div>
-        <h3><span data-i18n="19">AI 逐页语音解读</span></h3>
-        <p><span data-i18n="20">AI 看着页面原图，用口语一段一段讲给你听，图表和公式也会讲到，并自动翻页。按住麦克风就能打断它提问，答完它会接着讲。</span></p>
-        <div class="wave"><i style="animation-delay:-.1s"></i><i style="animation-delay:-.5s"></i><i style="animation-delay:-.3s"></i><i style="animation-delay:-.8s"></i><i style="animation-delay:-.2s"></i><i style="animation-delay:-.6s"></i><i style="animation-delay:-.4s"></i><i style="animation-delay:-.9s"></i><i style="animation-delay:-.15s"></i><i style="animation-delay:-.7s"></i></div>
-        <div class="breath">Figure 2 | Single-token Decode FLOPs versus context length across generations of DeepSeek models…</div>
-        <div class="bubble"><span data-i18n="21">“Let's look closely at Figure 2 first: the horizontal axis plots context length from 4K to 1M tokens, while the vertical axis shows single-token decode FLOPs…”</span></div>
-        <div class="tags"><span class="tag"><span data-i18n="22">图表讲解</span></span><span class="tag"><span data-i18n="23">语音打断提问</span></span><span class="tag"><span data-i18n="24">预缓冲 10 段</span></span><span class="tag">0.75–2×</span><span class="tag"><span data-i18n="25">断点续听</span></span></div>
-        <div class="media"><img src="/assets/shot-narrate.jpg?v=20261016" alt="AI Voice Narration Player"></div>
-      </div>
-
-      <div class="card c-copilot rv">
-        <div class="ico" style="background:#e8f0ff">✨</div>
-        <h3><span data-i18n="26">AI 助手</span></h3>
-        <p><span data-i18n="27">一键总结本页或全文，讲清关键概念。选中一段文字就能“问 AI”，回答会标注页码，点一下即可跳回原文。对话按文档保存。</span></p>
-        <div class="tags"><span class="tag"><span data-i18n="28">本页摘要</span></span><span class="tag"><span data-i18n="29">全文导读</span></span><span class="tag"><span data-i18n="30">选中提问</span></span><span class="tag"><span data-i18n="31">页码跳转</span></span></div>
-        <div class="media"><img src="/assets/ui-copilot.jpg?v=20261016" alt="AI Assistant" style="max-height:420px;object-fit:cover;object-position:top"></div>
-      </div>
-
-      <div class="card c-map rv">
-        <div class="ico" style="background:#e6f7f0">🧠</div>
-        <h3><span data-i18n="32">AI 生成文档脑图</span></h3>
-        <p><span data-i18n="33">AI 通读全文，生成层级清晰的结构化脑图。每个要点都锚定在原文上，自动高亮，双击节点即可回到 PDF。</span></p>
-        <div class="tags"><span class="tag"><span data-i18n="34">一键成图</span></span><span class="tag"><span data-i18n="35">原文锚点</span></span><span class="tag"><span data-i18n="36">可继续编辑</span></span></div>
-        <div class="media"><img src="/assets/ui-mindmap.jpg?v=20261016" alt="AI Generated Mind Map"></div>
-      </div>
-
-      <div class="card c-flash rv">
-        <div class="ico" style="background:#fff3dc">🗂</div>
-        <h3><span data-i18n="37">学习闪卡</span></h3>
-        <p><span data-i18n="38">AI 为全文或当前几页生成结构化闪卡（试试点一下下面的卡片），题型分为概念、理解、应用、数据，每张都标注出处页码。翻面后，标记“记住了 / 再看看”，进度会一直保存。</span></p>
-        <div class="tags"><span class="tag"><span data-i18n="39">翻面动画</span></span><span class="tag"><span data-i18n="40">只看未掌握</span></span><span class="tag"><span data-i18n="41">快捷键</span></span></div>
-        <div class="flip" onclick="this.classList.toggle('on')">
-          <div class="fc front"><span class="kind"><span data-i18n="42">概念</span></span><span class="pg"><span data-i18n="43">第 1 页</span></span>
-            <div class="q"><span data-i18n="44">DeepSeek-V4.1-Flash 是什么类型的模型？参数规模和上下文长度是多少？</span></div><div class="hint"><span data-i18n="45">点击翻面</span></div></div>
-          <div class="fc back"><span class="kind"><span data-i18n="42">概念</span></span><span class="pg"><span data-i18n="43">第 1 页</span></span>
-            <div class="q a"><span data-i18n="46">多模态 MoE 模型，552B 骨干参数，支持最长 100 万 token 的上下文。</span></div>
-            <div class="ex"><span data-i18n="47">通过因果编码器-解码器（CED），解码阶段每个 token 只激活 16B 参数。</span></div>
-            <div class="acts"><span class="again"><span data-i18n="48">↺ 再看看</span></span><span class="ok"><span data-i18n="49">✓ 记住了</span></span></div></div>
-        </div>
-      </div>
-    </div>
+<main id="main">
+<section class="hero" aria-labelledby="hero-title">
+  <div class="hero-rail"><span class="rail-caption" data-en="An AI deep reading partner. Native to Mac, iPhone & iPad.">为深度阅读打造的 AI 双端伴侣。</span><div class="hero-word" aria-hidden="true">Readlet</div></div>
+  <div class="hero-index">
+    <div class="hero-intro"><h1 id="hero-title" data-en="Read every page.<br>Keep every thought.">读懂每一页，<br>让 AI 陪你读完。</h1><p data-en="Turn papers, books, and live interactive webpages into bilingual reading, mind maps, voice narration, and flashcards.">把论文、书籍与动态交互网页变成保留排版的双语对照、脑图、语音讲解与闪卡。</p><a class="inline-link" href="#bilingual"><span data-en="Start exploring">开始探索</span><svg class="icon"><use href="#i-arrow"/></svg></a></div>
+    <nav class="hero-chapters" aria-label="探索章节">
+      <a href="#bilingual"><span data-en="Bilingual">双语精读</span><span>01</span></a><a href="#web"><span data-en="Live Web">动态网页</span><span>02</span></a><a href="#notes"><span data-en="Notes & Map">摘录与脑图</span><span>03</span></a><a href="#narrate"><span data-en="Narration & Chat">语音与对话</span><span>04</span></a><a href="#flashcards"><span data-en="Flashcards">闪卡记忆</span><span>05</span></a><a href="#responders"><span data-en="Clean & Edit">净化与编辑</span><span>06</span></a><a href="#models"><span data-en="Models & TTS">模型与语音</span><span>07</span></a><a href="#native"><span data-en="Mac & iOS">原生双端</span><span>08</span></a>
+    </nav>
+    <div class="hero-foot"><span>macOS 14+ &amp; iOS 17+<br>iCloud &amp; LAN Sync</span><div class="theme-controls" role="group" aria-label="页面配色"><button data-theme-choice="blue" aria-label="蓝色 / Blue" aria-pressed="true"><span class="swatch blue"></span></button><button data-theme-choice="pink" aria-label="粉色 / Pink" aria-pressed="false"><span class="swatch pink"></span></button><button data-theme-choice="orange" aria-label="橙色 / Orange" aria-pressed="false"><span class="swatch orange"></span></button></div></div>
+  </div>
+  <div class="hero-universe" id="universe">
+    <canvas id="constellation" aria-hidden="true"></canvas>
+    <div class="universe-label"><svg class="icon"><use href="#i-spark"/></svg><span data-en="One card, three forms: Excerpt · Mind Map · Flashcard.">同一张卡片，三种形态：摘录 · 脑图 · 闪卡。</span></div>
+    <button class="orbit-item orbit-mail" data-feature="bilingual"><span class="orbit-symbol"><svg class="icon"><use href="#i-file"/></svg></span><span class="orbit-label" data-en="Vector bilingual PDF">保留原排版双语对照</span><span class="orbit-meta">Attention(Q,K,V) · ⌘2</span></button>
+    <button class="orbit-item orbit-file" data-feature="search"><span class="orbit-symbol"><svg class="icon"><use href="#i-search"/></svg></span><span class="orbit-label" data-en="Live interactive web">动态交互网页导入</span><span class="orbit-meta">hf.co/spaces/moe-blogpost#s-1</span></button>
+    <button class="orbit-item orbit-memory" data-feature="memory"><span class="orbit-symbol"><svg class="icon"><use href="#i-spark"/></svg></span><span class="orbit-label" data-en="AI voice & SM-2 cards">AI 逐页讲解与闪卡记忆</span><span class="orbit-meta" data-en="Synced across Mac, iPhone & iPad">Mac · iPhone · iPad 无缝接力</span></button>
+    <div class="universe-center" aria-hidden="true"><div class="envelope-sculpture"><div class="envelope-back"></div><div class="envelope-letter"><span>r.</span><i class="hl-bar"></i><i></i><i></i></div><div class="envelope-front"></div><div class="envelope-flap"></div></div><span class="center-caption">Readlet 1.0</span></div>
+    <button class="orbit-next" data-feature="chat"><svg class="icon"><use href="#i-arrow"/></svg><span data-en="Listen & interrupt live">边听边问 AI</span></button>
+    <button class="universe-preview" id="preview-open" aria-label="查看 Readlet 原生界面与实机演示"><img src="assets/shot-split.jpg?v=20261016" width="1440" height="900" alt="Readlet 原生大纲、双语 PDF、AI 语音解读与脑图工作台" fetchpriority="high"><span><span data-en="Real Mac & iPad workspace · Click for live video">原生双语、脑图与语音工作台（点击查看实机演示）</span><svg class="icon"><use href="#i-plus"/></svg></span></button>
+    <div class="universe-bottom"><span class="mono" data-en="Move cursor to connect · Click any node to inspect">移动鼠标感知连接 · 点击节点探索细节</span><button class="plain-button" id="expo-open"><svg class="icon"><use href="#i-grid"/></svg><span data-en="Expo view">展览视图</span></button></div>
+  </div>
+</section>
+<div class="chapter-layout">
+<aside class="section-nav" aria-label="章节导航"><nav><a href="#bilingual" data-chapter="bilingual"><span data-en="Bilingual">双语精读</span><span class="nav-dot" aria-hidden="true"></span></a><a href="#web" data-chapter="web"><span data-en="Live Web">动态网页</span><span class="nav-dot" aria-hidden="true"></span></a><a href="#notes" data-chapter="notes"><span data-en="Notes & Map">摘录与脑图</span><span class="nav-dot" aria-hidden="true"></span></a><a href="#narrate" data-chapter="narrate"><span data-en="Narration & Chat">语音与对话</span><span class="nav-dot" aria-hidden="true"></span></a><a href="#flashcards" data-chapter="flashcards"><span data-en="Flashcards">闪卡记忆</span><span class="nav-dot" aria-hidden="true"></span></a><a href="#responders" data-chapter="responders"><span data-en="Clean & Edit">净化与编辑</span><span class="nav-dot" aria-hidden="true"></span></a><a href="#models" data-chapter="models"><span data-en="Models & TTS">模型与语音</span><span class="nav-dot" aria-hidden="true"></span></a><a href="#native" data-chapter="native"><span data-en="Mac & iOS">原生双端</span><span class="nav-dot" aria-hidden="true"></span></a><span class="nav-marker" aria-hidden="true"></span></nav><a class="back-top" href="#main"><span data-en="Back to the beginning">回到开场</span><svg class="icon"><use href="#i-arrow"/></svg></a><div class="reading-progress"><span id="reading-progress"></span></div></aside>
+<div class="chapters">
+<section class="chapter" id="bilingual" aria-labelledby="bilingual-title">
+  <div class="chapter-heading"><span class="chapter-number">01</span><h2 id="bilingual-title" data-en="Bilingual">双语精读</h2><p data-en="Every paragraph above.<br>Its translation right below.">每段原文下面，<br>就是它的译文。</p></div>
+  <article class="feature-lead"><div class="feature-copy"><h3 data-en="Like Immersive Translate, built natively for PDFs and live web.">像沉浸式翻译一样，但原生深入 PDF 矢量层与动态网页。</h3><p data-en="Every page is drawn from original vector content—formulas, figures, fonts, and dual columns stay razor-sharp. It translates the page you are reading plus two pages ahead, without layout jitter or duplicate calls.">每一页都按原 PDF 的矢量内容绘制，公式、图表、字体、双栏分栏都和原文分毫不差。读到哪一页就翻译到哪一页并预翻后两页；翻译完成时页面不抖动，已翻译内容绝不重复消耗额度。</p><div class="feature-copy-actions"><button class="inline-link" data-feature="bilingual"><span data-en="Explore bilingual engine">了解双语排版引擎</span><svg class="icon"><use href="#i-plus"/></svg></button><button class="inline-link" data-open-preview><span data-en="Watch screen recording">观看实机录屏</span><svg class="icon"><use href="#i-arrow"/></svg></button></div></div><div class="native-media"><img src="assets/shot-bilingual.jpg?v=20261016" width="1440" height="900" alt="Readlet 保留原排版的双语对照与分句高亮讲解界面" loading="lazy"><span class="media-caption" data-en="Vector-sharp bilingual PDF + live sentence highlight.">矢量级双语对照合成 · 每一段公式与图注均精准对齐。</span></div></article>
+  <div class="feature-grid three">
+    <button class="feature-card" data-feature="accounts"><span class="card-visual protocol-art"><span>PDF</span><span>EPUB</span><span>LIVE WEB</span><svg class="icon"><use href="#i-file"/></svg></span><span class="card-body"><strong data-en="Vector layout preserved">保留原矢量排版</strong><span data-en="Single or double columns, captions, footnotes, and equations stay untouched.">单栏、双栏、图注与脚注自动识别，数学公式与伪代码智能跳过。</span><svg class="icon"><use href="#i-plus"/></svg></span></button>
+    <button class="feature-card" data-feature="compose"><span class="card-visual compose-art"><span class="paper-sheet"><span data-en="3.1 Encoder & Decoder">3.1 编码器与解码器</span><i></i><i class="zh-line"></i><i></i><span class="draft-tag" data-en="⌘1 / ⌘2 Switch">⌘1 / ⌘2 切换</span></span></span><span class="card-body"><strong data-en="Look-ahead 2 pages">按需预翻，零抖动切换</strong><span data-en="Switch Original / Bilingual in one click without losing your place; export full bilingual PDFs.">原文 / 双语一键无感切换，阅读位置不变；支持导出完整双语 PDF。</span><svg class="icon"><use href="#i-plus"/></svg></span></button>
+    <button class="feature-card" data-feature="translation"><span class="card-visual translation-art"><span>Claude.</span><span>DeepSeek.</span><span>ChatGPT.</span></span><span class="card-body"><strong data-en="Your choice of translator">翻译模型自由选</strong><span data-en="Use Anthropic, OpenAI, Qwen, DeepSeek, or native ChatGPT OAuth sign-in.">支持 Claude、GPT、DeepSeek、Qwen 或原生 ChatGPT 账号登录。</span><svg class="icon"><use href="#i-plus"/></svg></span></button>
   </div>
 </section>
 
-<section id="bilingual" class="bi">
-  <div class="wrap">
-    <div class="eyebrow"><span data-i18n="50">保留原排版的双语对照</span></div>
-    <h2><span data-i18n="51">每段原文下面，</span><span class="hl"><span data-i18n="52">就是它的译文。</span></span></h2>
-    <p class="sublead"><span data-i18n="53">每一页都按原 PDF 的矢量内容绘制，公式、图表、字体、分栏都和原文一样。读到哪一页，就翻译到哪一页，并预翻后两页；翻译完成时页面不会抖动，已翻译过的内容不会重复翻译。</span></p>
-    <div class="split">
-      <div class="demo rv">
-        <h4>3.1 Encoder and Decoder Stacks</h4>
-        <div class="zh"><span data-i18n="54">3.1 编码器与解码器堆栈</span></div>
-        <div class="en">The encoder is composed of a stack of <i>N</i> = 6 identical layers. Each layer has two sub-layers. The first is a multi-head self-attention mechanism, and the second is a simple, position-wise fully connected feed-forward network.</div>
-        <div class="zh"><span data-i18n="55">编码器由 N = 6 个相同的层堆叠而成。每一层包含两个子层：第一个是多头自注意力机制，第二个是简单的逐位置全连接前馈网络。</span></div>
-        <div class="eq">Attention(Q, K, V) = softmax(QKᵀ / √d<sub>k</sub>) V</div>
-        <div class="en" style="color:#888;font-size:13px"><span data-i18n="56">↑ 公式、表格、伪代码自动跳过，不做无意义的翻译。</span></div>
-      </div>
-      <div class="text rv">
-        <h3><span data-i18n="57">像沉浸式翻译一样，</span><br><span data-i18n="58">但是给 PDF 用的。</span></h3>
-        <p><span data-i18n="59">按段落理解版面，单栏、双栏、图注、脚注都能识别；页面跟随“默认 / 护眼 / 夜间”主题着色，文字保持矢量清晰，不会发虚。</span></p>
-        <ul class="checks">
-          <li><span data-i18n="60">原文 / 双语 一键切换，阅读位置不变</span></li>
-          <li><span data-i18n="61">默认只提前翻译 2 页，省时省额度</span></li>
-          <li><span data-i18n="62">划词即译，导出完整的双语 PDF</span></li>
-          <li><span data-i18n="63">翻译模型可选：Claude、GPT、DeepSeek、Qwen…</span></li>
-        </ul>
-      </div>
-    </div>
+<section class="chapter" id="web" aria-labelledby="web-title">
+  <div class="chapter-heading"><span class="chapter-number">02</span><h2 id="web-title" data-en="Live Web">动态网页</h2><p data-en="Paste a URL.<br>Keep every chart interactive.">网上的动态交互好文，<br>输入网址就能边玩边精读。</p></div>
+  <article class="feature-lead search-lead"><div class="feature-copy"><h3 data-en="URL-only lightweight storage. Full interactivity preserved.">只存网址与个人批注叠加层，完整保留动态图表交互。</h3><p data-en="Import interactive tech blogs and Hugging Face Spaces directly by URL. Readlet auto-declutters peripheral navbars and sidebars by default (toggleable per article) while keeping D3, Canvas, and iframe charts live—and syncs page-less 0%–100% continuous progress across windows and devices.">粘贴网址即可导入可交互网页（仅保存网址与你的批注、朗读、脑图与进度锚点），完整保留页面内 D3 / Canvas / iframe 动态交互组件；默认自动移除周边导航、侧边目录与页脚等非正文干扰（可按篇随时开关），无分页连续记录 0%–100% 阅读进度并跨窗口、跨设备精准协同。</p><button class="inline-link" data-feature="search"><span data-en="How Live Web works">了解动态网页运行时</span><svg class="icon"><use href="#i-plus"/></svg></button></div>
+  <div class="demo-surface search-demo"><div class="demo-toolbar"><svg class="icon"><use href="#i-search"/></svg><span id="search-query">https://huggingface.co/spaces/huggingface/moe-blogpost#s-1</span><span class="keycap">⌘⇧O</span></div><div class="demo-choices" role="tablist" aria-label="动态网页能力演示"><button role="tab" id="query-delivery" data-query="delivery" aria-selected="true" aria-controls="search-results" data-en="Live Import & Clean">动态入库与净化</button><button role="tab" id="query-file" data-query="file" aria-selected="false" aria-controls="search-results" data-en="Cross-Device Anchor">跨尺寸无分页锚点</button><button role="tab" id="query-person" data-query="person" aria-selected="false" aria-controls="search-results" data-en="Bilingual & AI">原位双语与讲解</button></div><div id="search-results" role="tabpanel" aria-labelledby="query-delivery" aria-live="polite"></div><p class="demo-note" data-en="Click tabs above to inspect how Readlet handles interactive webpages vs static PDFs.">点击上方选项卡，查看 Readlet 如何处理可交互动态网页与跨设备锚点同步。</p></div></article>
+  <div class="feature-notes"><div><h3 data-en="Zero-bloat URL storage">零体积轻量存储</h3><p data-en="Saves only the URL and your annotation/narration overlays—never bloating iCloud with HTML snapshots.">仅保存网址与你的批注、脑图、闪卡和朗读叠加层，不落地整页 HTML 快照。</p></div><div><h3 data-en="Non-destructive Clean Mode">默认移除周边非正文</h3><p data-en="Hides outer chrome via non-destructive CSS so live scripts never break; toggleable per article.">通过非破坏性 CSS 自动隐藏外层导航与侧栏，绝不破坏交互脚本，可按篇文章一键开关。</p></div><div><h3 data-en="Continuous anchor sync">跨窗口与多端协同</h3><p data-en="Combines semantic DOM IDs, intra-element offsets, and scroll fraction across Mac, iPad, and iPhone.">结合语义节点 ID、段内偏移与滚动百分比，在不同尺寸窗口与 Mac / iPad / iPhone 间精准还原位置。</p></div></div>
+</section>
+
+<section class="chapter" id="notes" aria-labelledby="notes-title">
+  <div class="chapter-heading"><span class="chapter-number">03</span><h2 id="notes-title" data-en="Notes & Map">摘录与脑图</h2><p data-en="Select, excerpt, and connect<br>into a knowledge network.">选中、摘录，<br>连成你的知识网络。</p></div>
+  <div class="feature-grid two">
+    <article class="feature-card static-card"><div class="people-art card-visual"><div class="people-orbits" aria-hidden="true"><i></i><i></i><i></i></div><button class="contact-chip contact-a" data-contact="lin" aria-pressed="true"><span>8C</span><b data-en="8-Color Excerpt">八色摘录</b></button><button class="contact-chip contact-b" data-contact="alex" aria-pressed="false"><span>MM</span><b data-en="Mind Map">思维导图</b></button><div class="contact-excerpt" id="contact-excerpt"></div></div><div class="card-body"><h3 data-en="MarginNote-style excerpts & mind maps">MarginNote 式浮动摘录与思维导图</h3><p data-en="Select text to pop up the 8-color bar—one click creates a card and hangs it on your mind map. Double-click any node to jump right back to the PDF page or web anchor.">标注模式下选中文字即弹出浮动工具条，点一下颜色就生成卡片并自动挂到脑图上；双击脑图节点即可瞬间跳回 PDF 原页或网页锚点。</p><button class="inline-link" data-feature="people"><span data-en="Explore notes & mind map">探索摘录与脑图</span><svg class="icon"><use href="#i-plus"/></svg></button></div></article>
+    <article class="feature-card static-card"><div class="card-visual files-art"><button data-file="brief"><span class="file-icon">PDF</span><span><strong data-en="Vector Bilingual PDF">保留原排版双语 PDF</strong><small>original.pdf + bi2-cache</small></span><svg class="icon"><use href="#i-plus"/></svg></button><button data-file="budget"><span class="file-icon spreadsheet">WEB</span><span><strong data-en="Interactive Webpage">动态交互网页叠加层</strong><small>W3C TextQuoteSelector + WebReadingAnchor</small></span><svg class="icon"><use href="#i-plus"/></svg></button><button data-file="design"><span class="file-icon image-file">SYNC</span><span><strong data-en="Lossless Edit & Cloud Sync">无损截断擦除与云同步</strong><small>library.json + cards.json + iCloud</small></span><svg class="icon"><use href="#i-plus"/></svg></button></div><div class="card-body"><h3 data-en="Cross-document links & status board">跨文档双向链接与阅读状态看板</h3><p data-en="Combine multiple PDFs and live webpages in one notebook, link cards bidirectionally, and track reading with TODO / DOING / DONE tags and live progress percentages.">一个笔记本可包含多篇 PDF 与动态网页，卡片支持跨文档双向链接；内置 TODO / DOING / DONE 状态标签与阅读百分比统计。</p><button class="inline-link" data-feature="attachments"><span data-en="Explore card system">探索卡片与文档管理</span><svg class="icon"><use href="#i-plus"/></svg></button></div></article>
   </div>
 </section>
 
-<section id="web" class="web">
-  <div class="wrap">
-    <div class="eyebrow"><span data-i18n="99">新 · 动态交互网页 &amp; PDF 导入</span></div>
-    <h2><span data-i18n="100">网上的动态交互好文，</span><span class="hl"><span data-i18n="101">输入网址就能边玩边精读。</span></span></h2>
-    <p class="sublead"><span data-i18n="102">粘贴一个网址即可导入可交互网页（仅保存网址与你的批注、朗读、脑图等轻量数据），完整保留页面内的动态图表与可交互组件；默认自动移除周边导航、侧栏与页脚等非正文干扰（可按篇随时开关），无分页连续记录 0%–100% 阅读进度并跨窗口、跨设备精准同步。也可选择静态提取为干净的 A4 PDF。</span></p>
-    <div class="split">
-      <div class="wdemo rv" aria-hidden="true">
-        <div class="browser">
-          <div class="bar"><i></i><i></i><i></i><span>blog.example.com/posts/attention</span></div>
-          <div class="page">
-            <div class="nav x"></div>
-            <div class="cols">
-              <div class="main"><b></b><p></p><p></p><div class="img"></div><p></p><p class="short"></p></div>
-              <div class="side x"><div></div><div></div><div></div></div>
-            </div>
-            <div class="share x">♥ ↗ ✉</div>
-            <div class="cookie x">🍪 Accept all cookies?</div>
-          </div>
-          <div class="lbl"><span data-i18n="103">原网页（含周边杂讯）</span></div>
-        </div>
-        <div class="arrow">→</div>
-        <div class="a4">
-          <b></b><s></s><p></p><p></p><div class="img"></div><p></p><p></p><p class="short"></p>
-          <div class="lbl"><span data-i18n="104">净化后可交互正文 / PDF</span></div>
-        </div>
-      </div>
-      <div class="text rv">
-        <h3><span data-i18n="105">交互式技术博客、Hugging Face 专栏，</span><br><span data-i18n="106">保留全部交互，全套 AI 能力无缝契合。</span></h3>
-        <p><span data-i18n="107">默认以「可交互网页」模式轻量入库，只存 URL 与个人标注叠加层；非破坏性自动隐藏外层导航与侧栏，不破坏 D3 / Canvas / iframe 动态图表，同时完整支持原位双语对照、八色高亮摘录、框选截图、思维导图、闪卡与 AI 按节语音讲解。</span></p>
-        <ul class="checks">
-          <li><span data-i18n="108">默认自动净化周边非正文内容，支持按篇文章一键开关或点选隐藏任意区块</span></li>
-          <li><span data-i18n="109">无分页连续进度（0%–100% + 章节语义锚点），不同窗口尺寸与多端设备自适应协同</span></li>
-          <li><span data-i18n="110">原位双语段落注入 + W3C 文本锚点高亮，动态图表自动跳过不破坏交互</span></li>
-          <li><span data-i18n="111">同时支持一键提取为静态 A4 PDF，或直接下载 PDF 链接</span></li>
-        </ul>
-      </div>
-    </div>
+<section class="chapter" id="narrate" aria-labelledby="narrate-title">
+  <div class="chapter-heading"><span class="chapter-number">04</span><h2 id="narrate-title" data-en="Narration">语音与对话</h2><p data-en="More than translation.<br>AI talks you through every page.">不只是翻译，<br>AI 会看着原图讲给你听。</p></div>
+  <article class="feature-lead chat-lead"><div class="feature-copy"><h3 data-en="Page-by-page voice narration & page-cited Copilot.">逐页多模态语音解读，随时按住麦克风打断提问。</h3><p data-en="AI looks at the actual page image and explains it aloud segment by segment—including charts and equations—while turning pages automatically. Hold the mic to interrupt with a question; it answers and carries right on.">AI 看着页面原图，用自然口语一段一段讲给你听，复杂的图表和公式也会深入浅出地讲透，讲完自动翻页。听的过程中按住麦克风就能随时打断提问，答完自动接着讲。</p><div class="feature-copy-actions"><button class="inline-link" data-feature="chat"><span data-en="Explore AI Narration">了解 AI 语音解读</span><svg class="icon"><use href="#i-plus"/></svg></button><button class="inline-link" data-open-preview><span data-en="Hear live demo video">打开有声实机演示</span><svg class="icon"><use href="#i-arrow"/></svg></button></div></div>
+  <div class="demo-surface chat-demo"><div class="demo-choices" role="tablist" aria-label="语音解读与 AI 助手示例"><button role="tab" id="session-delivery" data-session="delivery" aria-selected="true" aria-controls="chat-panel" data-en="Voice Narration">看图语音讲解</button><button role="tab" id="session-billing" data-session="billing" aria-selected="false" aria-controls="chat-panel" data-en="Copilot Guide">全文导读与溯源</button><button role="tab" id="session-planning" data-session="planning" aria-selected="false" aria-controls="chat-panel" data-en="Auto Mind Map">一键生成脑图</button></div><div id="chat-panel" role="tabpanel" aria-labelledby="session-delivery"><p class="chat-question" id="chat-question"></p><div class="chat-answer"><span class="morrow-mark">r.</span><div id="chat-answer"></div></div><button class="demo-run" id="chat-run"><span>准备回复</span><svg class="icon"><use href="#i-arrow"/></svg></button><p class="chat-result" id="chat-result" role="status" hidden></p></div><p class="demo-note" data-en="Interactive illustration of Readlet Narrator & Copilot workflows.">交互示意：点击上方选项卡与按钮，体验语音打断追问、页码溯源跳转与一键脑图。</p></div></article>
+  <div class="feature-grid three">
+    <button class="feature-card" data-feature="multimodal"><span class="card-visual input-art"><svg class="icon"><use href="#i-spark"/></svg><span class="waveform" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="image-mini" aria-hidden="true"></span></span><span class="card-body"><strong data-en="Five narration styles">五种讲解风格 + 预生成</strong><span data-en="Podcast, Storyteller, Deep Tech, Popular Science, or Brief—plus 1-click Prepare All.">播客、评书、技术深度、科普、精简速览，支持一键后台准备全书语音。</span><svg class="icon"><use href="#i-plus"/></svg></span></button>
+    <button class="feature-card" data-feature="analysis"><span class="card-visual analysis-art"><span class="chart-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span><span data-en="0.75× – 2.0× · MP4 Video Export">0.75× – 2.0× · 竖屏字幕视频导出</span></span><span class="card-body"><strong data-en="Desktop widget & video export">桌面迷你播放器与视频导出</strong><span data-en="Collapse into a floating player or export vertical subtitled narration MP4 videos on Mac.">收起主窗口保留桌面悬浮播放器；支持导出带高亮与动态字幕的竖屏讲解视频。</span><svg class="icon"><use href="#i-plus"/></svg></span></button>
+    <button class="feature-card" data-feature="openui"><span class="card-visual openui-art"><span><i></i><b data-en="Summarize current page">一键总结当前页</b></span><span><i></i><b data-en="Ask about selection">选中文字直接追问</b></span><span><i></i><b data-en="Click [p.7] to jump back">点击 [p.7] 页码回跳</b></span></span><span class="card-body"><strong data-en="Document AI Copilot">按文档保存的 AI 助手</strong><span data-en="Every answer cites source page numbers you can click to verify in context.">支持本页摘要、全文导读与框选截图提问，回答标注页码可一键跳回原文。</span><svg class="icon"><use href="#i-plus"/></svg></span></button>
   </div>
 </section>
 
-<section id="new" class="newv">
-  <div class="wrap">
-    <div class="eyebrow"><span data-i18n="112">1.0 新增</span></div>
-    <h2><span data-i18n="113">听得更顺，</span><span class="hl"><span data-i18n="114">管理与编辑更得心应手。</span></span></h2>
-    <p class="sublead"><span data-i18n="115">1.0 版本全新推出 iOS / iPadOS 原生客户端与 iCloud 全量自动同步，同时带来无损 PDF 截断与擦除编辑、TODO / DOING / DONE 标签进度看板、首次启动三步配置向导，以及全面打磨的 AI 逐页语音解读。</span></p>
-    <div class="features">
-      <div class="feat rv"><div class="ico" style="background:#e0f2fe">☁️</div><h4><span data-i18n="146">iPhone &amp; iPad 原生支持 · iCloud 同步</span></h4><p><span data-i18n="147">在 Mac 上导入论文、生成双语和闪卡，拿起 iPhone 或 iPad 即可接着读、刷 3D 闪卡、看脑图；阅读进度、批注与 AI 网关配置通过 iCloud 自动同步。</span></p></div>
-      <div class="feat rv"><div class="ico" style="background:#ffe4e6">✂️</div><h4><span data-i18n="138">PDF 截断与区域擦除</span></h4><p><span data-i18n="139">网页转 PDF 后尾部常有评论或推荐？在任意位置一键“从此处截断后面”，或框选擦除多余区域，且随时可无损恢复原 PDF。</span></p></div>
-      <div class="feat rv"><div class="ico" style="background:#dbeafe">🏷</div><h4><span data-i18n="140">TODO / DOING / DONE 标签与进度</span></h4><p><span data-i18n="141">快速为文档标记状态与自定义标签，按标签分类查看并实时统计各状态占比；书架卡片直观展示每篇文档的阅读百分比。</span></p></div>
-      <div class="feat rv"><div class="ico" style="background:#dcfce7">🧭</div><h4><span data-i18n="142">首次配置引导 &amp; 自动更新</span></h4><p><span data-i18n="143">首次启动三步完成 AI 网关与语音朗读配置；内置版本检查器，后台自动发现新版本并支持一键下载更新。</span></p></div>
-      <div class="feat rv"><div class="ico" style="background:#efe7ff">🗣</div><h4><span data-i18n="116">系统语音，零配置开讲</span></h4><p><span data-i18n="117">默认用 macOS 自带的声音朗读，免费、离线。有 TTS 模型时可以切到网关语音，出错会自动回退。</span></p></div>
-      <div class="feat rv"><div class="ico" style="background:#fff1df">🎭</div><h4><span data-i18n="118">五种讲解风格</span></h4><p><span data-i18n="119">播客、评书、技术深度、科普、精简速览，还能加自己的补充提示词。每种风格单独缓存，切回来不用重新生成。</span></p></div>
-    </div>
-  </div>
+<section class="chapter" id="flashcards" aria-labelledby="flashcards-title">
+  <div class="chapter-heading"><span class="chapter-number">05</span><h2 id="flashcards-title" data-en="Flashcards">闪卡记忆</h2><p data-en="Read it once.<br>Remember it for good.">读懂当下，<br>更要长期记住。</p></div>
+  <article class="feature-lead memory-lead"><div class="feature-copy"><h3 data-en="Structured 3D flashcards with SM-2 spaced repetition.">AI 自动出题，用 3D 闪卡检验你是否真正读懂。</h3><p data-en="AI generates structured flashcards for the whole document or current pages across four categories: Concept, Comprehension, Application, and Data—each citing its exact source page. Flip the card on the right to see the answer!">AI 为全文或当前章节自动生成「概念」「理解」「应用」「数据」四类结构化闪卡，每张都标注原文出处页码或章节。点击右侧卡片即可翻转查看答案，标记「记住了 / 再看看」，复习进度自动跨端同步。</p><button class="inline-link" data-feature="memory"><span data-en="Explore SM-2 flashcards">探索间隔重复闪卡</span><svg class="icon"><use href="#i-plus"/></svg></button></div><div class="memory-art"><div class="memory-lines" aria-hidden="true"><i></i><i></i><i></i><i></i></div><div class="memory-sheet"><span class="mono"><span data-en="CONCEPT CARD · PAGE 1">概念闪卡 · 第 1 页</span><span>SM-2</span></span><p id="memory-example">DeepSeek-V4.1-Flash 是什么类型的模型？解码阶段每 Token 激活多少参数？</p><div class="memory-scope"><span data-en="Source: DeepSeek Technical Report · Page 1">出处：DeepSeek 技术报告 · 第 1 页（双击可跳回原文）</span><span data-en="Category: Concept · comprehension · application · data">题型覆盖：概念 · 理解 · 应用 · 数据</span></div><div class="memory-actions"><button id="memory-pause" aria-pressed="false" data-en="Flip to Answer">点击翻看答案</button><button id="memory-edit" data-en="Customize card">自定义卡片问题</button></div><span id="memory-status" class="sr-only" role="status"></span></div></div></article>
+  <div class="feature-notes"><div><h3 data-en="Four question types">四种结构化题型</h3><p data-en="Covers Concept, Comprehension, Application, and Data—going far beyond rote vocabulary.">涵盖概念、理解、应用与关键数据四类深度问题，帮你真正吃透论文与书籍。</p></div><div><h3 data-en="Anchored to source">标注出处页码</h3><p data-en="Every flashcard links back to the exact PDF page or web section it came from.">每张闪卡都绑定生成时的原文页码或网页章节，复习存疑时一键回到原文。</p></div><div><h3 data-en="Review on iPhone">手机随时刷卡</h3><p data-en="Generate cards on your Mac and review them on your iPhone with 3D flip gestures.">在 Mac 上精读生成闪卡，出门在 iPhone 上用 3D 翻面手势随时自测复习。</p></div></div>
 </section>
 
-<section id="notes">
-  <div class="wrap">
-    <div class="eyebrow"><span data-i18n="64">MarginNote 式笔记</span></div>
-    <h2><span data-i18n="65">选中、摘录、连成</span><span class="hl"><span data-i18n="66">知识网络</span></span><span data-i18n="96">。</span></h2>
-    <p class="sublead"><span data-i18n="67">标注模式下，选中文字后弹出浮动工具条，点一下颜色就生成卡片，同时挂到脑图上。阅读模式下，选中就只是普通的文字选择。</span></p>
-    <div class="features">
-      <div class="feat rv"><div class="ico" style="background:#fff6d6">🖍</div><h4><span data-i18n="68">八色摘录</span></h4><p><span data-i18n="69">浮动工具条一点即摘录；也支持自动摘录和框选（把公式、图表截成图片卡片）。</span></p><div class="colors"><i style="background:#ffe35c"></i><i style="background:#8cdb78"></i><i style="background:#73b8ff"></i><i style="background:#ff8c8c"></i><i style="background:#c299f7"></i><i style="background:#ffab59"></i><i style="background:#66d9d9"></i><i style="background:#b8b8bd"></i></div></div>
-      <div class="feat rv"><div class="ico" style="background:#e8f0ff">💬</div><h4><span data-i18n="70">卡片与评论</span></h4><p><span data-i18n="71">卡片可以加标题、多条评论，自动附上译文；点击页面上的高亮即可重新打开卡片。</span></p></div>
-      <div class="feat rv"><div class="ico" style="background:#e6f7f0">🌿</div><h4><span data-i18n="72">脑图</span></h4><p><span data-i18n="73">可以拖拽整理，Tab 和 Return 快速建节点，折叠展开、调整层级，双击节点回到原文。</span></p></div>
-      <div class="feat rv"><div class="ico" style="background:#f3eaff">🔗</div><h4><span data-i18n="74">跨 PDF 关联</span></h4><p><span data-i18n="75">一个笔记本可以包含多个 PDF，不同文档的卡片可以双向链接，一点就跳到另一份文档。</span></p></div>
-      <div class="feat rv"><div class="ico" style="background:#ffeef3">🪟</div><h4><span data-i18n="76">多窗口 · 桌面小组件</span></h4><p><span data-i18n="77">每个 PDF 一个窗口；收起后只在桌面留一个可拖动的播放器，边听讲解边做别的事。</span></p></div>
-      <div class="feat rv"><div class="ico" style="background:#f1f1ee">🎨</div><h4><span data-i18n="78">三种主题</span></h4><p><span data-i18n="79">默认、护眼、夜间三种主题，配色延续 MarginNote 的风格，长时间阅读也不累眼。</span></p></div>
-    </div>
-    <div class="shot rv" style="margin-top:56px"><img src="/assets/shot-bilingual.jpg?v=20261016" alt="Bilingual PDF Reading with AI Narration"></div>
-  </div>
+<section class="chapter" id="responders" aria-labelledby="responders-title">
+  <div class="chapter-heading"><span class="chapter-number">06</span><h2 id="responders-title" data-en="Clean & Edit">净化与编辑</h2><p data-en="Zero peripheral clutter.<br>Non-destructive by design.">去掉周边杂讯，<br>只留纯粹正文。</p></div>
+  <article class="feature-lead responders-lead"><div class="feature-copy"><h3 data-en="Auto-declutter webpages & truncate/erase PDFs losslessly.">网页非正文智能净化，PDF 截断与区域擦除随时无损还原。</h3><p data-en="Web articles automatically hide peripheral navbars, sticky TOCs, cookie banners, and footers without breaking live scripts—and you can toggle Clean Mode per article or click-to-hide any element. For PDFs, truncate trailing comment pages or drag-erase regions with 1-click restore.">动态网页默认自动寻找并隐藏顶栏、侧边目录、分享浮层与页脚等周边非正文内容（绝不破坏交互脚本），支持按篇文章随时关闭净化或使用「点选橡皮擦」隐藏任意元素；PDF 则支持一键从任意位置截断尾部冗余页或框选擦除区域，且随时可无损恢复原 PDF。</p><button class="inline-link" data-feature="responders"><span data-en="Explore Clean & Edit">了解网页净化与 PDF 编辑</span><svg class="icon"><use href="#i-plus"/></svg></button></div><div class="demo-surface rule-demo"><div class="rule-row"><span data-en="Target">处理对象</span><strong data-en="Live Webpage / Imported PDF">动态交互网页 / 导入的 PDF 文档</strong><span class="rule-line"></span></div><div class="rule-row"><span data-en="Clutter">周边干扰</span><strong data-en="Navbars, sticky TOCs, footers & trailing comments">顶部导航、固定侧栏、广告浮层与尾部评论页</strong><span class="rule-line"></span></div><div class="rule-row"><span data-en="Action">处理方式</span><div class="response-options" role="group" aria-label="净化与编辑模式"><button data-response="draft" aria-pressed="true" data-en="Web Auto-Clean (Per-Article)">网页自动净化（按篇可开关）</button><button data-response="auto" aria-pressed="false" data-en="PDF Truncate & Erase (Lossless)">PDF 截断与擦除（可无损还原）</button></div></div><button class="demo-run" id="rule-run"><svg class="icon"><use href="#i-spark"/></svg><span data-en="Run live simulation">运行净化与还原试跑</span></button><div id="rule-result" role="status"></div><p class="demo-note" data-en="Non-destructive pipeline: original webpage DOM and original PDF are always recoverable.">非破坏性架构：网页可随时切回原布局，PDF 原始文件始终安全保留可一键还原。</p></div></article>
 </section>
 
-<section id="download" class="dl">
-  <div class="wrap">
-    <div class="eyebrow"><span data-i18n="4">下载</span></div>
-    <h2><span data-i18n="80">现在就开始</span><span class="hl"><span data-i18n="81">深度阅读</span></span><span data-i18n="96">。</span></h2>
-    <div class="dl-two rv">
-      <div class="dl-card store">
-        <img src="/assets/icon.png" alt="">
-        <div>
-          <h3><span data-i18n="128">iOS / iPadOS &amp; App Store 版</span></h3>
-          <div class="v"><span data-i18n="129">支持 iPhone、iPad 与 Mac，通过 iCloud 自动同步 PDF、阅读进度、脑图、闪卡与网关配置。</span></div>
-          <div class="row">
-            <a class="btn light" href="/download/Readlet-1.0.0-iOS.ipa" data-dl-ios><span data-i18n="148">⬇︎ 下载 Readlet-1.0.0-iOS.ipa</span></a>
-            <a class="btn light appstore" id="appstore" href="#" aria-disabled="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M16.37 12.6c-.02-2.07 1.69-3.07 1.77-3.12-.97-1.41-2.47-1.6-3-1.62-1.28-.13-2.5.75-3.15.75-.65 0-1.65-.73-2.71-.71-1.39.02-2.68.81-3.4 2.06-1.45 2.52-.37 6.25 1.04 8.29.69 1 1.51 2.12 2.58 2.08 1.04-.04 1.43-.67 2.69-.67 1.25 0 1.61.67 2.71.65 1.12-.02 1.83-1.02 2.51-2.02.79-1.16 1.12-2.28 1.14-2.34-.03-.01-2.18-.84-2.2-3.33zM14.3 6.5c.57-.69.96-1.65.85-2.61-.82.03-1.82.55-2.41 1.24-.53.61-.99 1.59-.87 2.53.92.07 1.86-.47 2.43-1.16z"/></svg> <span id="appstore-label"><span data-i18n="131">即将上架 App Store (iOS &amp; macOS)</span></span></a>
-          </div>
-          <div class="note"><span data-i18n="149">✓ iOS / iPadOS 17+ 通用包（支持通过 AltStore / Sideloadly / Xcode 安装，App Store 版本审核中）。</span></div>
-        </div>
-      </div>
-    <div class="dl-card">
-      <img src="/assets/icon.png" alt="">
-      <div>
-        <h3><span data-i18n="132">macOS 直接下载 · 免费开源</span></h3><div class="v"><span data-i18n="133">功能相同，自带更新检查；也可以从 GitHub 源码自行构建。</span></div>
-        <div class="v" id="ver"><span data-i18n="82">版本 1.0.0 · macOS 14 Sonoma 及以上 · Apple Silicon &amp; Intel</span></div>
-        <div class="row">
-          <a class="btn light" href="/download/Readlet-1.0.0.zip" data-dl><span data-i18n="83">⬇︎ 下载 Readlet-1.0.0.zip</span></a>
-          <span style="font:12.5px var(--mono);color:#a7aabb" id="sha"></span>
-        </div>
-        <div class="note"><span data-i18n="84">✓ 已通过 Apple Developer ID 签名与公证（Notarized），解压拖入「应用程序」即可直接打开。</span></div>
-      </div>
-    </div>
-    </div>
-    <div class="steps">
-      <div><b><span data-i18n="85">1 · 安装</span></b><span data-i18n="86">解压后把 Readlet 拖进「应用程序」。</span></div>
-      <div><b><span data-i18n="87">2 · 配置模型</span></b><span data-i18n="88">在设置里填入网关地址和 API Key，或者写进 ~/.config/readlet/config.toml。语音默认用 macOS 系统声音，不需要 TTS 模型。</span></div>
-      <div><b><span data-i18n="89">3 · 开始读</span></b><span data-i18n="90">拖入一个 PDF 或按 ⌘⇧O 导入网页，按 ⌘2 切换到双语，按 ⌘⇧L 让 AI 开讲。</span></div>
-    </div>
-  </div>
+<section class="chapter" id="models" aria-labelledby="models-title">
+  <div class="chapter-heading"><span class="chapter-number">07</span><h2 id="models-title" data-en="Models & TTS">模型与语音</h2><p data-en="Your reading workbench.<br>Your choice of intelligence & voice.">你的阅读工作台，<br>你自由选择的模型与声音。</p></div>
+  <article class="model-exhibit"><div class="model-selector" role="tablist" aria-label="模型与语音配置方式"><button role="tab" id="model-local" data-model="local" aria-selected="true" aria-controls="model-panel"><span class="model-icon local-icon" aria-hidden="true">⌘</span><strong data-en="System Voice & Local">系统离线语音 &amp; 本地</strong><span>macOS / iOS TTS · config.toml</span></button><button role="tab" id="model-api" data-model="api" aria-selected="false" aria-controls="model-panel"><svg class="icon model-icon"><use href="#i-spark"/></svg><strong data-en="Model Gateways & 9 TTS">自选网关 &amp; 9 大 TTS</strong><span data-en="Anthropic / OpenAI / Qwen / Doubao">Anthropic / OpenAI / Qwen / 豆包</span></button><button role="tab" id="model-chatgpt" data-model="chatgpt" aria-selected="false" aria-controls="model-panel"><span class="model-icon chat-icon" aria-hidden="true">✳</span><strong>ChatGPT OAuth</strong><span data-en="Native account sign-in">原生账号一键登录</span></button></div><div class="model-panel" id="model-panel" role="tabpanel" aria-labelledby="model-local"><div class="model-path" aria-hidden="true"><span class="model-path-mail"><svg class="icon"><use href="#i-file"/></svg></span><span class="path-connector"></span><span class="model-path-target">⌘</span></div><div><h3 id="model-heading">系统离线语音，零配置开箱即讲。</h3><p id="model-description">默认使用 macOS / iOS 系统自带高品质离线语音朗读，无需配置任何 TTS 模型即可免费开讲；主模型支持本地 Ollama 或自定义网关，配置可统一写入 ~/.config/readlet/config.toml。</p><button class="inline-link" data-feature="models"><span data-en="Explore model & TTS settings">了解模型与语音引擎配置</span><svg class="icon"><use href="#i-plus"/></svg></button></div></div></article>
+  <div class="feature-notes"><div><h3 data-en="9 TTS synthesis engines">9 大语音合成引擎</h3><p data-en="Supports System Voice, Primary Gateway, OpenAI, Gemini, Qwen-TTS, Azure, ElevenLabs, MiniMax, and Volcengine Doubao.">支持系统语音、主网关、OpenAI、Gemini、通义千问 Qwen-TTS、Azure、ElevenLabs、MiniMax 与火山引擎豆包。</p></div><div><h3 data-en="Clean 16-bit PCM & AAC cache">纯净音频管线与本地缓存</h3><p data-en="All TTS streams are normalized to clean 16-bit PCM WAV for playback and cached locally as AAC .m4a.">音频统一规范化为干净的 16-bit PCM WAV 播放，并以高压缩比 AAC .m4a 落盘缓存。</p></div><div><h3 data-en="Synced gateway credentials">配置跨端自动同步</h3><p data-en="Configure your API gateway and provider keys once on Mac—they sync to iPhone and iPad automatically.">在 Mac 上配置一次网关与 TTS Key，即可通过 iCloud 自动同步至 iPhone 与 iPad。</p></div></div>
 </section>
 
-<footer>
-  <div class="wrap">
-    <a class="gh-foot" href="https://github.com/mapix/readit" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> <span data-i18n="97">Readlet 完全开源 · 在 GitHub 上查看源码、提 Issue 或参与贡献</span></a>
-    <span class="legal"><a href="/privacy.html"><span data-i18n="134">隐私政策</span></a><a href="/support.html"><span data-i18n="135">支持与帮助</span></a></span>
-    <span><span data-i18n="91">© 2026 Readlet · 为深度阅读而生</span></span>
-    <span><span data-i18n="92">界面设计致敬 MarginNote · 本项目与 MarginNote 官方无关</span></span>
-  </div>
-</footer>
+<section class="chapter" id="native" aria-labelledby="native-title">
+  <div class="chapter-heading"><span class="chapter-number">08</span><h2 id="native-title" data-en="Mac & iOS">原生双端</h2><p data-en="Start on your Mac.<br>Continue on iPhone & iPad.">在 Mac 上深度研读，<br>拿起 iPhone 与 iPad 无缝接力。</p></div>
+  <div class="native-banner"><span class="mac-command" aria-hidden="true">⌘</span><div><h3 data-en="One pure Swift codebase. Native on macOS, iOS, and iPadOS.">纯正 Swift 原生应用，横跨 Mac、iPhone 与 iPad。</h3><p data-en="Multi-window desktop workspace with a floating mini-player on macOS; four-tab reader, 3D flashcards, and background podcast player on iOS & iPadOS—connected by iCloud and peer-to-peer LAN Bonjour sync.">macOS 端支持多窗口并排精读与桌面悬浮迷你播客播放器；iOS / iPadOS 端提供书库、3D 闪卡、AI 助手与后台锁屏语音播放，通过 iCloud 与局域网 Bonjour 秒级同步。</p><span class="mono">macOS 14+ (Apple Silicon &amp; Intel) · iOS / iPadOS 17+</span></div></div>
+  <div class="feature-grid three compact-grid"><button class="feature-card" data-feature="appearance"><span class="card-visual appearance-art"><span>Aa</span><span>Aa</span><span>Aa</span></span><span class="card-body"><strong data-en="Light, Sepia & Night">默认、护眼、夜间三主题</strong><span data-en="MarginNote-inspired reading palettes that stay comfortable for hours of study.">延续经典 MarginNote 风格配色，长时间阅读论文不累眼。</span><svg class="icon"><use href="#i-plus"/></svg></span></button><button class="feature-card" data-feature="icloud"><span class="card-visual cloud-art"><svg viewBox="0 0 160 90" fill="none" aria-hidden="true"><path d="M38 73C8 73 7 34 32 32c2-29 45-37 59-13 28-8 50 8 49 31 23 15 10 36-10 36H40"/></svg></span><span class="card-body"><strong data-en="iCloud + LAN Bonjour Sync">iCloud + 局域网直连同步</strong><span data-en="Syncs PDFs, live web anchors, cards, mind maps, and narration scripts automatically.">自动同步 PDF、动态网页进度锚点、脑图与闪卡，局域网内点对点直连秒传。</span><svg class="icon"><use href="#i-plus"/></svg></span></button><button class="feature-card" data-feature="opensource"><span class="card-visual source-art"><span>{ r. }</span><small>Notarized · Open Source</small></span><span class="card-body"><strong data-en="Apple Notarized & Open">Apple 公证签名 · 开源透明</strong><span data-en="Signed & notarized by Apple for direct install, with full source code on GitHub.">通过 Apple Developer ID 签名与公证，同时在 GitHub 完全开放源码。</span><svg class="icon"><use href="#i-plus"/></svg></span></button></div>
+</section>
+</div></div>
 
-<script>
-  // ---- i18n: zh / en / ja, auto from browser language, ?lang= or saved choice
-  const I18N = {"zh": ["Readlet · 读懂每一页，留下每一处思考", "AI 功能", "双语阅读", "笔记与脑图", "下载", "免费下载", "读懂每一页，", "让", "陪你读完。", "Readlet 把英文论文、书籍和网页文章变成保留原排版的双语对照；你可以像在 MarginNote 里一样摘录、批注、整理成脑图。AI 会讲解每一页、回答你的问题、为你出闪卡，并通过 iCloud 在 Mac、iPhone 与 iPad 间无缝同步。", "下载 Readlet for Mac", "▶ 看看 AI 能做什么", "免费开源 · 支持 macOS 与 iOS / iPadOS · iCloud 自动同步 · 使用你自己的模型网关（Anthropic / OpenAI 兼容）", "PDF 摘录 · 脑图节点 · 闪卡 —", "同一张卡片，三种形态。", "AI 学习伙伴 · 新", "不只是翻译，", "AI 会讲给你听。", "你读到哪一页，AI 就讲到哪一页：它会讲解图表、回答你随口一问、把整份文档画成脑图，再出一套题帮你检验有没有读懂。", "AI 逐页语音解读", "AI 看着页面原图，用口语一段一段讲给你听，图表和公式也会讲到，并自动翻页。按住麦克风就能打断它提问，答完它会接着讲。", "“先看这张图：横轴是上下文长度，从 4K 一直拉到 1M，纵轴是每个 token 的计算量……”", "图表讲解", "语音打断提问", "预缓冲 10 段", "断点续听", "AI 助手", "一键总结本页或全文，讲清关键概念。选中一段文字就能“问 AI”，回答会标注页码，点一下即可跳回原文。对话按文档保存。", "本页摘要", "全文导读", "选中提问", "页码跳转", "AI 生成文档脑图", "AI 通读全文，生成层级清晰的结构化脑图。每个要点都锚定在原文上，自动高亮，双击节点即可回到 PDF。", "一键成图", "原文锚点", "可继续编辑", "学习闪卡", "AI 为全文或当前几页生成结构化闪卡（试试点一下下面的卡片），题型分为概念、理解、应用、数据，每张都标注出处页码。翻面后，标记“记住了 / 再看看”，进度会一直保存。", "翻面动画", "只看未掌握", "快捷键", "概念", "第 1 页", "DeepSeek-V4.1-Flash 是什么类型的模型？参数规模和上下文长度是多少？", "点击翻面", "多模态 MoE 模型，552B 骨干参数，支持最长 100 万 token 的上下文。", "通过因果编码器-解码器（CED），解码阶段每个 token 只激活 16B 参数。", "↺ 再看看", "✓ 记住了", "保留原排版的双语对照", "每段原文下面，", "就是它的译文。", "每一页都按原 PDF 的矢量内容绘制，公式、图表、字体、分栏都和原文一样。读到哪一页，就翻译到哪一页，并预翻后两页；翻译完成时页面不会抖动，已翻译过的内容不会重复翻译。", "3.1 编码器与解码器堆栈", "编码器由 N = 6 个相同的层堆叠而成。每一层包含两个子层：第一个是多头自注意力机制，第二个是简单的逐位置全连接前馈网络。", "↑ 公式、表格、伪代码自动跳过，不做无意义的翻译。", "像沉浸式翻译一样，", "但是给 PDF 用的。", "按段落理解版面，单栏、双栏、图注、脚注都能识别；页面跟随“默认 / 护眼 / 夜间”主题着色，文字保持矢量清晰，不会发虚。", "原文 / 双语 一键切换，阅读位置不变", "默认只提前翻译 2 页，省时省额度", "划词即译，导出完整的双语 PDF", "翻译模型可选：Claude、GPT、DeepSeek、Qwen…", "MarginNote 式笔记", "选中、摘录、连成", "知识网络", "标注模式下，选中文字后弹出浮动工具条，点一下颜色就生成卡片，同时挂到脑图上。阅读模式下，选中就只是普通的文字选择。", "八色摘录", "浮动工具条一点即摘录；也支持自动摘录和框选（把公式、图表截成图片卡片）。", "卡片与评论", "卡片可以加标题、多条评论，自动附上译文；点击页面上的高亮即可重新打开卡片。", "脑图", "可以拖拽整理，Tab 和 Return 快速建节点，折叠展开、调整层级，双击节点回到原文。", "跨 PDF 关联", "一个笔记本可以包含多个 PDF，不同文档的卡片可以双向链接，一点就跳到另一份文档。", "多窗口 · 桌面小组件", "每个 PDF 一个窗口；收起后只在桌面留一个可拖动的播放器，边听讲解边做别的事。", "三种主题", "默认、护眼、夜间三种主题，配色延续 MarginNote 的风格，长时间阅读也不累眼。", "现在就开始", "深度阅读", "版本 1.0.0 · macOS 14 Sonoma 及以上 · Apple Silicon & Intel", "⬇︎ 下载 Readlet-1.0.0.zip", "✓ 已通过 Apple Developer ID 签名与公证（Notarized），解压拖入「应用程序」即可直接打开。", "1 · 安装", "解压后把 Readlet 拖进「应用程序」。", "2 · 配置模型", "在设置里填入网关地址和 API Key，或者写进 ~/.config/readlet/config.toml。语音默认用 macOS 系统声音，不需要 TTS 模型。", "3 · 开始读", "拖入一个 PDF 或按 ⌘⇧O 导入网页，按 ⌘2 切换到双语，按 ⌘⇧L 让 AI 开讲。", "© 2026 Readlet · 为深度阅读而生", "界面设计致敬 MarginNote · 本项目与 MarginNote 官方无关", "", "", "", "。", "Readlet 完全开源 · 在 GitHub 上查看源码、提 Issue 或参与贡献", "网页导入", "新 · 动态交互网页 & PDF 导入", "网上的动态交互好文，", "输入网址就能边玩边精读。", "粘贴一个网址即可导入可交互网页（仅保存网址与你的批注、朗读、脑图等轻量数据），完整保留页面内的动态图表与可交互组件；默认自动移除周边导航、侧栏与页脚等非正文干扰（可按篇随时开关），无分页连续记录 0%–100% 阅读进度并跨窗口、跨设备精准同步。也可选择静态提取为干净的 A4 PDF。", "原网页（含周边杂讯）", "净化后可交互正文 / PDF", "交互式技术博客、Hugging Face 专栏，", "保留全部交互，全套 AI 能力无缝契合。", "默认以「可交互网页」模式轻量入库，只存 URL 与个人标注叠加层；非破坏性自动隐藏外层导航与侧栏，不破坏 D3 / Canvas / iframe 动态图表，同时完整支持原位双语对照、八色高亮摘录、框选截图、思维导图、闪卡与 AI 按节语音讲解。", "默认自动净化周边非正文内容，支持按篇文章一键开关或点选隐藏任意区块", "无分页连续进度（0%–100% + 章节语义锚点），不同窗口尺寸与多端设备自适应协同", "原位双语段落注入 + W3C 文本锚点高亮，动态图表自动跳过不破坏交互", "同时支持一键提取为静态 A4 PDF，或直接下载 PDF 链接", "1.0 新增", "听得更顺，", "管理与编辑更得心应手。", "1.0 版本全新推出 iOS / iPadOS 原生客户端与 iCloud 全量自动同步，同时带来无损 PDF 截断与擦除编辑、TODO / DOING / DONE 标签进度看板、首次启动三步配置向导，以及全面打磨的 AI 逐页语音解读。", "系统语音，零配置开讲", "默认用 macOS 自带的声音朗读，免费、离线。有 TTS 模型时可以切到网关语音，出错会自动回退。", "五种讲解风格", "播客、评书、技术深度、科普、精简速览，还能加自己的补充提示词。每种风格单独缓存，切回来不用重新生成。", "一键全部准备", "从当前页开始，在后台为整本书写好讲稿、合成全部语音，之后播放不再等待。", "剩余时间与预缓冲", "按当前语速估算全书还要听多久；始终提前准备约 5 分钟的语音，翻页也不卡。", "从这一页开始讲", "翻到任意一页，点一下就从那里接着讲，进度会自动记住。", "一个配置文件搞定", "网关、模型、语音都能写进 ~/.config/readlet/config.toml，Key 可以放在钥匙串里。原来的设置方式照样能用。", "iOS / iPadOS & App Store 版", "支持 iPhone、iPad 与 Mac，通过 iCloud 自动同步 PDF、阅读进度、脑图、闪卡与网关配置。", "在 Mac App Store 获取", "即将上架 App Store (iOS & macOS)", "macOS 直接下载 · 免费开源", "功能相同，自带更新检查；也可以从 GitHub 源码自行构建。", "隐私政策", "支持与帮助", "实机录屏演示 · AI 逐页语音讲解 + 双语对照 + 脑图与闪卡", "开启声音体验 AI 语音讲解", "PDF 截断与区域擦除", "网页转 PDF 后尾部常有评论或推荐？在任意位置一键“从此处截断后面”，或框选擦除多余区域，且随时可无损恢复原 PDF。", "TODO / DOING / DONE 标签与进度", "快速为文档标记状态与自定义标签，按标签分类查看并实时统计各状态占比；书架卡片直观展示每篇文档的阅读百分比。", "首次配置引导 & 自动更新", "首次启动三步完成 AI 网关与语音朗读配置；内置版本检查器，后台自动发现新版本并支持一键下载更新。", "Readlet 1.0.0 · macOS 14+ & iOS / iPadOS 17+ · iCloud 自动同步", "📱 下载 iOS / iPadOS 版", "iPhone & iPad 原生支持 · iCloud 同步", "在 Mac 上导入论文、生成双语和闪卡，拿起 iPhone 或 iPad 即可接着读、刷 3D 闪卡、看脑图；阅读进度、批注与 AI 网关配置通过 iCloud 自动同步。", "⬇︎ 下载 Readlet-1.0.0-iOS.ipa", "✓ iOS / iPadOS 17+ 通用包（支持通过 AltStore / Sideloadly / Xcode 安装，App Store 版本审核中）。"], "en": ["Readlet · Understand every page, keep every thought", "AI features", "Bilingual reading", "Notes & mind maps", "Download", "Free download", "Understand every page,", "let", "read it with you.", "Readlet turns English papers, books and web articles into bilingual reading that keeps the original layout. Excerpt, annotate and build mind maps just like in MarginNote, while AI explains every page, answers your questions and quizzes you with flashcards — synced seamlessly across Mac, iPhone and iPad via iCloud.", "Download Readlet for Mac", "▶ See what the AI can do", "Free & open source · macOS & iOS / iPadOS · iCloud Auto-Sync · Bring your own model gateway (Anthropic / OpenAI-compatible)", "PDF excerpt · mind-map node · flashcard —", "same card, three forms.", "AI study companion · New", "More than translation — ", "AI talks you through it.", "Wherever you are, the AI is there with you: it explains charts, answers a quick question, maps the whole document and quizzes you to check you really got it.", "AI page-by-page voice narration", "The AI looks at the actual page and explains it aloud, segment by segment — charts and formulas included — turning pages on its own. Hold the mic to interrupt with a question; it answers, then carries on.", "“First, this chart: the x-axis is context length, from 4K all the way to 1M, and the y-axis is compute per token…”", "Chart explanations", "Voice interruptions", "10 segments pre-buffered", "Resume where you left off", "AI Copilot", "Summarize the page or the whole document and get key concepts explained. Select any passage to “Ask AI”; answers cite page numbers you can click to jump back. Conversations are saved per document.", "Page summary", "Document guide", "Ask about selection", "Page links", "AI-generated mind map", "The AI reads the whole document and builds a clearly structured mind map. Every point is anchored to the source text, highlighted automatically — double-click a node to jump back to the PDF.", "One-click map", "Source anchors", "Fully editable", "Flashcards", "The AI generates structured flashcards for the whole document or the pages you’re on (try clicking the card below): concept, comprehension, application and data questions, each citing its page. Flip, then mark “Got it / Again” — progress is kept.", "Flip animation", "Review only unknown", "Keyboard shortcuts", "Concept", "Page 1", "What kind of model is DeepSeek-V4.1-Flash, and what are its size and context length?", "Click to flip", "A multimodal MoE model with 552B backbone parameters and up to 1M tokens of context.", "With its Causal Encoder-Decoder (CED), only 16B parameters are active per token during decoding.", "↺ Again", "✓ Got it", "Bilingual reading that keeps the original layout", "Under every paragraph, ", "its translation.", "Every page is drawn from the original PDF’s vector content — formulas, figures, fonts and columns stay exactly as they are. It translates the page you’re on plus the next two; pages never jump while translations arrive, and nothing is translated twice.", "3.1 编码器与解码器堆栈", "编码器由 N = 6 个相同的层堆叠而成。每一层包含两个子层：第一个是多头自注意力机制，第二个是简单的逐位置全连接前馈网络。", "↑ Formulas, tables and pseudo-code are skipped automatically.", "Like Immersive Translate,", "but built for PDFs.", "It understands layout paragraph by paragraph — single or double column, captions, footnotes. Pages follow the Default / Sepia / Night themes while text stays vector-sharp.", "Switch Original / Bilingual in one click without losing your place", "Only translates 2 pages ahead by default — saves time and tokens", "Translate any selection, export a full bilingual PDF", "Pick your model: Claude, GPT, DeepSeek, Qwen…", "MarginNote-style notes", "Select, excerpt, connect into a ", "knowledge network", "In Annotate mode a floating bar appears when you select text — one click on a color creates a card and adds it to your mind map. In Read mode, a selection is just a selection.", "Eight-color excerpts", "Excerpt with one click from the floating bar — plus auto-excerpt and area capture (turn formulas or figures into image cards).", "Cards & comments", "Give cards a title and multiple comments, with the translation attached automatically; click a highlight on the page to reopen its card.", "Mind map", "Drag to organize, Tab / Return to add nodes, collapse and re-level, double-click to jump back to the source.", "Cross-PDF links", "A notebook holds many PDFs; link cards across documents both ways and jump between them in a click.", "Multi-window · desktop widget", "One window per PDF; collapse into a draggable desktop player and keep listening while you do something else.", "Three themes", "Default, Sepia and Night — MarginNote-inspired palettes that stay easy on the eyes for long sessions.", "Start ", "reading deeply today", "Version 1.0.0 · macOS 14 Sonoma or later · Apple Silicon & Intel", "⬇︎ Download Readlet-1.0.0.zip", "✓ Signed with Apple Developer ID & Notarized by Apple — unzip, drag to Applications, and open directly.", "1 · Install", "Unzip and drag Readlet into Applications.", "2 · Configure models", "Enter your gateway URL and API key in Settings, or put them in ~/.config/readlet/config.toml. Narration uses the macOS system voice by default, so no TTS model is needed.", "3 · Start reading", "Drop in a PDF or press ⌘⇧O to import a web page, press ⌘2 for bilingual view, and ⌘⇧L to let the AI narrate.", "© 2026 Readlet · Made for deep reading", "Design inspired by MarginNote · not affiliated with MarginNote", "", "", "", ".", "Readlet is fully open source · view the code, file issues or contribute on GitHub", "Web import", "New · Interactive Live Web & PDF Import", "Interactive web articles, ", "ready to explore and study live.", "Paste any URL to import an interactive webpage (storing only the URL plus your lightweight annotations, narration scripts, mind maps and progress), keeping live D3 / Canvas / iframe charts fully interactive. Automatically declutters peripheral navbars, sidebars and footers (toggleable per article), tracks page-less 0%–100% continuous progress across windows and devices, or extracts a clean static A4 PDF.", "Original page (with clutter)", "Decluttered live article / PDF", "Interactive tech posts & Hugging Face blogs,", "full interactivity with every AI study tool.", "Imported in Interactive Webpage mode by default — storing only the URL and your personal overlay layer. Non-destructively hides outer chrome without breaking live charts, while supporting in-place bilingual translation, 8-color highlights, area snapshots, mind maps, flashcards and section-by-section AI voice narration.", "Auto-declutters peripheral non-body content by default, with a per-article toggle & element eraser", "Page-less continuous progress (0%–100% + semantic section anchors) synced across window sizes & devices", "In-place bilingual DOM translation + W3C text-quote highlights that never break interactive figures", "Also supports one-click static A4 PDF extraction or direct PDF downloads", "New in 1.0", "Smoother listening, ", "smarter editing & organization.", "Version 1.0 launches the native iOS / iPadOS app with automatic iCloud sync, alongside non-destructive PDF truncation & region erase, TODO / DOING / DONE status tags with reading progress %, a 3-step onboarding wizard, and polished AI voice narration.", "System voice, zero setup", "Narration uses the built-in macOS voices by default, free and offline. Switch to your gateway's TTS model if you have one; failures fall back automatically.", "Five narration styles", "Podcast, storyteller, technical deep dive, popular science or quick summary, plus your own extra instructions. Each style is cached separately, so switching back costs nothing.", "Prepare everything", "Starting at the current page, scripts and audio for the whole book are generated in the background, so playback never waits.", "Time left & look-ahead", "See how long the rest of the book takes at your current speed. About five minutes of audio is always ready, so page turns don't stall.", "Start from this page", "Jump to any page and click once to continue the narration from there; progress is remembered.", "One config file", "Gateway, models and voice can all go in ~/.config/readlet/config.toml, with the key kept in the Keychain. The old way of setting things up still works.", "iOS / iPadOS & App Store", "Available for iPhone, iPad and Mac — automatically syncs PDFs, reading progress, mind maps, flashcards and AI gateway settings via iCloud.", "Get it on the Mac App Store", "Coming soon to the App Store (iOS & macOS)", "macOS Direct Download · Free & Open Source", "Same features with a built-in update check; or build it yourself from source on GitHub.", "Privacy policy", "Support & help", "Live Screen Recording · AI Voice Narration + Bilingual PDF + Mind Map & Flashcards", "Turn on sound to hear AI Voice Narration", "PDF Truncate & Region Erase", "Imported web PDFs often have trailing comments or clutter. Click once to truncate everything below any position, or drag to erase regions—with 1-click non-destructive restore.", "TODO / DOING / DONE Tags & Progress %", "Tag documents with TODO, DOING, DONE or custom labels, filter by tag with a live status ratio bar, and see reading progress % right on every bookshelf card.", "Guided Setup & Auto Updates", "A 3-step first-launch wizard sets up your AI gateway and narration voice in seconds, while the built-in updater checks for new releases automatically.", "Readlet 1.0.0 · macOS 14+ & iOS / iPadOS 17+ · iCloud Auto-Sync", "📱 Download for iOS / iPadOS", "Native iPhone & iPad · iCloud Sync", "Import papers and generate bilingual views or flashcards on Mac, then pick up your iPhone or iPad to keep reading, study 3D flashcards, and review mind maps — synced automatically via iCloud.", "⬇︎ Download Readlet-1.0.0-iOS.ipa", "✓ Universal iOS / iPadOS 17+ build (install via AltStore / Sideloadly / Xcode; App Store release in review)."], "ja": ["Readlet · すべてのページを理解し、すべての思考を残す", "AI 機能", "対訳リーディング", "ノートとマインドマップ", "ダウンロード", "無料ダウンロード", "すべてのページを理解し、", "", "と最後まで読む。", "Readlet は英語の論文や書籍、Web の記事を、元のレイアウトのまま対訳表示します。MarginNote のように抜粋・注釈・マインドマップ整理ができ、AI が各ページを解説し、質問に答え、フラッシュカードで理解度を確かめます。iCloud で Mac・iPhone・iPad 間に自動同期。", "Mac 版 Readlet をダウンロード", "▶ AI にできることを見る", "無料・オープンソース · macOS & iOS / iPadOS 対応 · iCloud 自動同期 · 自分のモデルゲートウェイを利用（Anthropic / OpenAI 互換）", "PDF の抜粋 · マインドマップのノード · フラッシュカード —", "ひとつのカード、三つのかたち。", "AI 学習パートナー · 新機能", "翻訳だけじゃない、", "AI が語って聞かせる。", "読んでいるページを AI が一緒に読み進めます。図表を解説し、ふとした質問に答え、文書全体をマインドマップにし、理解度を確かめる問題まで作ります。", "AI ページごとの音声解説", "AI がページの画像を見ながら、話し言葉で一段落ずつ解説します。図表や数式も扱い、自動でページをめくります。マイクを長押しすれば割り込んで質問でき、答えた後は続きから再開します。", "「まずこの図を見てください。横軸はコンテキスト長で 4K から 1M まで、縦軸はトークンあたりの計算量です……」", "図表の解説", "音声で割り込み質問", "10 セグメント先読み", "続きから再生", "AI アシスタント", "ページや文書全体をワンクリックで要約し、重要な概念を解説。選択した箇所に「AI に質問」でき、回答にはページ番号が付き、クリックで原文に戻れます。会話は文書ごとに保存されます。", "ページ要約", "全文ガイド", "選択して質問", "ページジャンプ", "AI による文書マインドマップ", "AI が全文を読み、階層の整ったマインドマップを生成します。各ポイントは原文にアンカーされ自動でハイライト、ノードをダブルクリックすると PDF に戻ります。", "ワンクリック生成", "原文アンカー", "編集も自由", "フラッシュカード", "AI が文書全体や今読んでいるページから構造化カードを作成します（下のカードをクリックしてみてください）。概念・理解・応用・データの問題に出典ページ付き。めくって「覚えた / もう一度」を記録し、進捗は保存されます。", "めくりアニメーション", "未習得のみ復習", "ショートカット", "概念", "1 ページ", "DeepSeek-V4.1-Flash はどんな種類のモデル？パラメータ規模とコンテキスト長は？", "クリックでめくる", "マルチモーダル MoE モデル。552B のバックボーンパラメータで、最大 100 万トークンのコンテキストに対応。", "Causal Encoder-Decoder（CED）により、デコード時にトークンあたり 16B パラメータのみ活性化。", "↺ もう一度", "✓ 覚えた", "元のレイアウトのままの対訳", "各段落のすぐ下に、", "その訳文。", "各ページは元の PDF のベクターコンテンツから描画され、数式・図表・フォント・段組みはそのまま。読んでいるページと次の 2 ページを翻訳し、訳文が届いてもページは揺れず、同じ内容を二度翻訳することもありません。", "3.1 编码器与解码器堆栈", "编码器由 N = 6 个相同的层堆叠而成。每一层包含两个子层：第一个是多头自注意力机制，第二个是简单的逐位置全连接前馈网络。", "↑ 数式・表・疑似コードは自動でスキップ。", "Immersive Translate のように、", "でも PDF のために。", "段落単位でレイアウトを理解し、1 段組・2 段組・キャプション・脚注にも対応。ページは「標準 / セピア / ナイト」テーマに合わせて着色され、文字はベクターのまま鮮明です。", "原文 / 対訳をワンクリック切替、読む位置はそのまま", "既定では 2 ページ先まで翻訳、時間もトークンも節約", "選択テキストを即翻訳、対訳 PDF を書き出し", "翻訳モデルを選べる：Claude、GPT、DeepSeek、Qwen…", "MarginNote スタイルのノート", "選択し、抜粋し、つなげて", "知識のネットワークに", "注釈モードでは選択するとフローティングバーが現れ、色をクリックするだけでカードが作られマインドマップに追加されます。閲覧モードでは、ただのテキスト選択です。", "8 色の抜粋", "フローティングバーからワンクリックで抜粋。自動抜粋や範囲選択（数式や図を画像カードに）にも対応。", "カードとコメント", "カードにはタイトルと複数のコメントを付けられ、訳文も自動で添付。ページ上のハイライトをクリックするとカードが再び開きます。", "マインドマップ", "ドラッグで整理、Tab / Return で素早くノード追加、折りたたみや階層変更も。ダブルクリックで原文へ。", "PDF をまたぐリンク", "1 つのノートブックに複数の PDF。文書をまたいでカードを双方向リンクし、クリックで行き来できます。", "マルチウィンドウ · デスクトップウィジェット", "PDF ごとに 1 ウィンドウ。デスクトップのプレーヤーにたためば、解説を聞きながら別の作業もできます。", "3 つのテーマ", "標準・セピア・ナイト。MarginNote 由来の配色で、長時間でも目が疲れにくい。", "今日から始めよう、", "深い読書を", "バージョン 1.0.0 · macOS 14 Sonoma 以降 · Apple Silicon & Intel", "⬇︎ Readlet-1.0.0.zip をダウンロード", "✓ Apple Developer ID 署名・公証（Notarized）済み。解凍して「アプリケーション」に入れるだけでそのまま開けます。", "1 · インストール", "解凍して Readlet を「アプリケーション」にドラッグ。", "2 · モデルの設定", "設定でゲートウェイの URL と API キーを入力するか、~/.config/readlet/config.toml に書きます。音声は標準で macOS のシステム音声を使うので、TTS モデルは不要です。", "3 · 読み始める", "PDF をドロップするか ⌘⇧O で Web ページを取り込み、⌘2 で対訳、⌘⇧L で AI の解説を開始。", "© 2026 Readlet · 深い読書のために", "デザインは MarginNote へのオマージュ · MarginNote 公式とは無関係です", "", "", "", "。", "Readlet は完全オープンソース · GitHub でソースの閲覧・Issue・コントリビュートができます", "Web 取り込み", "新機能 · インタラクティブ Web & PDF 取り込み", "動的な Web 記事も、", "インタラクションのまま深く読む。", "URL を貼るだけでインタラクティブな Web ページとして取り込み（URL と注釈・音声解説・マインドマップ・進捗のみを軽量保存）、ページ内の動的グラフや操作可能な図表をそのまま維持。周辺のナビやサイドバーなどの非本文を自動除去（記事ごとに ON/OFF 可能）し、ページ概念のない 0%〜100% の連続進捗をウィンドウサイズや端末間で正確に同期。静的 A4 PDF への変換も選べます。", "元のページ（周辺ノイズあり）", "浄化された動的本文 / PDF", "技術ブログや Hugging Face の動的記事を、", "操作性を保ったまま全 AI 機能で学習。", "標準の「インタラクティブ Web」モードでは URL と注釈レイヤーのみを保存。非破壊で外枠のナビやサイドバーを隠すため D3 / Canvas / iframe の図表が壊れず、その場での対訳挿入、8 色ハイライト、範囲キャプチャ、マインドマップ、フラッシュカード、セクション別 AI 音声解説がすべて使えます。", "周辺の非本文を自動で非表示化（記事ごとの切替＆要素消しゴム対応）", "ページなしの連続進捗（0%〜100%＋セクションアンカー）で異なる画面サイズ・端末間でも位置を同期", "その場で対訳を注入＋W3C テキストアンカーによるハイライト、動的図表は自動で保護", "ワンクリックで静的 A4 PDF への抽出や直接 PDF ダウンロードにも対応", "1.0 の新機能", "もっとなめらかに聴けて、", "編集も整理もさらに快適に。", "バージョン 1.0 では iOS / iPadOS ネイティブアプリと iCloud 自動同期が登場。さらに非破壊 PDF トリミング・領域消去、TODO / DOING / DONE タグと読書進捗表示、初回セットアップガイド、AI 音声解説の強化も追加しました。", "システム音声ですぐ開始", "標準では macOS 内蔵の音声で読み上げます。無料でオフライン。TTS モデルがあればゲートウェイ音声に切り替えでき、失敗時は自動で戻ります。", "5 つの解説スタイル", "ポッドキャスト、講談、技術詳解、やさしい解説、要点だけの 5 種類に、自分の追加指示も。スタイルごとにキャッシュするので、戻しても作り直しません。", "まとめて準備", "現在のページから、本全体の解説と音声をバックグラウンドで生成。再生中に待たされません。", "残り時間と先読み", "今の速度で残りどれくらいかかるかを表示。常に約 5 分先まで音声を用意し、ページをまたいでも止まりません。", "このページから解説", "好きなページに移動してワンクリックで、そこから解説を続けます。進み具合も記憶します。", "設定ファイル 1 つで", "ゲートウェイ、モデル、音声は ~/.config/readlet/config.toml にまとめて書け、キーはキーチェーンに保管できます。従来の設定方法もそのまま使えます。", "iOS / iPadOS & App Store 版", "iPhone・iPad・Mac に対応。iCloud で PDF、読書進捗、マインドマップ、フラッシュカード、AI 設定を自動同期します。", "Mac App Store で入手", "まもなく App Store に登場 (iOS & macOS)", "macOS 直接ダウンロード · 無料・オープンソース", "機能は同じで、アップデート確認付き。GitHub のソースから自分でビルドすることもできます。", "プライバシーポリシー", "サポート", "実機デモ動画 · AI ページ解説 + 対訳 PDF + マインドマップ & フラッシュカード", "音声をオンにして AI 解説を体験", "PDF 切り詰め & 領域消去", "Web から取り込んだ PDF の末尾にある不要なコメント欄などを現在位置から一括カット、または範囲選択で消去。いつでも元の PDF に復元できます。", "TODO / DOING / DONE タグと読書進捗", "ステータスやカスタムタグを素早く付与し、タグ別フィルタや割合バーで進捗を可視化。本棚のカードに読書進捗 % も表示されます。", "初回ガイド & 自動アップデート", "初回起動時の 3 ステップガイドで AI と音声を簡単設定。バックグラウンドで新しいバージョンを自動チェックします。", "Readlet 1.0.0 · macOS 14+ & iOS / iPadOS 17+ · iCloud 自動同期", "📱 iOS / iPadOS 版をダウンロード", "iPhone & iPad ネイティブ対応 · iCloud 同期", "Mac で論文を取り込み対訳やカードを作成したら、iPhone や iPad で続きを読んだり 3D フラッシュカードで復習。読書進捗・注釈・AI 設定は iCloud で自動同期されます。", "⬇︎ Readlet-1.0.0-iOS.ipa をダウンロード", "✓ iOS / iPadOS 17+ ユニバーサルパッケージ（AltStore / Sideloadly / Xcode でインストール可能、App Store 審査中）。"]};
+<section class="download-section" id="download" aria-labelledby="download-title"><div class="container download-layout"><div><h2 id="download-title" data-en="Make room for<br>deep reading.">给深度阅读，<br>留一个位置。</h2><p data-en="Bring Readlet to your Mac, iPhone, and iPad.">让 Readlet 来到你的 Mac、iPhone 与 iPad。</p><div class="download-actions"><a class="pill light" id="download-action" href="/download/Readlet-1.0.0.zip" data-dl><svg class="icon"><use href="#i-download"/></svg><span data-en="Download for Mac (Notarized)">下载 Mac 版（已公证）</span></a><a class="pill outline" id="download-ios-action" href="/download/Readlet-1.0.0-iOS.ipa" data-dl-ios><svg class="icon"><use href="#i-download"/></svg><span data-en="Download iOS / iPadOS (.ipa)">下载 iOS / iPadOS 版 (.ipa)</span></a><a class="inline-link" href="https://github.com/mapix/readit" id="release-link" target="_blank" rel="noopener"><span data-en="GitHub & Source">GitHub 源码</span><svg class="icon"><use href="#i-arrow"/></svg></a></div><p class="download-meta" id="download-meta">v1.0.0 / 7.2 MB / macOS 14+ (Apple Silicon &amp; Intel) · iOS &amp; iPadOS 17+</p><p class="release-boundary" data-en="macOS build is signed with Apple Developer ID, Notarized & Stapled. Unzip and drag Readlet.app into Applications.">macOS 安装包已通过 Apple Developer ID 签名、公证（Notarized）与票据订合（Stapled），解压拖入「应用程序」即可直接打开。</p><p id="download-status" role="status" class="download-status" data-en="Loading release verification metadata…">正在读取公开版本校验信息…</p><button class="inline-link" id="download-retry" hidden data-en="Retry">重新读取</button><details id="checksum" hidden><summary data-en="Verify your download (SHA-256)">验证下载文件 (SHA-256)</summary><code id="checksum-value"></code></details>
+<div class="download-steps">
+  <div><strong data-en="01 · INSTALL">01 · 安装</strong><span data-en="Unzip and drag Readlet into Applications on Mac, or install the .ipa on iOS/iPadOS.">解压后把 Readlet 拖进 Mac「应用程序」，或在 iPhone / iPad 安装 .ipa。</span></div>
+  <div><strong data-en="02 · CONFIGURE">02 · 配置模型</strong><span data-en="Follow the 3-step onboarding wizard or edit ~/.config/readlet/config.toml. System voice works offline with zero setup.">通过三步引导填入网关 Key 或编辑 ~/.config/readlet/config.toml；系统语音免配置离线可用。</span></div>
+  <div><strong data-en="03 · READ & LISTEN">03 · 开始精读</strong><span data-en="Drop a PDF or press ⌘⇧O to import a live webpage URL, ⌘2 for bilingual view, and ⌘⇧L for AI narration.">拖入 PDF 或按 ⌘⇧O 导入动态网页网址，按 ⌘2 切换双语，按 ⌘⇧L 开启 AI 语音讲解。</span></div>
+</div>
+<noscript><a href="/download/Readlet-1.0.0.zip">下载 Readlet for Mac / Download Readlet for Mac</a></noscript></div><div class="download-art" aria-hidden="true"><div class="download-orbit"></div><img src="assets/icon.png" width="512" height="512" alt="" loading="lazy"><span>Readlet</span></div></div></section>
 
-  // set after App Store approval, e.g. "https://apps.apple.com/app/id1234567890"
-  const APP_STORE_URL = "";
-  (function () {
-    const a = document.getElementById('appstore'); if (!a || !APP_STORE_URL) return;
-    a.href = APP_STORE_URL; a.removeAttribute('aria-disabled');
-    const l = document.getElementById('appstore-label'); if (l) { l.setAttribute('data-i18n', String(130)); l.textContent = I18N[window.__lang || 'zh'][130]; }
-  })();
-  const META = {
-    zh: { title: I18N.zh[0], desc: "Readlet 是一款面向深度阅读的 Mac、iPhone 与 iPad 应用：保留原排版的双语 PDF、网页一键转 PDF、MarginNote 式摘录与脑图、AI 逐页语音讲解与闪卡自测，并通过 iCloud 多端自动同步。" },
-    en: { title: I18N.en[0], desc: "Readlet is a Mac, iPhone and iPad app for deep reading: layout-preserving bilingual PDFs, one-click web-article-to-PDF, MarginNote-style excerpts and mind maps, AI voice narration and flashcards, synced across devices via iCloud." },
-    ja: { title: I18N.ja[0], desc: "Readlet は深い読書のための Mac・iPhone・iPad アプリ。レイアウトを保った対訳 PDF、MarginNote 風の抜粋とマインドマップ、AI 解説・フラッシュカード、iCloud 自動同期に対応。" }
-  };
-  function pickLang() {
-    const q = new URLSearchParams(location.search).get('lang');
-    if (q && I18N[q]) return q;
-    const saved = localStorage.getItem('readit-lang'); if (saved && I18N[saved]) return saved;
-    for (const l of (navigator.languages || [navigator.language])) {
-      const x = (l || '').toLowerCase();
-      if (x.startsWith('zh')) return 'zh'; if (x.startsWith('ja')) return 'ja'; if (x.startsWith('en')) return 'en';
-    }
-    return 'en';
-  }
-  function setLang(l, save) {
-    document.documentElement.lang = l === 'zh' ? 'zh-CN' : l;
-    document.querySelectorAll('[data-i18n]').forEach(el => { const v = I18N[l][+el.dataset.i18n]; el.textContent = v; el.style.display = v ? '' : 'none'; });
-    document.title = META[l].title;
-    document.querySelector('meta[name=description]').content = META[l].desc;
-    document.querySelectorAll('.lang-menu button').forEach(b => b.classList.toggle('on', b.dataset.lang === l));
-    document.querySelector('.lang .cur').textContent = { zh: '中文', en: 'English', ja: '日本語' }[l];
-    window.__lang = l;
-    if (save) localStorage.setItem('readit-lang', l);
-    if (window.__rel) applyRelease(window.__rel);
-  }
-  const langBox = document.querySelector('.lang'), langBtn = langBox.querySelector('.lang-btn');
-  const setOpen = o => { langBox.classList.toggle('open', o); langBtn.setAttribute('aria-expanded', o); };
-  langBtn.onclick = e => { e.stopPropagation(); setOpen(!langBox.classList.contains('open')); };
-  document.addEventListener('click', e => { if (!langBox.contains(e.target)) setOpen(false); });
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') setOpen(false); });
-  document.querySelectorAll('.lang-menu button').forEach(b => b.onclick = () => { setLang(b.dataset.lang, true); setOpen(false); });
-  setLang(pickLang(), false);
+<section class="faq-section container" aria-labelledby="faq-title"><h2 id="faq-title" data-en="Before you begin.">开始之前。</h2><div class="faq-list">
+  <details><summary><span data-en="Which devices can run Readlet?">哪些设备可以运行 Readlet？</span><svg class="icon"><use href="#i-plus"/></svg></summary><p data-en="Readlet runs natively on macOS 14 Sonoma or later (universal binary for Apple Silicon & Intel) and iOS / iPadOS 17.0 or later.">Readlet 原生支持 macOS 14 Sonoma 及更高版本（Apple Silicon 与 Intel 通用二进制），以及 iOS / iPadOS 17.0 及更高版本的 iPhone 与 iPad。</p></details>
+  <details><summary><span data-en="How does Interactive Webpage Import differ from PDF extraction?">「动态交互网页导入」和「网页转静态 PDF」有什么区别？</span><svg class="icon"><use href="#i-plus"/></svg></summary><p data-en="In Interactive Webpage mode (DocKind.web, default), Readlet stores only the URL and your personal annotation/narration overlays, preserving live D3/Canvas/iframe interactive charts while auto-decluttering peripheral navbars and sidebars (toggleable per article) and tracking page-less 0%–100% progress. You can also choose static A4 PDF extraction anytime.">默认的「可交互网页（DocKind.web）」模式仅保存网址与你的批注、朗读、脑图等轻量叠加数据，完整保留网页内 D3 / Canvas / iframe 动态图表的实时交互，默认自动移除周边非正文干扰（可按篇随时关闭），并通过无分页连续锚点同步 0%–100% 阅读进度；若你需要固定版面归档，也可在导入时选择「提取为静态 A4 PDF」。</p></details>
+  <details><summary><span data-en="Do I need a paid TTS model to use AI Voice Narration?">使用 AI 逐页语音解读必须配置付费 TTS 模型吗？</span><svg class="icon"><use href="#i-plus"/></svg></summary><p data-en="No. Readlet uses built-in macOS and iOS offline system voices by default with zero TTS configuration. Whenever you want studio-grade neural voices, you can switch to your primary gateway, OpenAI, Gemini, Qwen-TTS, Azure, ElevenLabs, MiniMax, or Volcengine Doubao.">不需要。Readlet 默认使用 macOS 与 iOS 自带的系统离线语音，零配置、免费开箱即讲；当你有更高音质需求时，可随时切换至主网关、OpenAI、Gemini、通义千问 Qwen-TTS、Azure、ElevenLabs、MiniMax 或火山引擎豆包语音。</p></details>
+  <details><summary><span data-en="What data is synced to iCloud, and will audio files fill up my storage?">哪些数据会同步到 iCloud？语音缓存会占满我的云盘吗？</span><svg class="icon"><use href="#i-plus"/></svg></summary><p data-en="Readlet follows a strict lightweight sync rule: only PDFs, web URLs & anchors, excerpt cards, mind maps, flashcards, translation text, narration scripts (p*.json), and gateway settings sync to iCloud. Heavy audio clips (.m4a/.wav) and exported videos (.mp4) stay strictly local.">Readlet 严格遵循轻量化云同步原则：仅同步 PDF 原文、动态网页 URL 与阅读锚点、摘录卡片、思维导图、闪卡、翻译文本、讲解文稿（p*.json）及网关配置；体积较大的合成音频（.m4a / .wav）与导出视频（.mp4）仅保存在本机并支持按文档一键清理，绝不占用你的 iCloud 空间。</p></details>
+  <details><summary><span data-en="Is the macOS app signed and notarized by Apple?">macOS 安装包是否经过 Apple 官方签名与公证？</span><svg class="icon"><use href="#i-plus"/></svg></summary><p data-en="Yes. Every official Readlet-<VERSION>.zip download is signed with an Apple Developer ID Application certificate, notarized by Apple Notary Service, and stapled with the notarization ticket.">是的。官网发布的每一个 Readlet 安装包均经过 Apple Developer ID 签名、Apple Notary 官方公证与票据订合（Stapled），解压后拖入「应用程序」即可直接安全运行。</p></details>
+  <details><summary><span data-en="Where can I inspect the source code or report an issue?">在哪里查看源码或反馈问题？</span><svg class="icon"><use href="#i-plus"/></svg></summary><p><span data-en="Readlet is open source. ">Readlet 完全开源。</span><a href="https://github.com/mapix/readit" target="_blank" rel="noopener" data-en="Explore the GitHub repository">访问 GitHub 仓库</a> / <a href="https://github.com/mapix/readit/issues" target="_blank" rel="noopener" data-en="Report an issue">提交 Issue 反馈</a></p></details>
+</div></section>
+</main>
+<footer class="site-footer container"><a class="footer-word" href="#main">Readlet</a><div class="footer-bottom"><span data-en="Understand every page. Keep every thought. Native to Mac, iPhone & iPad.">读懂每一页，留下每一处思考 · macOS &amp; iOS / iPadOS 原生双端。</span><div><a href="https://github.com/mapix/readit" target="_blank" rel="noopener">GitHub</a><a href="/privacy.html" data-en="Privacy Policy">隐私政策</a><a href="/support.html" data-en="Support & Help">支持与帮助</a><span>Fall ’26</span></div></div></footer>
 
-  // reveal on scroll
-  const io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } }), { threshold: .12 });
-  document.querySelectorAll('.rv').forEach(el => io.observe(el));
-  // release metadata (version / checksum) from the server
-  fetch('/download/latest.json').then(r => r.ok ? r.json() : null).then(j => {
-    if (!j) return;
-    const qs = j.sha256 ? ('?v=' + j.sha256.slice(0, 12)) : '';
-    document.querySelectorAll('[data-dl]').forEach(a => a.href = '/download/' + j.file + qs);
-    if (j.ios_file) document.querySelectorAll('[data-dl-ios]').forEach(a => a.href = '/download/' + j.ios_file + qs);
-    window.__rel = j; applyRelease(j);
-    if (j.sha256) document.getElementById('sha').textContent = 'SHA-256 ' + j.sha256.slice(0, 16) + '…';
-  }).catch(() => {});
-  function applyRelease(j) {
-    const t = { zh: `版本 ${j.version} · ${j.size} · macOS 14 Sonoma 及以上 · Apple Silicon & Intel`,
-                en: `Version ${j.version} · ${j.size} · macOS 14 Sonoma or later · Apple Silicon & Intel`,
-                ja: `バージョン ${j.version} · ${j.size} · macOS 14 Sonoma 以降 · Apple Silicon & Intel` }[window.__lang || 'zh'];
-    const v = document.querySelector('#ver span') || document.getElementById('ver'); v.textContent = t;
-  }
-</script>
-</body>
-</html>
+<dialog id="search-dialog" class="search-dialog" aria-labelledby="search-dialog-title"><div class="dialog-top"><span id="search-dialog-title" data-en="Explore Readlet">探索 Readlet</span><button class="icon-button" data-close="search-dialog" aria-label="关闭 / Close"><svg class="icon"><use href="#i-close"/></svg></button></div><label class="search-field"><svg class="icon"><use href="#i-search"/></svg><input id="feature-search" type="search" placeholder="搜索功能：双语、动态网页、语音解读、脑图、闪卡…" aria-label="搜索功能 / Search features" autocomplete="off"></label><div id="feature-search-results" class="feature-search-results"></div><p class="search-empty" id="search-empty" hidden data-en="No results. Try bilingual, web, narration, mind map, or flashcards.">没有找到。试试“双语”“网页”“语音”“脑图”或“闪卡”。</p><span class="dialog-hint" data-en="Esc to close · ⌘K or / to open">Esc 关闭 · 支持 ⌘K 或 / 快捷呼出</span></dialog>
+
+<dialog id="feature-dialog" class="feature-dialog" aria-labelledby="detail-title"><div class="dialog-top"><span id="detail-category"></span><button class="icon-button" data-close="feature-dialog" aria-label="关闭 / Close"><svg class="icon"><use href="#i-close"/></svg></button></div><div class="feature-detail"><div class="detail-art" id="detail-art" aria-hidden="true"><svg class="icon"><use href="#i-spark"/></svg></div><h2 id="detail-title"></h2><p id="detail-description"></p><div id="detail-notes"></div><a id="detail-doc" class="inline-link" href="https://github.com/mapix/readit" target="_blank" rel="noopener"><span data-en="Explore on GitHub">在 GitHub 查看项目详情</span><svg class="icon"><use href="#i-arrow"/></svg></a></div></dialog>
+
+<dialog id="preview-dialog" class="preview-dialog" aria-labelledby="preview-dialog-title"><div class="dialog-top"><span id="preview-dialog-title" data-en="Readlet · Live Screen Recording & Native Workspace">Readlet · 实机有声演示与原生工作台</span><button class="icon-button" data-close="preview-dialog" aria-label="关闭 / Close"><svg class="icon"><use href="#i-close"/></svg></button></div><video id="preview-video" src="/Readlet_AppReview_Demo.mp4?v=20261017" poster="assets/shot-narrate.jpg?v=20261017" controls playsinline preload="metadata"></video><div class="preview-dialog-bar"><span data-en="🔊 Turn on sound to experience AI page-by-page voice narration, bilingual reading, mind maps & flashcards.">🔊 开启声音即可体验 AI 逐页语音解读、保留原排版双语对照、脑图与闪卡。</span><a class="inline-link" href="/download/Readlet-1.0.0.zip" data-dl><span data-en="Download for Mac">下载 Mac 版</span><svg class="icon"><use href="#i-download"/></svg></a></div></dialog>
+
+<dialog id="expo-dialog" class="expo-dialog" aria-labelledby="expo-title"><div class="dialog-top"><span>Readlet <span data-en="Expo">功能展览</span></span><button class="icon-button" data-close="expo-dialog" aria-label="关闭 / Close"><svg class="icon"><use href="#i-close"/></svg></button></div><div class="expo-display"><span id="expo-number">01 / 08</span><div class="expo-art" aria-hidden="true"><svg class="icon" id="expo-icon"><use href="#i-file"/></svg><div class="expo-ring"></div></div><h2 id="expo-title">双语精读</h2><p id="expo-description"></p><button class="pill light" id="expo-detail"><span data-en="Explore this chapter">进入这个章节</span><svg class="icon"><use href="#i-arrow"/></svg></button></div><div class="expo-bottom"><button id="expo-prev" class="icon-button" aria-label="上一个 / Previous"><svg class="icon reverse"><use href="#i-arrow"/></svg></button><div id="expo-dots" class="expo-dots" role="group" aria-label="选择展览章节"></div><button id="expo-next" class="icon-button" aria-label="下一个 / Next"><svg class="icon"><use href="#i-arrow"/></svg></button></div></dialog>
+
+<dialog id="memory-dialog" class="memory-dialog" aria-labelledby="memory-dialog-title"><div class="dialog-top"><span id="memory-dialog-title" data-en="Customize example flashcard">自定义示例闪卡问题</span><button class="icon-button" data-close="memory-dialog" aria-label="关闭 / Close"><svg class="icon"><use href="#i-close"/></svg></button></div><form id="memory-form"><label for="memory-input" data-en="Flashcard question">闪卡正面问题</label><input id="memory-input" maxlength="140" required value="DeepSeek-V4.1-Flash 是什么类型的模型？解码阶段每 Token 激活多少参数？"><p data-en="Changes affect this interactive website example only.">修改仅作用于此网页的交互闪卡示例。</p><button class="pill light" type="submit" data-en="Save card">保存问题</button></form></dialog>
+</body></html>

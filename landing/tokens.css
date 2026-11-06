@@ -1,0 +1,72 @@
+:root {
+  color-scheme: light;
+  --font-display: "Helvetica Neue", "Arial", "PingFang SC", "Hiragino Sans", sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans", sans-serif;
+  --font-code: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --color-main: #1636dc;
+  --color-deep: #1028a9;
+  --color-soft: #a9c8f5;
+  --color-tint: #dce8fa;
+  --color-fg: #ffffff;
+  --color-fg-muted: #c1ccff;
+  --color-line: #ffffff32;
+  --color-white: #ffffff;
+  --color-ink: #18243c;
+  --color-muted: #637087;
+  --color-border: #dbe1ea;
+  --color-paper: #f5f7fb;
+  --color-highlight: #caff84;
+  --color-success: #226e4e;
+  --color-error: #a93845;
+  --color-shadow: #07175938;
+  --color-clear: transparent;
+  --color-swatch-blue: #698aff;
+  --color-swatch-pink: #ff7bb9;
+  --color-swatch-orange: #ff9a57;
+  --container: 1600px;
+  --header-height: 64px;
+  --gutter: clamp(20px, 3vw, 48px);
+  --duration: 220ms;
+}
+:root[data-theme="pink"] {
+  --color-main: #b60d69;
+  --color-deep: #850847;
+  --color-soft: #f6a9d0;
+  --color-tint: #ffe2ef;
+  --color-fg-muted: #ffd0e8;
+  --color-highlight: #ffeb97;
+}
+:root[data-theme="orange"] {
+  --color-main: #b43c12;
+  --color-deep: #852b0e;
+  --color-soft: #ffbd8e;
+  --color-tint: #ffe6d4;
+  --color-fg-muted: #ffdabd;
+  --color-highlight: #e5fba5;
+}
+:root[data-theme="blue"][data-stage="narrate"],
+:root[data-theme="blue"][data-stage="notes"] {
+  --color-main: #6817b6;
+  --color-deep: #47107e;
+  --color-soft: #c6b0ed;
+  --color-tint: #e8def8;
+  --color-fg-muted: #e4cffb;
+  --color-highlight: #d2ff9b;
+}
+:root[data-theme="blue"][data-stage="copilot"],
+:root[data-theme="blue"][data-stage="flashcards"] {
+  --color-main: #a11b70;
+  --color-deep: #73134f;
+  --color-soft: #edb0d4;
+  --color-tint: #f9dfef;
+  --color-fg-muted: #ffd3ed;
+  --color-highlight: #f8eea2;
+}
+:root[data-theme="blue"][data-stage="native"] {
+  --color-main: #08616f;
+  --color-deep: #064653;
+  --color-soft: #a4d8d7;
+  --color-tint: #d6eeea;
+  --color-fg-muted: #c8ebe8;
+  --color-highlight: #e3f9a6;
+}
