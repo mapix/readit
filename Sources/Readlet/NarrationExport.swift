@@ -78,7 +78,7 @@ final class NarrationExporter: ObservableObject {
             phase = .failed; detail = L("请先开始 AI 解读"); log("failed: no narration"); return
         }
         let title = n.narratedTitle.isEmpty ? ses.doc.title : n.narratedTitle
-        var count = doc.pageCount
+        var count = ses.isWeb ? max(1, ses.pageCount) : doc.pageCount
         if let l = limitPages, l > 0 { count = min(count, l) }
         guard count > 0 else { phase = .failed; detail = L("文档没有页面"); return }
         outputURL = nil

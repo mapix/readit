@@ -156,7 +156,7 @@ struct StudyToolbar: View {
                     Section(nb.name) {
                         ForEach(nb.docIds, id: \.self) { id in
                             if let d = store.doc(id) {
-                                Button { DocWindows.shared.open(id) } label: { Label(d.title, systemImage: rc.docId == id ? "checkmark" : "doc") }
+                                Button { DocWindows.shared.open(id) } label: { Label(d.title, systemImage: rc.docId == id ? "checkmark" : (d.isWeb ? "globe" : "doc")) }
                             }
                         }
                     }
@@ -167,7 +167,7 @@ struct StudyToolbar: View {
                 Button(L("从网页导入…")) { WebImportPanel.show(notebook: store.currentNotebookId) }
             } label: {
                 HStack(spacing: 4) {
-                    Image(systemName: "doc.text")
+                    Image(systemName: rc.isWeb ? "globe" : "doc.text")
                     Text(rc.docId.flatMap { store.doc($0)?.title } ?? L("文档")).lineLimit(1).truncationMode(.middle)
                     Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
                 }
@@ -213,59 +213,106 @@ struct StudyToolbar: View {
                     .overlay(Circle().stroke(Color.white.opacity(0.6)))
                     .help(L("当前摘录颜色"))
             }
-            // PDF Editing menu (truncate from position, erase region, delete pages, restore)
-            Menu {
-                Button {
-                    rc.truncateMode.toggle()
-                } label: {
-                    Label(rc.truncateMode ? L("退出截断模式 (Esc)") : L("点击页面位置截断后面…"), systemImage: "scissors")
-                }
-                Button {
-                    rc.eraseMode.toggle()
-                } label: {
-                    Label(rc.eraseMode ? L("退出框选擦除 (Esc)") : L("框选擦除页面区域…"), systemImage: "rectangle.dashed.and.paperclip")
-                }
-                if let docId = rc.docId, let ses = store.sessions[docId] {
-                    Divider()
-                    if ses.pageCount > 1 {
-                        Button(role: .destructive) {
-                            PDFEditor.deletePage(session: ses, pageIndex: rc.currentPageIndex)
-                        } label: {
-                            Label(LF("删除当前页 (p.%d)", rc.currentPageIndex + 1), systemImage: "trash")
-                        }
-                        if rc.currentPageIndex + 1 < ses.pageCount {
-                            Button(role: .destructive) {
-                                PDFEditor.deletePagesAfter(session: ses, pageIndex: rc.currentPageIndex)
-                            } label: {
-                                Label(L("删除当前页之后的所有页"), systemImage: "arrow.down.to.line")
-                            }
-                        }
-                        if rc.currentPageIndex > 0 {
-                            Button(role: .destructive) {
-                                PDFEditor.deletePagesBefore(session: ses, pageIndex: rc.currentPageIndex)
-                            } label: {
-                                Label(L("删除当前页之前的所有页"), systemImage: "arrow.up.to.line")
-                            }
-                        }
+            if rc.isWeb {
+                // Interactive Webpage Clean Mode (remove peripheral non-body content) & Element Picker menu
+                Menu {
+                    Button {
+                        rc.toggleWebCleanMode()
+                    } label: {
+                        Label(rc.webCleanMode ? L("已开启：自动移除周边非正文内容") : L("开启自动移除周边非正文内容"), systemImage: rc.webCleanMode ? "checkmark.circle.fill" : "wand.and.stars")
                     }
-                    if PDFEditor.hasBackup(docId) {
-                        Divider()
+                    Button {
+                        rc.eraseMode.toggle()
+                    } label: {
+                        Label(rc.eraseMode ? L("退出点选隐藏 (Esc)") : L("点选隐藏页面干扰元素…"), systemImage: "hand.point.up.left")
+                    }
+                    if let wc = rc.webController, !wc.hiddenSelectors.isEmpty {
                         Button {
-                            PDFEditor.restoreOriginal(session: ses)
+                            wc.clearCustomHiddenSelectors()
                         } label: {
-                            Label(L("恢复原始未编辑 PDF"), systemImage: "arrow.uturn.backward")
+                            Label(LF("恢复手动隐藏的元素 (%d)", wc.hiddenSelectors.count), systemImage: "arrow.uturn.backward")
                         }
                     }
+                    Divider()
+                    Button {
+                        rc.webController?.reload()
+                    } label: {
+                        Label(L("刷新动态网页"), systemImage: "arrow.clockwise")
+                    }
+                    if let docId = rc.docId, let raw = store.doc(docId)?.webURL, let u = URL(string: raw) {
+                        Button {
+                            NSWorkspace.shared.open(u)
+                        } label: {
+                            Label(L("在浏览器中打开原网页"), systemImage: "safari")
+                        }
+                    }
+                } label: {
+                    Image(systemName: rc.eraseMode ? "hand.point.up.left.fill" : "wand.and.stars")
+                        .font(.system(size: 13))
+                        .foregroundStyle((rc.eraseMode || rc.webCleanMode) ? Color.white : MN.barDim)
+                        .frame(width: 28, height: 26)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5)
+                                .fill(rc.eraseMode ? Color.red.opacity(0.75) : (rc.webCleanMode ? Color.white.opacity(0.16) : Color.clear))
+                        )
                 }
-            } label: {
-                Image(systemName: "scissors")
-                    .font(.system(size: 13))
-                    .foregroundStyle((rc.truncateMode || rc.eraseMode) ? Color.white : MN.barDim)
-                    .frame(width: 28, height: 26)
-                    .background(RoundedRectangle(cornerRadius: 5).fill((rc.truncateMode || rc.eraseMode) ? Color.red.opacity(0.75) : Color.clear))
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .help(L("网页净化：自动移除周边非正文内容（可按文章开关）或点选隐藏元素"))
+            } else {
+                // PDF Editing menu (truncate from position, erase region, delete pages, restore)
+                Menu {
+                    Button {
+                        rc.truncateMode.toggle()
+                    } label: {
+                        Label(rc.truncateMode ? L("退出截断模式 (Esc)") : L("点击页面位置截断后面…"), systemImage: "scissors")
+                    }
+                    Button {
+                        rc.eraseMode.toggle()
+                    } label: {
+                        Label(rc.eraseMode ? L("退出框选擦除 (Esc)") : L("框选擦除页面区域…"), systemImage: "rectangle.dashed.and.paperclip")
+                    }
+                    if let docId = rc.docId, let ses = store.sessions[docId] {
+                        Divider()
+                        if ses.pageCount > 1 {
+                            Button(role: .destructive) {
+                                PDFEditor.deletePage(session: ses, pageIndex: rc.currentPageIndex)
+                            } label: {
+                                Label(LF("删除当前页 (p.%d)", rc.currentPageIndex + 1), systemImage: "trash")
+                            }
+                            if rc.currentPageIndex + 1 < ses.pageCount {
+                                Button(role: .destructive) {
+                                    PDFEditor.deletePagesAfter(session: ses, pageIndex: rc.currentPageIndex)
+                                } label: {
+                                    Label(L("删除当前页之后的所有页"), systemImage: "arrow.down.to.line")
+                                }
+                            }
+                            if rc.currentPageIndex > 0 {
+                                Button(role: .destructive) {
+                                    PDFEditor.deletePagesBefore(session: ses, pageIndex: rc.currentPageIndex)
+                                } label: {
+                                    Label(L("删除当前页之前的所有页"), systemImage: "arrow.up.to.line")
+                                }
+                            }
+                        }
+                        if PDFEditor.hasBackup(docId) {
+                            Divider()
+                            Button {
+                                PDFEditor.restoreOriginal(session: ses)
+                            } label: {
+                                Label(L("恢复原始未编辑 PDF"), systemImage: "arrow.uturn.backward")
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "scissors")
+                        .font(.system(size: 13))
+                        .foregroundStyle((rc.truncateMode || rc.eraseMode) ? Color.white : MN.barDim)
+                        .frame(width: 28, height: 26)
+                        .background(RoundedRectangle(cornerRadius: 5).fill((rc.truncateMode || rc.eraseMode) ? Color.red.opacity(0.75) : Color.clear))
+                }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .help(L("编辑 PDF：从指定位置截断后面、擦除区域或删除多余页"))
             }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-            .help(L("编辑 PDF：从指定位置截断后面、擦除区域或删除多余页"))
 
             Divider().frame(height: 18).overlay(Color.white.opacity(0.2))
             // layout: reader | split | map
@@ -302,13 +349,13 @@ struct StudyToolbar: View {
                         let curPage = rc.syncCurrentPageFromView()
                         Narrator.shared.start(docId: id, doc: s.document(rc.variant), title: s.doc.title, from: curPage, resume: false)
                     } label: {
-                        Label(LF("从当前页开始讲 (p.%d)", rc.currentPageIndex + 1), systemImage: "text.line.first.and.arrowtriangle.forward")
+                        Label(rc.isWeb ? L("从当前章节开始讲") : LF("从当前页开始讲 (p.%d)", rc.currentPageIndex + 1), systemImage: "text.line.first.and.arrowtriangle.forward")
                     }
                     if let saved = Narrator.savedProgress(id), (saved.page > 0 || saved.seg > 0) {
                         Button {
                             Narrator.shared.start(docId: id, doc: s.document(rc.variant), title: s.doc.title, from: saved.page, resume: true)
                         } label: {
-                            Label(LF("继续上次讲解 (p.%d · 第 %d 段)", saved.page + 1, saved.seg + 1), systemImage: "play.circle")
+                            Label(rc.isWeb ? LF("继续上次讲解 (第 %d 节 · 第 %d 段)", saved.page + 1, saved.seg + 1) : LF("继续上次讲解 (p.%d · 第 %d 段)", saved.page + 1, saved.seg + 1), systemImage: "play.circle")
                         }
                     }
                     if Narrator.shared.state != .idle && Narrator.shared.docId == id {
@@ -345,13 +392,13 @@ struct StudyToolbar: View {
                             let curPage = rc.syncCurrentPageFromView()
                             Narrator.shared.start(docId: id, doc: s.document(rc.variant), title: s.doc.title, from: curPage, resume: false)
                         } label: {
-                            Label(LF("从当前页开始讲 (p.%d)", rc.currentPageIndex + 1), systemImage: "text.line.first.and.arrowtriangle.forward")
+                            Label(rc.isWeb ? L("从当前章节开始讲") : LF("从当前页开始讲 (p.%d)", rc.currentPageIndex + 1), systemImage: "text.line.first.and.arrowtriangle.forward")
                         }
                         if let saved = Narrator.savedProgress(id), (saved.page > 0 || saved.seg > 0) {
                             Button {
                                 Narrator.shared.start(docId: id, doc: s.document(rc.variant), title: s.doc.title, from: saved.page, resume: true)
                             } label: {
-                                Label(LF("继续上次讲解 (p.%d · 第 %d 段)", saved.page + 1, saved.seg + 1), systemImage: "play.circle")
+                                Label(rc.isWeb ? LF("继续上次讲解 (第 %d 节 · 第 %d 段)", saved.page + 1, saved.seg + 1) : LF("继续上次讲解 (p.%d · 第 %d 段)", saved.page + 1, saved.seg + 1), systemImage: "play.circle")
                             }
                         }
                         Button {
@@ -378,7 +425,9 @@ struct StudyToolbar: View {
                 }
                 Button(L("AI 生成文档脑图")) { if let id = rc.docId { MapGenerator.shared.generate(docId: id); if layoutRaw == StudyLayout.reader.rawValue { layoutRaw = StudyLayout.split.rawValue } } }
                 Divider()
-                Button(L("导出双语 PDF…")) { exportBilingual() }
+                if !rc.isWeb {
+                    Button(L("导出双语 PDF…")) { exportBilingual() }
+                }
                 Button(L("导出脑图为 Markdown…")) { exportMarkdown() }
                 if let id = rc.docId, let d = store.doc(id) {
                     Divider()
@@ -871,7 +920,11 @@ struct LibraryView: View {
                                 .font(.system(size: 9.5, weight: .bold, design: .monospaced))
                                 .foregroundStyle(.white)
                             Spacer()
-                            if totalPages > 0 {
+                            if d.isWeb {
+                                Text(L("互动网页"))
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundStyle(.white.opacity(0.9))
+                            } else if totalPages > 0 {
                                 Text(readP > 0 ? "\(readP)/\(totalPages)p" : "\(totalPages)p")
                                     .font(.system(size: 9, design: .monospaced))
                                     .foregroundStyle(.white.opacity(0.88))
@@ -957,7 +1010,15 @@ struct LibraryView: View {
                 ForEach(store.lib.notebooks) { nb in Button(nb.name) { store.addDocToNotebook(d.id, notebook: nb.id) } }
             }
             if let nb = notebook { Button(L("从此笔记本移除")) { store.currentNotebookId = nb; store.removeDocFromNotebook(d.id) } }
-            Button(L("在访达中显示")) { NSWorkspace.shared.activateFileViewerSelecting([Paths.pdf(d.id)]) }
+            if d.isWeb {
+                Button(d.webCleanMode ? L("关闭自动移除周边非正文") : L("开启自动移除周边非正文")) {
+                    let next = store.toggleWebCleanMode(d.id)
+                    DocWindows.shared.entries[d.id]?.reader.webCleanMode = next
+                    DocWindows.shared.entries[d.id]?.reader.webController?.setCleanMode(next)
+                }
+            } else {
+                Button(L("在访达中显示")) { NSWorkspace.shared.activateFileViewerSelecting([Paths.pdf(d.id)]) }
+            }
             if let s = d.source, let u = URL(string: s) {
                 Button(L("打开原网页")) { NSWorkspace.shared.open(u) }
                 Button(L("重新从网页导入")) { WebImportPanel.show(notebook: notebook, url: s) }
@@ -1005,15 +1066,28 @@ struct DocProgressAndMediaMenuItems: View {
     let doc: Doc
     let onJump: (Int) -> Void
 
+    private func locLabel(page: Int, anchor: WebReadingAnchor?) -> String {
+        if doc.isWeb {
+            if let a = anchor {
+                if let st = a.sectionTitle, !st.isEmpty {
+                    return "\(a.progressPercent)% · \(st)"
+                }
+                return "\(a.progressPercent)%"
+            }
+            return LF("第 %d 节", page + 1)
+        }
+        return "p.\(page + 1)"
+    }
+
     var body: some View {
         Menu(L("多端阅读进度与恢复")) {
             if let conflict = doc.pendingConflict {
                 Section(L("检测到多设备阅读进度冲突")) {
-                    Button(LF("保留本机 (p.%d)", conflict.localPage + 1)) {
+                    Button(LF("保留本机 (%@)", locLabel(page: conflict.localPage, anchor: conflict.localWebAnchor))) {
                         store.resolveProgressConflict(doc.id, useRemote: false)
                         onJump(conflict.localPage)
                     }
-                    Button(LF("采用 %@ (p.%d)", conflict.remoteDeviceName, conflict.remotePage + 1)) {
+                    Button(LF("采用 %@ (%@)", conflict.remoteDeviceName, locLabel(page: conflict.remotePage, anchor: conflict.remoteWebAnchor))) {
                         store.resolveProgressConflict(doc.id, useRemote: true)
                         onJump(conflict.remotePage)
                     }
@@ -1025,11 +1099,18 @@ struct DocProgressAndMediaMenuItems: View {
                 } else {
                     ForEach(doc.deviceProgressHistory) { snap in
                         Button {
-                            store.restoreProgressSnapshot(doc.id, page: snap.readPage, narrationPage: snap.narrationPage, narrationSeg: snap.narrationSeg)
-                            onJump(snap.readPage)
+                            store.restoreProgressSnapshot(doc.id, page: snap.readPage, narrationPage: snap.narrationPage, narrationSeg: snap.narrationSeg, webAnchor: snap.webAnchor)
+                            if let a = snap.webAnchor {
+                                DocWindows.shared.entries[doc.id]?.reader.applyRemoteSyncedWebAnchor(a)
+                            } else {
+                                onJump(snap.readPage)
+                            }
                         } label: {
-                            let narrText = snap.narrationPage.map { " · " + LF("讲解 p.%d · 第 %d 段", $0 + 1, (snap.narrationSeg ?? 0) + 1) } ?? ""
-                            Text("\(snap.deviceName): p.\(snap.readPage + 1)\(narrText)")
+                            let readStr = locLabel(page: snap.readPage, anchor: snap.webAnchor)
+                            let narrText = snap.narrationPage.map {
+                                " · " + (doc.isWeb ? LF("讲解第 %d 节 · 第 %d 段", $0 + 1, (snap.narrationSeg ?? 0) + 1) : LF("讲解 p.%d · 第 %d 段", $0 + 1, (snap.narrationSeg ?? 0) + 1))
+                            } ?? ""
+                            Text("\(snap.deviceName): \(readStr)\(narrText)")
                         }
                     }
                 }
@@ -1038,9 +1119,17 @@ struct DocProgressAndMediaMenuItems: View {
             if !daily.isEmpty {
                 Section(L("每日阅读足迹")) {
                     ForEach(daily.prefix(14), id: \.key) { day, p in
-                        Button("\(day) — " + LF("阅读至 p.%d", p + 1)) {
-                            store.restoreProgressSnapshot(doc.id, page: p)
-                            onJump(p)
+                        let labelStr = doc.isWeb ? "\(day) — \(min(100, max(0, p)))%" : ("\(day) — " + LF("阅读至 p.%d", p + 1))
+                        Button(labelStr) {
+                            if doc.isWeb {
+                                let frac = Double(min(100, max(0, p))) / 100.0
+                                let anchor = WebReadingAnchor(scrollFraction: frac)
+                                store.restoreProgressSnapshot(doc.id, page: 0, webAnchor: anchor)
+                                DocWindows.shared.entries[doc.id]?.reader.applyRemoteSyncedWebAnchor(anchor)
+                            } else {
+                                store.restoreProgressSnapshot(doc.id, page: p)
+                                onJump(p)
+                            }
                         }
                     }
                 }
@@ -1063,21 +1152,38 @@ struct DocProgressAndMediaMenuItems: View {
 
 struct MacProgressConflictBanner: View {
     let conflict: ProgressConflict
+    var isWeb: Bool = false
     let onKeepLocal: () -> Void
     let onAcceptRemote: () -> Void
     let onDismiss: () -> Void
+
+    private var localDesc: String {
+        if isWeb || conflict.localWebAnchor != nil {
+            let pct = conflict.localWebAnchor?.progressPercent ?? 0
+            return "\(pct)%"
+        }
+        return "p.\(conflict.localPage + 1)"
+    }
+
+    private var remoteDesc: String {
+        if isWeb || conflict.remoteWebAnchor != nil {
+            let pct = conflict.remoteWebAnchor?.progressPercent ?? 0
+            return "\(pct)%"
+        }
+        return "p.\(conflict.remotePage + 1)"
+    }
 
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
                 .foregroundStyle(.orange)
-            Text(L("检测到多设备阅读进度冲突") + " · " + LF("本机 (%@) 位于第 %d 页，另一设备 (%@) 位于第 %d 页", conflict.localDeviceName, conflict.localPage + 1, conflict.remoteDeviceName, conflict.remotePage + 1))
+            Text(L("检测到多设备阅读进度冲突") + " · " + LF("本机 (%@) 位于 %@，另一设备 (%@) 位于 %@", conflict.localDeviceName, localDesc, conflict.remoteDeviceName, remoteDesc))
                 .font(.system(size: 11.5, weight: .medium))
                 .lineLimit(1)
             Spacer()
-            Button(LF("保留本机 (p.%d)", conflict.localPage + 1), action: onKeepLocal)
+            Button(LF("保留本机 (%@)", localDesc), action: onKeepLocal)
                 .controlSize(.small)
-            Button(LF("采用 %@ (p.%d)", conflict.remoteDeviceName, conflict.remotePage + 1), action: onAcceptRemote)
+            Button(LF("采用 %@ (%@)", conflict.remoteDeviceName, remoteDesc), action: onAcceptRemote)
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
             Button(action: onDismiss) {
@@ -1098,13 +1204,41 @@ struct Thumb: View {
     @State private var img: NSImage?
     @State private var editTick = 0
     var body: some View {
+        let doc = Store.shared.doc(docId)
         ZStack {
             Color.white
-            if let img { Image(nsImage: img).resizable().aspectRatio(contentMode: .fill) }
+            if let img {
+                Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
+            } else if doc?.isWeb == true {
+                ZStack {
+                    LinearGradient(
+                        colors: [Color(red: 0.11, green: 0.16, blue: 0.28), Color(red: 0.18, green: 0.29, blue: 0.48)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    VStack(spacing: 10) {
+                        Image(systemName: "globe.americas.fill")
+                            .font(.system(size: 36))
+                            .foregroundStyle(.white.opacity(0.88))
+                        Text(doc?.webURL.flatMap { URL(string: $0)?.host } ?? "Interactive Web")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.75))
+                            .lineLimit(1)
+                            .padding(.horizontal, 8)
+                        Text(doc?.title ?? "")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.92))
+                            .lineLimit(3)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 10)
+                    }
+                }
+            }
         }
         .task(id: "\(docId.uuidString)-\(editTick)") {
             let url = Paths.docDir(docId).appendingPathComponent("thumb.png")
             if let i = NSImage(contentsOf: url) { img = i; return }
+            guard Store.shared.doc(docId)?.isWeb != true else { return }
             guard let d = PDFDocument(url: Paths.pdf(docId)), let p = d.safePage(0) else { return }
             let t = p.thumbnail(of: NSSize(width: 280, height: 372), for: .cropBox)
             img = t
@@ -1131,10 +1265,15 @@ struct ReaderPane: View {
                 if let conflict = store.doc(id)?.pendingConflict {
                     MacProgressConflictBanner(
                         conflict: conflict,
+                        isWeb: rc.isWeb,
                         onKeepLocal: { store.resolveProgressConflict(id, useRemote: false) },
                         onAcceptRemote: {
                             store.resolveProgressConflict(id, useRemote: true)
-                            rc.goToPage(conflict.remotePage)
+                            if let anchor = conflict.remoteWebAnchor, rc.isWeb {
+                                rc.applyRemoteSyncedWebAnchor(anchor)
+                            } else {
+                                rc.goToPage(conflict.remotePage)
+                            }
                         },
                         onDismiss: { store.dismissProgressConflict(id) }
                     )
@@ -1238,6 +1377,13 @@ struct TranslateHUD: View {
     }
 
     var pillText: String? {
+        if session.isWeb {
+            if session.isComplete { return hideDone ? nil : L("全文双语对照就绪") }
+            if session.doneCount > 0 {
+                return LF("正在生成双语对照 · %d/%d 节", session.doneCount, session.pageCount)
+            }
+            return nil
+        }
         let cur = rc.currentPageIndex
         if session.isComplete { return hideDone ? nil : L("全文翻译完成") }
         if let e = session.failedPages[cur] { return L("本页翻译失败：") + String(e.prefix(40)) }
@@ -1257,35 +1403,58 @@ struct ReaderStatus: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Button { rc.goToPage(max(0, rc.currentPageIndex - 1)) } label: { Image(systemName: "chevron.up") }.buttonStyle(.plain).help(L("上一页")).accessibilityLabel(L("上一页"))
-            if editingPage {
-                TextField("", text: $pageDraft).textFieldStyle(.roundedBorder).frame(width: 46).focused($pageFocus)
-                    .onSubmit { if let n = Int(pageDraft) { rc.goToPage(min(session.pageCount, max(1, n)) - 1) }; editingPage = false }
-                    .onAppear { pageDraft = "\(rc.currentPageIndex + 1)"; pageFocus = true }
-                Text("/ \(session.pageCount)").monospacedDigit()
+            if rc.isWeb {
+                Button { rc.goToPage(max(0, rc.currentPageIndex - 1)) } label: { Image(systemName: "chevron.up") }
+                    .buttonStyle(.plain).help(L("上一章节")).accessibilityLabel(L("上一章节"))
+                WebReadProgress(
+                    fraction: rc.webScrollFraction,
+                    sectionTitle: rc.webSectionTitle,
+                    onJumpFraction: { frac in
+                        rc.seekWebProgress(frac)
+                    }
+                )
+                Button { rc.goToPage(min(max(0, session.pageCount - 1), rc.currentPageIndex + 1)) } label: { Image(systemName: "chevron.down") }
+                    .buttonStyle(.plain).help(L("下一章节")).accessibilityLabel(L("下一章节"))
             } else {
-                ReadProgress(page: rc.currentPageIndex, count: session.pageCount, onJump: { rc.goToPage($0) })
-                    .onTapGesture(count: 2) { editingPage = true }
-                    .help(L("拖动或点击跳转 · 双击输入页码"))
+                Button { rc.goToPage(max(0, rc.currentPageIndex - 1)) } label: { Image(systemName: "chevron.up") }.buttonStyle(.plain).help(L("上一页")).accessibilityLabel(L("上一页"))
+                if editingPage {
+                    TextField("", text: $pageDraft).textFieldStyle(.roundedBorder).frame(width: 46).focused($pageFocus)
+                        .onSubmit { if let n = Int(pageDraft) { rc.goToPage(min(session.pageCount, max(1, n)) - 1) }; editingPage = false }
+                        .onAppear { pageDraft = "\(rc.currentPageIndex + 1)"; pageFocus = true }
+                    Text("/ \(session.pageCount)").monospacedDigit()
+                } else {
+                    ReadProgress(page: rc.currentPageIndex, count: session.pageCount, onJump: { rc.goToPage($0) })
+                        .onTapGesture(count: 2) { editingPage = true }
+                        .help(L("拖动或点击跳转 · 双击输入页码"))
+                }
+                Button { rc.goToPage(min(session.pageCount - 1, rc.currentPageIndex + 1)) } label: { Image(systemName: "chevron.down") }.buttonStyle(.plain).help(L("下一页")).accessibilityLabel(L("下一页"))
             }
-            Button { rc.goToPage(min(session.pageCount - 1, rc.currentPageIndex + 1)) } label: { Image(systemName: "chevron.down") }.buttonStyle(.plain).help(L("下一页")).accessibilityLabel(L("下一页"))
+
             if rc.truncateMode {
                 Spacer()
                 Text(L("✂️ 截断模式：点击页面任意位置，截断此处下方及后续所有页（按 Esc 退出）")).foregroundStyle(.red)
             } else if rc.eraseMode {
                 Spacer()
-                Text(L("🧽 擦除模式：在页面上拖拽框选要擦除的区域（按 Esc 退出）")).foregroundStyle(.red)
+                Text(rc.isWeb ? L("🧽 点选隐藏模式：点击网页中任意周边干扰元素即可隐藏（按 Esc 退出）") : L("🧽 擦除模式：在页面上拖拽框选要擦除的区域（按 Esc 退出）")).foregroundStyle(.red)
             } else if rc.variant == .bilingual {
-                if session.failedPages[rc.currentPageIndex] != nil {
+                if !rc.isWeb && session.failedPages[rc.currentPageIndex] != nil {
                     Button(L("重试本页")) { Task { await session.retranslate(rc.currentPageIndex) } }.buttonStyle(.link)
                 }
                 Spacer()
-                Text(session.progressText).monospacedDigit()
+                if rc.isWeb {
+                    Text(L("段落双语对照（随滚动自动翻译当前视口）")).foregroundStyle(MN.statusText.opacity(0.8))
+                } else {
+                    Text(session.progressText).monospacedDigit()
+                }
                 Button { Task { await session.retranslate(rc.currentPageIndex) } } label: { Image(systemName: "arrow.clockwise") }
-                    .buttonStyle(.plain).help(L("重新翻译本页"))
+                    .buttonStyle(.plain).help(rc.isWeb ? L("重新翻译当前章节") : L("重新翻译本页"))
             } else {
                 Spacer()
-                Text(rc.readingMode ? L("阅读模式：选中文字可复制，不会弹出标注") : (rc.areaMode ? L("框选模式：在页面上拖拽选取区域（Esc 退出）") : (rc.autoExcerpt ? L("自动摘录：选中文字即生成卡片") : L("选中文字 → 点颜色摘录 · 点击高亮打开卡片 · 右键可截断/编辑 PDF"))))
+                if rc.isWeb {
+                    Text(rc.readingMode ? L("阅读模式：自由操作网页交互图表") : (rc.areaMode ? L("框选模式：拖拽截取动态图表或区域加入脑图（Esc 退出）") : (rc.autoExcerpt ? L("自动摘录：选中文字即生成卡片") : L("选中文字 → 点颜色摘录 · 顶部魔法棒可开关「移除周边非正文」"))))
+                } else {
+                    Text(rc.readingMode ? L("阅读模式：选中文字可复制，不会弹出标注") : (rc.areaMode ? L("框选模式：在页面上拖拽选取区域（Esc 退出）") : (rc.autoExcerpt ? L("自动摘录：选中文字即生成卡片") : L("选中文字 → 点颜色摘录 · 点击高亮打开卡片 · 右键可截断/编辑 PDF"))))
+                }
             }
             Divider().frame(height: 12)
             Button { rc.zoom(1 / 1.15) } label: { Image(systemName: "minus") }.buttonStyle(.plain).help(L("缩小 ⌘-")).accessibilityLabel(L("缩小 ⌘-"))
@@ -1359,11 +1528,13 @@ struct OutlinePane: View {
     }
 
     func cardRow(_ c: Card) -> some View {
-        HStack(alignment: .top, spacing: 7) {
+        let doc = store.doc(c.docId)
+        let loc = c.locationLabel(isWebDoc: doc?.isWeb ?? false)
+        return HStack(alignment: .top, spacing: 7) {
             RoundedRectangle(cornerRadius: 1.5).fill(Color(nsColor: highlightColors[c.color % highlightColors.count])).frame(width: 3)
             VStack(alignment: .leading, spacing: 2) {
                 Text(c.text.isEmpty ? L("［图片摘录］") : c.text).font(.system(size: 12)).lineLimit(3)
-                Text("\(store.doc(c.docId)?.title ?? "") · p.\(c.page + 1)").font(.system(size: 10)).foregroundStyle(.secondary)
+                Text("\(doc?.title ?? "") · \(loc)").font(.system(size: 10)).foregroundStyle(.secondary)
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
@@ -1386,7 +1557,7 @@ final class ThemeCenter: ObservableObject {
         theme = t
         NSApp.appearance = NSAppearance(named: t.isDark ? .darkAqua : .aqua)
         for w in NSApp.windows { if !(w is NSPanel) { w.backgroundColor = MN.barNS } }
-        for e in DocWindows.shared.entries.values { PageTint.apply(to: e.reader.view) }
+        for e in DocWindows.shared.entries.values where !e.reader.isWeb { PageTint.apply(to: e.reader.view) }
     }
 }
 
@@ -1451,6 +1622,48 @@ struct ReadProgress: View {
             .frame(width: 140, height: 14)
             Text("\(Int((frac * 100).rounded()))%").monospacedDigit().frame(width: 34, alignment: .leading)
             Text("\(dragFrac.map { Int(($0 * CGFloat(count)).rounded(.up)) } ?? page + 1)/\(count)").monospacedDigit().foregroundStyle(MN.statusText.opacity(0.7))
+        }
+    }
+}
+
+/// Page-less continuous reading progress for interactive web documents: percentage slider + current section title.
+struct WebReadProgress: View {
+    let fraction: Double
+    let sectionTitle: String
+    let onJumpFraction: (Double) -> Void
+    @State private var dragFrac: CGFloat?
+
+    var frac: CGFloat { dragFrac ?? CGFloat(min(1.0, max(0.0, fraction))) }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            GeometryReader { g in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(MN.statusText.opacity(0.18))
+                    Capsule().fill(MN.accent).frame(width: max(5, g.size.width * frac))
+                }
+                .frame(height: 5)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0)
+                    .onChanged { v in dragFrac = min(1, max(0, v.location.x / g.size.width)) }
+                    .onEnded { v in
+                        let f = Double(min(1, max(0, v.location.x / g.size.width)))
+                        onJumpFraction(f)
+                        dragFrac = nil
+                    })
+            }
+            .frame(width: 130, height: 14)
+            Text("\(Int((frac * 100).rounded()))%")
+                .monospacedDigit()
+                .frame(width: 34, alignment: .leading)
+            if !sectionTitle.isEmpty {
+                Text(sectionTitle)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundStyle(MN.statusText.opacity(0.75))
+                    .frame(maxWidth: 220, alignment: .leading)
+            }
         }
     }
 }

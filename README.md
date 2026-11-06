@@ -82,17 +82,23 @@ A native **macOS, iOS & iPadOS** app (SwiftUI + PDFKit) for reading PDFs, EPUBs 
 
 ## Import from the Web
 
-Many sources are web pages, not PDFs. **File → Import from Web…** (⌘⇧O), or the *Import from Web* tile in the library, takes a link and adds a clean PDF of the article:
+Many sources are web pages — including interactive technical articles with live D3 / Canvas / iframe visualizations (such as Hugging Face Spaces blogposts and Distill-style articles). **File → Import from Web…** (⌘⇧O), or the *Import from Web* tile in the library, supports two modes:
 
-- The page is opened in a real (hidden) WebKit view, so JavaScript-rendered sites work, and logins in that view persist between imports.
-- Readlet scrolls through the page so lazy images load, then keeps only the main content using [Mozilla Readability](https://github.com/mozilla/readability) plus its own clean-up: navigation, sidebars, comments, share and subscribe bars, cookie banners, related posts, ads, avatars and similar chrome are dropped.
-- Images are downloaded with the article as Referer, so hotlink-protected CDNs work. KaTeX and MathJax formulas are kept as native MathML, code blocks keep their formatting, and embedded videos become links.
-- The article is laid out with Readlet's print style (title, author, site, date, source URL) and printed to A4. Bilingual view, narration and notes then work as with any PDF.
+### 1. Interactive Live Webpage Mode (Default · Lightweight URL-Only)
+- **Lightweight storage**: stores only the webpage URL plus your own overlays (annotations, mind maps, flashcards, translation cache, AI narration scripts, and reading progress) — no bulky PDF or HTML snapshot is saved to disk.
+- **Preserves full interactivity**: sliders, interactive widgets, D3/Canvas charts, and embedded iframes stay completely live while you read and annotate.
+- **Auto peripheral content decluttering (per-article toggle)**: automatically hides non-body chrome (headers, navigation bars, sidebars, footers, share bars, cookie banners, and outer Hugging Face Space shells) non-destructively via CSS so JS state is never broken. You can toggle *Auto Declutter* on/off per article from the reader toolbar (`sparkles.rectangle.stack`), or use the element eraser to click-hide any custom peripheral block.
+- **Page-less continuous progress & cross-device window sync**: tracks continuous reading progress (`0%–100%`) plus a viewport-independent DOM semantic anchor (`WebReadingAnchor`: heading/block ID + intra-element offset) so resizing windows, opening split-view mind maps, or switching between Mac, iPad, and iPhone restores your exact paragraph and automatically scales wide interactive visualizations (`.viz-box`) to fit narrow viewports.
+- **Full Readlet feature integration**:
+  - **In-place Bilingual DOM translation** (⌘2): injects translated paragraphs directly below source text while leaving interactive `<figure>` / `<canvas>` / `<iframe>` blocks untouched.
+  - **Highlights & Area Excerpts**: anchors highlights using W3C `TextQuoteSelector` (`exact` + `prefix` + `suffix` + section ID) so highlights survive responsive reflows; supports rectangular snapshot cards for interactive charts.
+  - **Mind Map, Flashcards, AI Assistant & AI Voice Narration**: works seamlessly by section (`#s-0`, `#s-1`, …), with live DOM paragraph/figure spotlighting and multimodal viewport snapshots during voice narration.
+
+### 2. Static PDF Extraction Mode
+- Opens the page in a real WebKit view, scrolls through lazy images, extracts main content via [Mozilla Readability](https://github.com/mozilla/readability), downloads hotlink-protected images with Referer, preserves KaTeX/MathJax as native MathML, and prints a clean A4 PDF.
 - Direct links to `.pdf` files are downloaded as they are.
-- If a site asks for a login or a human check, choose **Open in a window**: sign in or verify there, then click **Extract & Import**.
+- If a site asks for a login or a human check, choose **Open in a window** to sign in first.
 - The source URL is remembered: right-click the document for **Open Original Page** or **Re-import from Web**.
-
-The extractor lives in `Resources/web/readit-extract.js`. `Tests/webimport/e2e.py` runs the same pipeline in headless Chromium over a set of blogs (English and Chinese, MathJax, SPA, Medium, GitHub, Wikipedia) and writes the PDFs plus a contact sheet.
 
 ## Excerpts & Notes (modeled on MarginNote 3)
 

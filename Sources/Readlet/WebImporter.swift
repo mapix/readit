@@ -42,7 +42,7 @@ final class WebImporter: NSObject, ObservableObject, WKNavigationDelegate {
 
     func start(_ raw: String, notebook: UUID? = nil) {
         guard !running else { return }
-        guard let url = WebImporter.normalize(raw) else { fail(L("网址无效")); return }
+        guard let url = WebURLResolver.resolvedLoadURL(originalURL: raw, cleanMode: true) ?? WebImporter.normalize(raw) else { fail(L("网址无效")); return }
         targetNotebook = notebook
         lastURL = url.absoluteString
         canOpenInteractive = false
@@ -582,10 +582,17 @@ final class WebImporter: NSObject, ObservableObject, WKNavigationDelegate {
 
 // MARK: - UI
 
-/// small panel: paste a link, import; shows progress and errors
+/// small panel: paste a link, import; supports both interactive live-web mode (URL-only) and static PDF extraction
 struct WebImportView: View {
+    enum Mode: String, CaseIterable, Identifiable {
+        case interactive = "interactive"
+        case staticPDF = "pdf"
+        var id: String { rawValue }
+    }
     @ObservedObject var w = WebImporter.shared
     @State var url = ""
+    @State var mode: Mode = .interactive
+    @State var autoClean = true
     var notebook: UUID?
     var initialURL: String? = nil
     var close: () -> Void
@@ -593,12 +600,38 @@ struct WebImportView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label(L("从网页导入"), systemImage: "globe").font(.headline)
-            Text(L("粘贴文章链接，Readlet 会提取正文（去掉导航、侧栏、评论、广告等），排版成 PDF 加入文档库。也支持直接下载 PDF 链接。"))
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+
+            Picker(L("导入方式"), selection: $mode) {
+                Text(L("交互式网页（推荐 · 保留动态图表）")).tag(Mode.interactive)
+                Text(L("提取静态排版 PDF")).tag(Mode.staticPDF)
+            }
+            .pickerStyle(.segmented)
+            .disabled(w.running)
+
+            if mode == .interactive {
+                Text(L("只保存网页地址与你的批注、脑图、闪卡、朗读及阅读进度；完整保留网页内可交互图表（D3/Canvas/SVG），支持无分页连续进度与跨窗口/跨设备自适应。"))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(L("粘贴文章链接，Readlet 会提取正文（去掉导航、侧栏、评论、广告等），排版成静态 PDF 加入文档库。也支持直接下载 PDF 链接。"))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+
             TextField("https://", text: $url)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit { go() }
                 .disabled(w.running)
+
+            if mode == .interactive {
+                Toggle(isOn: $autoClean) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(L("默认自动移除周边非正文内容")).font(.system(size: 12.5, weight: .medium))
+                        Text(L("无损隐藏导航栏、侧边栏、页脚与外层壳容器，保留正文与交互组件（导入后可按文章随时开关）"))
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                }
+                .toggleStyle(.checkbox)
+            }
+
             if w.running || !w.status.isEmpty {
                 HStack(spacing: 8) {
                     if w.running { ProgressView().controlSize(.small) }
@@ -622,7 +655,7 @@ struct WebImportView: View {
             }
         }
         .padding(18)
-        .frame(width: 480)
+        .frame(width: 500)
         .onAppear {
             if w.running { return }
             w.phase = .idle; w.status = ""; w.error = ""
@@ -633,7 +666,24 @@ struct WebImportView: View {
         .onChange(of: w.phase) { _, p in if p == .done { DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { close() } } }
     }
 
-    func go() { w.start(url, notebook: notebook) }
+    func go() {
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if mode == .interactive && URL(string: trimmed)?.pathExtension.lowercased() != "pdf" {
+            guard WebURLResolver.normalize(trimmed) != nil else {
+                w.error = L("网址无效")
+                return
+            }
+            if let nb = notebook { Store.shared.currentNotebookId = nb }
+            if Store.shared.importWebURL(trimmed, cleanMode: autoClean, open: true) != nil {
+                close()
+            } else {
+                w.error = L("导入网页失败")
+            }
+        } else {
+            w.start(trimmed, notebook: notebook)
+        }
+    }
 }
 
 /// visible browser used when the site needs a login / captcha
@@ -669,8 +719,13 @@ struct WebViewHost: NSViewRepresentable {
 enum WebImportPanel {
     private static var panel: NSPanel?
     static func show(notebook: UUID? = nil, url: String? = nil) {
-        if let p = panel { p.makeKeyAndOrderFront(nil); return }
-        let p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 480, height: 220), styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+        if let p = panel {
+            p.contentView = NSHostingView(rootView: WebImportView(notebook: notebook, initialURL: url, close: { close() }))
+            p.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        let p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 520, height: 310), styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
         p.titleVisibility = .hidden
         p.titlebarAppearsTransparent = true
         p.isReleasedWhenClosed = false

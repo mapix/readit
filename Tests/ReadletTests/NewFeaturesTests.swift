@@ -1,5 +1,6 @@
 import XCTest
 import PDFKit
+import WebKit
 @testable import Readlet
 
 @MainActor
@@ -387,6 +388,398 @@ final class NewFeaturesTests: XCTestCase {
         CloudSync.purgeAudioClipsFromCloud(cloudDir: tmpCloudNarr, migrateToLocalDir: narrDir)
         XCTAssertFalse(fm.fileExists(atPath: cloudClip.path), "Cloud audio clip should be removed from iCloud")
         XCTAssertTrue(fm.fileExists(atPath: narrDir.appendingPathComponent("p1-s0.m4a").path), "Cloud audio clip should be migrated to local storage on upgrade")
+    }
+
+    // MARK: - 5. Interactive Web Import, Live DOM Decluttering & Cross-Device/Window Coordination Tests
+
+    func testWebURLResolverHuggingFaceSpacesUnwrapAndCleanMode() {
+        let raw = "https://huggingface.co/spaces/huggingface/moe-blogpost#s-1"
+
+        // When cleanMode == true (default), Hugging Face Spaces wrapper URLs unwrap directly to the embedded .hf.space host while preserving #s-1
+        let cleanURL = WebURLResolver.resolvedLoadURL(originalURL: raw, cleanMode: true)
+        XCTAssertEqual(cleanURL?.absoluteString, "https://huggingface-moe-blogpost.hf.space/#s-1")
+
+        // When cleanMode == false (disabled for this article), original outer URL is preserved
+        let rawLoadURL = WebURLResolver.resolvedLoadURL(originalURL: raw, cleanMode: false)
+        XCTAssertEqual(rawLoadURL?.absoluteString, "https://huggingface.co/spaces/huggingface/moe-blogpost#s-1")
+
+        // Repository tree/settings URLs are not unwrapped
+        let treeURL = WebURLResolver.resolvedLoadURL(originalURL: "https://huggingface.co/spaces/huggingface/moe-blogpost/tree/main", cleanMode: true)
+        XCTAssertEqual(treeURL?.absoluteString, "https://huggingface.co/spaces/huggingface/moe-blogpost/tree/main")
+
+        // Canonical identity ignores fragment (#s-1 vs #s-2-0) and trailing slash for library deduplication
+        XCTAssertEqual(
+            WebURLResolver.canonicalIdentity("https://huggingface.co/spaces/huggingface/moe-blogpost#s-1"),
+            WebURLResolver.canonicalIdentity("https://huggingface.co/spaces/huggingface/moe-blogpost/#s-2-0")
+        )
+    }
+
+    func testStoreImportWebURLLightweightStorageProgressAndCleanMode() {
+        let store = Store.shared
+        let url1 = "https://huggingface.co/spaces/huggingface/moe-blogpost#s-1"
+        guard let importedId = store.importWebURL(url1, title: "A Visual Guide to Mixture of Experts", cleanMode: true),
+              let imported = store.doc(importedId) else {
+            XCTFail("Failed to import interactive web URL")
+            return
+        }
+        defer {
+            store.deleteDoc(importedId)
+            store.saveNow()
+        }
+
+        // 1. Lightweight URL-only storage: kind == .web, no original.pdf written on disk
+        XCTAssertEqual(imported.kind, .web)
+        XCTAssertTrue(imported.isWeb)
+        XCTAssertEqual(imported.webCleanMode, true)
+        XCTAssertEqual(imported.statusTag, .todo)
+        XCTAssertEqual(imported.progressPercent, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: Paths.pdf(importedId).path), "Interactive web doc must not store a static PDF copy")
+
+        // 2. Re-importing same article with different section hash deduplicates to existing Doc
+        let dupId = store.importWebURL("https://huggingface.co/spaces/huggingface/moe-blogpost#s-2-0")
+        XCTAssertEqual(dupId, importedId)
+
+        // 3. Per-article cleanMode toggle & custom click-to-hide selectors
+        store.setWebCleanMode(importedId, false)
+        XCTAssertEqual(store.doc(importedId)?.webCleanMode, false)
+        store.setWebCleanMode(importedId, true)
+        XCTAssertEqual(store.doc(importedId)?.webCleanMode, true)
+
+        store.addWebHiddenSelector(importedId, "aside.newsletter-popup")
+        XCTAssertEqual(store.doc(importedId)?.webHiddenSelectors, ["aside.newsletter-popup"])
+        store.clearWebHiddenSelectors(importedId)
+        XCTAssertEqual(store.doc(importedId)?.webHiddenSelectors, [])
+
+        // 4. Page-less continuous reading progress & automatic TODO -> DOING -> DONE transitions
+        let midAnchor = WebReadingAnchor(
+            anchorId: "s-2-1::p-2",
+            intraOffset: 0.35,
+            scrollFraction: 0.42,
+            sectionTitle: "2.1 Routing Collapse",
+            sectionIndex: 3
+        )
+        store.updateWebReadingProgress(docId: importedId, anchor: midAnchor, sectionCount: 8)
+        let afterMid = store.doc(importedId)!
+        XCTAssertEqual(afterMid.progressPercent, 42)
+        XCTAssertEqual(afterMid.webAnchor?.anchorId, "s-2-1::p-2")
+        XCTAssertEqual(afterMid.webAnchor?.sectionTitle, "2.1 Routing Collapse")
+        XCTAssertEqual(afterMid.statusTag, .doing)
+
+        let endAnchor = WebReadingAnchor(
+            anchorId: "s-5::p-4",
+            intraOffset: 0.9,
+            scrollFraction: 0.97,
+            sectionTitle: "5. Conclusion",
+            sectionIndex: 7
+        )
+        store.updateWebReadingProgress(docId: importedId, anchor: endAnchor, sectionCount: 8)
+        let afterEnd = store.doc(importedId)!
+        XCTAssertEqual(afterEnd.webAnchor?.progressPercent, 97)
+        XCTAssertEqual(afterEnd.statusTag, .done)
+        XCTAssertEqual(afterEnd.progressPercent, 100)
+    }
+
+    func testWebCrossDeviceSyncAnchorMergeAndConflictResolution() {
+        let docId = UUID()
+        let now = Date()
+
+        let macAnchor = WebReadingAnchor(
+            anchorId: "s-3-2::p-1",
+            intraOffset: 0.25,
+            scrollFraction: 0.74,
+            sectionTitle: "3.2 Load Balancing Loss",
+            sectionIndex: 5
+        )
+        let iphoneAnchor = WebReadingAnchor(
+            anchorId: "s-1::p-2",
+            intraOffset: 0.10,
+            scrollFraction: 0.15,
+            sectionTitle: "1. Introduction to MoE",
+            sectionIndex: 1
+        )
+
+        let macDoc = Doc(
+            id: docId,
+            title: "Mixture of Experts Blog",
+            added: now.addingTimeInterval(-3600),
+            kind: .web,
+            source: "https://huggingface.co/spaces/huggingface/moe-blogpost#s-1",
+            webCleanMode: true,
+            webHiddenSelectors: [".cookie-banner"],
+            webAnchor: macAnchor,
+            tags: ["DOING"],
+            pageCount: 8,
+            readPage: 5,
+            readUpdatedAt: now.addingTimeInterval(-120),
+            lastReadDevice: "MacBook Pro",
+            lastReadDeviceId: "dev-mac",
+            updatedAt: now.addingTimeInterval(-120)
+        )
+
+        let iphoneDoc = Doc(
+            id: docId,
+            title: "Mixture of Experts Blog",
+            added: now.addingTimeInterval(-3600),
+            kind: .web,
+            source: "https://huggingface.co/spaces/huggingface/moe-blogpost#s-1",
+            webCleanMode: true,
+            webHiddenSelectors: [".floating-share"],
+            webAnchor: iphoneAnchor,
+            tags: ["DOING"],
+            pageCount: 8,
+            readPage: 1,
+            readUpdatedAt: now,
+            lastReadDevice: "iPhone 16 Pro",
+            lastReadDeviceId: "dev-iphone",
+            updatedAt: now
+        )
+
+        let webCard = Card(
+            docId: docId,
+            page: 5,
+            variant: .original,
+            rects: [],
+            text: "Auxiliary load balancing loss encourages balanced expert utilization.",
+            color: 1,
+            webAnchor: WebCardAnchor(
+                sectionId: "s-3-2",
+                sectionTitle: "3.2 Load Balancing Loss",
+                blockId: "s-3-2::p-1",
+                exact: "Auxiliary load balancing loss encourages balanced expert utilization.",
+                prefix: "In sparse MoE layers, ",
+                suffix: " Without it, routing collapse occurs.",
+                progressPermille: 740
+            )
+        )
+
+        let (merged, localChanged, _) = CloudSync.mergeLibraries(
+            local: Library(docs: [macDoc], cards: [webCard]),
+            remote: Library(docs: [iphoneDoc], cards: []),
+            deleted: []
+        )
+        XCTAssertTrue(localChanged)
+        let mDoc = merged.docs[0]
+        XCTAssertEqual(mDoc.kind, .web)
+        // Custom hidden selectors from both devices are merged
+        XCTAssertEqual(Set(mDoc.webHiddenSelectors), Set([".cookie-banner", ".floating-share"]))
+        // Conflict detected because newer iPhone reading position (15%) went backwards significantly from Mac (74%)
+        XCTAssertNotNil(mDoc.pendingConflict)
+        XCTAssertEqual(mDoc.pendingConflict?.localWebAnchor?.scrollFraction ?? 0, 0.74, accuracy: 0.001)
+        XCTAssertEqual(mDoc.pendingConflict?.remoteWebAnchor?.scrollFraction ?? 0, 0.15, accuracy: 0.001)
+        // Higher reading anchor (74% on Mac) is preserved until user resolves conflict
+        XCTAssertEqual(mDoc.webAnchor?.scrollFraction ?? 0, 0.74, accuracy: 0.001)
+        XCTAssertEqual(merged.cards.first?.webAnchor?.exact, "Auxiliary load balancing loss encourages balanced expert utilization.")
+    }
+
+    private func evalString(_ webView: WKWebView, _ js: String) async -> String {
+        await withCheckedContinuation { cont in
+            webView.evaluateJavaScript(js) { res, _ in
+                if let s = res as? String {
+                    cont.resume(returning: s)
+                } else if let b = res as? Bool {
+                    cont.resume(returning: b ? "true" : "false")
+                } else if let n = res as? NSNumber {
+                    cont.resume(returning: n.stringValue)
+                } else {
+                    cont.resume(returning: "")
+                }
+            }
+        }
+    }
+
+    func testWebDocLiveRuntimeDOMDeclutteringInteractiveVizAndResizeAnchor() async throws {
+        let docId = UUID()
+        let doc = Doc(
+            id: docId,
+            title: "MoE Interactive Benchmark",
+            kind: .web,
+            source: "https://huggingface-moe-blogpost.hf.space/#s-1",
+            webCleanMode: true
+        )
+        Store.shared.lib.docs.append(doc)
+        defer {
+            Store.shared.deleteDoc(docId)
+            Store.shared.saveNow()
+        }
+
+        let controller = WebDocController(docId: docId)
+        controller.webView.frame = CGRect(x: 0, y: 0, width: 1200, height: 800)
+
+        let sampleHTML = """
+        <!doctype html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <title>A Visual Guide to Mixture of Experts (MoE)</title>
+            <style>
+                body { margin: 0; font-family: sans-serif; }
+                header.site-header { height: 80px; background: #eee; }
+                aside.toc-sidebar { width: 240px; float: left; }
+                main.article { max-width: 820px; margin: 0 auto; padding: 24px; }
+                p { line-height: 1.7; margin: 24px 0; }
+                figure.viz { margin: 32px 0; }
+                .viz-box { width: 1120px; height: 420px; background: #f5f7ff; position: relative; }
+                footer.site-footer { height: 120px; background: #ddd; }
+            </style>
+        </head>
+        <body>
+            <header class="site-header"><nav>Hugging Face Top Navigation Bar</nav></header>
+            <aside class="toc-sidebar">Table of Contents Sidebar</aside>
+            <main class="article">
+                <h1 id="s-0">A Visual Guide to Mixture of Experts</h1>
+                <p id="intro-p">Mixture of Experts (MoE) enables models to scale parameter counts dramatically while keeping compute per token constant.</p>
+                <h2 id="s-1">1. Sparse MoE Layer Architecture</h2>
+                <p id="s1-p1">In a dense transformer, every token passes through the exact same feed-forward network parameters.</p>
+                <figure class="viz">
+                    <div class="viz-box" id="interactive-viz-box">
+                        <iframe id="moe-iframe" src="about:blank" width="1120" height="400"></iframe>
+                    </div>
+                    <figcaption>Interactive Diagram 1: Token routing across 8 experts.</figcaption>
+                </figure>
+                <h2 id="s-2-0">2. Router &amp; Load Balancing</h2>
+                <p id="s2-p1">Auxiliary load balancing loss prevents routing collapse by encouraging uniform expert assignment across a batch.</p>
+                <p style="height: 1800px;">Extended interactive article space for scroll and anchor verification.</p>
+            </main>
+            <footer class="site-footer">Peripheral Footer Links &amp; Social Share</footer>
+        </body>
+        </html>
+        """
+
+        controller.webView.loadHTMLString(sampleHTML, baseURL: URL(string: "https://huggingface-moe-blogpost.hf.space/#s-1"))
+
+        // Wait for WKWebView navigation and readlet-live.js initialization
+        for _ in 0..<40 {
+            try await Task.sleep(nanoseconds: 100_000_000)
+            if !controller.isLoading && !controller.sections.isEmpty { break }
+        }
+
+        // 1. Verify section extraction (TOC headings)
+        XCTAssertGreaterThanOrEqual(controller.sections.count, 3)
+        XCTAssertTrue(controller.sections.contains(where: { $0.id == "s-1" && $0.title.contains("1. Sparse MoE Layer Architecture") }))
+        XCTAssertTrue(controller.sections.contains(where: { $0.id == "s-2-0" }))
+
+        // 2. Verify non-destructive peripheral content decluttering (cleanMode == true hides header/sidebar/footer, keeps main + iframe alive)
+        struct CleanDOMState: Decodable {
+            var cleanAttr: String?
+            var headerDisplay: String?
+            var footerDisplay: String?
+            var mainDisplay: String?
+            var iframeAlive: Bool?
+        }
+        let cleanStateJSON = await evalString(controller.webView, """
+        JSON.stringify({
+            cleanAttr: document.documentElement.getAttribute('data-readlet-clean'),
+            headerDisplay: window.getComputedStyle(document.querySelector('header.site-header')).display,
+            footerDisplay: window.getComputedStyle(document.querySelector('footer.site-footer')).display,
+            mainDisplay: window.getComputedStyle(document.querySelector('main.article')).display,
+            iframeAlive: !!document.getElementById('moe-iframe')
+        })
+        """)
+        let cleanState = try JSONDecoder().decode(CleanDOMState.self, from: Data((cleanStateJSON.isEmpty ? "{}" : cleanStateJSON).utf8))
+        XCTAssertEqual(cleanState.cleanAttr, "on")
+        XCTAssertEqual(cleanState.headerDisplay, "none")
+        XCTAssertEqual(cleanState.footerDisplay, "none")
+        XCTAssertNotEqual(cleanState.mainDisplay, "none")
+        XCTAssertEqual(cleanState.iframeAlive, true)
+
+        // 3. Toggle cleanMode OFF for this article -> header & footer immediately reappear without destroying DOM
+        controller.setCleanMode(false)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let restoredHeaderDisplay = await evalString(controller.webView, """
+        window.getComputedStyle(document.querySelector('header.site-header')).display
+        """)
+        XCTAssertNotEqual(restoredHeaderDisplay, "none")
+
+        // Turn cleanMode back ON
+        controller.setCleanMode(true)
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        // 4. Verify in-place Bilingual DOM injection skips <figure class="viz"> and injects below paragraphs
+        let blocksJSON = await evalString(controller.webView, "JSON.stringify(window.__readletLive.getTranslatableBlocks(1))")
+        let blocks = try JSONDecoder().decode([[String: String]].self, from: Data((blocksJSON.isEmpty ? "[]" : blocksJSON).utf8))
+        XCTAssertFalse(blocks.isEmpty)
+        if let firstBlockId = blocks.first?["id"] {
+            _ = await evalString(controller.webView, "window.__readletLive.setVariant('bilingual'); 'ok'")
+            let sampleMap = [firstBlockId: "在稠密 Transformer 中，每个词元都会经过完全相同的前馈网络参数。"]
+            let mapJSON = String(data: try JSONEncoder().encode(sampleMap), encoding: .utf8)!
+            _ = await evalString(controller.webView, "window.__readletLive.applyTranslations(\(mapJSON)); 'ok'")
+            let bilingualDisplay = await evalString(controller.webView, """
+            (function() {
+                var el = document.querySelector('.readlet-bi-trans');
+                return el ? window.getComputedStyle(el).display + ':' + el.textContent : 'missing';
+            })()
+            """)
+            XCTAssertTrue(bilingualDisplay.hasPrefix("block:在稠密 Transformer 中"))
+        }
+
+        // 5. Verify W3C TextQuoteSelector highlight anchoring across viewport sizes
+        let quoteText = "every token passes through the exact same feed-forward network"
+        let card = Card(
+            docId: docId,
+            page: 1,
+            variant: .original,
+            rects: [],
+            text: quoteText,
+            color: 0,
+            webAnchor: WebCardAnchor(sectionId: "s-1", exact: quoteText)
+        )
+        Store.shared.lib.cards.append(card)
+        controller.refreshAnnotations()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let markText = await evalString(controller.webView, """
+        (document.querySelector('mark.readlet-card-hl') || {}).textContent || ''
+        """)
+        XCTAssertEqual(markText, quoteText)
+
+        // 6. Verify scrolling down does not snap back when SwiftUI triggers loadIfNeeded()
+        _ = await evalString(controller.webView, "window.scrollTo({ top: 420, behavior: 'instant' }); 'ok'")
+        try await Task.sleep(nanoseconds: 200_000_000)
+        controller.loadIfNeeded()
+        try await Task.sleep(nanoseconds: 150_000_000)
+        let scrollYAfterUpdate = Double(await evalString(controller.webView, "String(Math.round(window.scrollY))")) ?? 0
+        XCTAssertGreaterThanOrEqual(scrollYAfterUpdate, 380, "Scrolling down must not snap back to the top when SwiftUI updates the view")
+
+        // 7. Verify cross-window / narrow split-pane responsive scaling of wide 1120px .viz-box
+        controller.webView.frame = CGRect(x: 0, y: 0, width: 420, height: 800)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        _ = await evalString(controller.webView, "window.__readletLive.fitWideVisualizations(); 'ok'")
+        let transformStr = await evalString(controller.webView, """
+        document.getElementById('moe-iframe').style.transform || ''
+        """)
+        XCTAssertTrue(transformStr.contains("scale("), "Wide 1120px interactive visualization should scale down responsively inside a 420px split pane")
+    }
+
+    func testLiveHuggingFaceMoEBlogpostBenchmark() async throws {
+        let benchmarkURL = "https://huggingface.co/spaces/huggingface/moe-blogpost#s-1"
+        guard let importedId = Store.shared.importWebURL(benchmarkURL, cleanMode: true) else {
+            XCTFail("Failed to import benchmark URL")
+            return
+        }
+        defer {
+            Store.shared.deleteDoc(importedId)
+            Store.shared.saveNow()
+        }
+
+        let controller = WebDocController(docId: importedId)
+        controller.webView.frame = CGRect(x: 0, y: 0, width: 520, height: 820)
+        controller.loadIfNeeded()
+
+        // Wait up to 12 seconds for live page load & section indexing
+        for _ in 0..<60 {
+            try await Task.sleep(nanoseconds: 200_000_000)
+            if !controller.isLoading && !controller.sections.isEmpty { break }
+        }
+
+        // If offline/unreachable in a restricted test runner, skip live assertions cleanly
+        guard !controller.sections.isEmpty else { return }
+
+        XCTAssertEqual(controller.currentURLString, "https://huggingface-moe-blogpost.hf.space/#s-1")
+        XCTAssertGreaterThanOrEqual(controller.sections.count, 5, "Should extract all major sections from MoE blogpost")
+        XCTAssertTrue(controller.sections.contains(where: { $0.id == "s-1" }))
+
+        let vizCountStr = await evalString(controller.webView, "String(document.querySelectorAll('figure.viz .viz-box, .viz-box').length)")
+        let vizCount = Int(vizCountStr) ?? 0
+        XCTAssertGreaterThan(vizCount, 0, "Interactive .viz-box visualizations on MoE blogpost must remain intact in live DOM")
     }
 }
 

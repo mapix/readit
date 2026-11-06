@@ -98,6 +98,12 @@ final class ReaderController: NSObject, ObservableObject {
     private static let fallback = ReaderController(docId: nil)
     let view = BiPDFView()
     let docId: UUID?
+    @Published var webController: WebDocController?
+    @Published var isWeb: Bool = false
+    @Published var totalPages: Int = 1
+    @Published var webScrollFraction: Double = 0.0
+    @Published var webSectionTitle: String = ""
+    @Published var webCleanMode: Bool = true
     /// per-window view mode
     @Published var variant: Variant = .original
     @Published var currentPageIndex = 0
@@ -113,7 +119,14 @@ final class ReaderController: NSObject, ObservableObject {
     @Published var readingMode = UserDefaults.standard.bool(forKey: "readingMode") { didSet { UserDefaults.standard.set(readingMode, forKey: "readingMode"); if readingMode { closePopup(); areaMode = false; eraseMode = false; truncateMode = false } } }
     @Published var autoExcerpt = UserDefaults.standard.bool(forKey: "autoExcerpt") { didSet { UserDefaults.standard.set(autoExcerpt, forKey: "autoExcerpt") } }
     @Published var areaMode = false { didSet { view.areaMode = areaMode; if areaMode { eraseMode = false; truncateMode = false; closePopup() }; view.window?.invalidateCursorRects(for: view) } }
-    @Published var eraseMode = false { didSet { view.eraseMode = eraseMode; if eraseMode { areaMode = false; truncateMode = false; closePopup() }; view.window?.invalidateCursorRects(for: view) } }
+    @Published var eraseMode = false {
+        didSet {
+            view.eraseMode = eraseMode
+            webController?.setEraseMode(eraseMode)
+            if eraseMode { areaMode = false; truncateMode = false; closePopup() }
+            view.window?.invalidateCursorRects(for: view)
+        }
+    }
     @Published var truncateMode = false {
         didSet {
             view.truncateMode = truncateMode
@@ -145,7 +158,19 @@ final class ReaderController: NSObject, ObservableObject {
     init(docId: UUID?) {
         self.docId = docId
         super.init()
-        if let d = docId { variant = Variant(rawValue: UserDefaults.standard.string(forKey: "variant-" + d.uuidString) ?? "") ?? .original }
+        if let d = docId {
+            variant = Variant(rawValue: UserDefaults.standard.string(forKey: "variant-" + d.uuidString) ?? "") ?? .original
+            if let doc = Store.shared.doc(d), doc.isWeb {
+                self.isWeb = true
+                self.webCleanMode = doc.webCleanMode
+                self.webScrollFraction = doc.webAnchor?.scrollFraction ?? 0.0
+                self.webSectionTitle = doc.webAnchor?.sectionTitle ?? ""
+                self.currentPageIndex = doc.webAnchor?.sectionIndex ?? doc.readPage ?? 0
+                self.totalPages = max(1, doc.pageCount ?? 1)
+                let wc = WebDocController(docId: d, reader: self)
+                self.webController = wc
+            }
+        }
         view.autoScales = true
         view.displayMode = .singlePageContinuous
         view.displayDirection = .vertical
@@ -163,7 +188,7 @@ final class ReaderController: NSObject, ObservableObject {
         view.onKey = { [weak self] e in self?.key(e) ?? false }
         view.hitCard = { [weak self] pt in guard let self, !self.readingMode else { return false }; return self.cardAt(pt) != nil }
         NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .leftMouseDown]) { [weak self] e in
-            if let self, e.window === self.view.window {
+            if let self, (e.window === self.view.window || e.window === self.webController?.webView.window) {
                 self.userScrolledAt = Date()
                 self.lastScroll = Date()
                 self.holdTarget = nil
@@ -181,7 +206,7 @@ final class ReaderController: NSObject, ObservableObject {
         }
         NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] e in
             let n = Narrator.shared
-            guard let self, e.window === self.view.window else { return e }
+            guard let self, (e.window === self.view.window || e.window === self.webController?.webView.window) else { return e }
             if n.listening {
                 if e.type == .keyUp && e.keyCode == 49 {
                     n.endQuestion()
@@ -197,10 +222,10 @@ final class ReaderController: NSObject, ObservableObject {
             return nil
         }
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
-            guard let self, e.keyCode == 53, e.window === self.view.window else { return e }    // Esc anywhere in the window
+            guard let self, e.keyCode == 53, (e.window === self.view.window || e.window === self.webController?.webView.window) else { return e }    // Esc anywhere in the window
             if self.popup != .none || self.areaMode || self.eraseMode || self.truncateMode {
                 self.closePopup(); self.areaMode = false; self.eraseMode = false; self.truncateMode = false
-                self.view.clearSelection(); return nil
+                self.view.clearSelection(); self.webController?.clearSelection(); return nil
             }
             return e
         }
@@ -219,6 +244,35 @@ final class ReaderController: NSObject, ObservableObject {
     var store: Store { Store.shared }
 
     func load(session: DocSession, variant: Variant) {
+        if session.isWeb {
+            if !isWeb { isWeb = true }
+            let newTotal = max(1, session.pageCount)
+            if totalPages != newTotal { totalPages = newTotal }
+            if webController?.docId != session.doc.id {
+                webController = WebDocController(docId: session.doc.id, reader: self)
+            }
+            if let doc = store.doc(session.doc.id) {
+                if webCleanMode != doc.webCleanMode { webCleanMode = doc.webCleanMode }
+                if let sf = doc.webAnchor?.scrollFraction, abs(webScrollFraction - sf) > 0.001, loadedKey.isEmpty {
+                    webScrollFraction = sf
+                }
+                if let st = doc.webAnchor?.sectionTitle, !st.isEmpty, webSectionTitle.isEmpty {
+                    webSectionTitle = st
+                }
+                if loadedKey.isEmpty {
+                    let initIdx = doc.webAnchor?.sectionIndex ?? doc.readPage ?? currentPageIndex
+                    if currentPageIndex != initIdx { currentPageIndex = initIdx }
+                }
+            }
+            webController?.loadIfNeeded()
+            let key = session.doc.id.uuidString + variant.rawValue
+            if key != loadedKey {
+                loadedKey = key
+                webController?.setVariant(variant)
+            }
+            return
+        }
+        if isWeb { isWeb = false }
         let key = session.doc.id.uuidString + variant.rawValue
         guard key != loadedKey else { return }
         closePopup()
@@ -230,6 +284,7 @@ final class ReaderController: NSObject, ObservableObject {
             ?? UserDefaults.standard.integer(forKey: "page-" + session.doc.id.uuidString)
         loading = true
         let d = session.document(variant)
+        totalPages = max(1, d.pageCount)
         view.document = d
         let z = UserDefaults.standard.double(forKey: "zoom")
         if z > 0 { view.autoScales = false; view.scaleFactor = CGFloat(z) } else { view.autoScales = true }
@@ -259,7 +314,58 @@ final class ReaderController: NSObject, ObservableObject {
         view.backgroundColor = MN.paperNS
     }
 
+    func syncWebProgressFromDOM(sectionIndex: Int, sectionCount: Int, scrollFraction: Double, sectionTitle: String) {
+        if currentPageIndex != sectionIndex { currentPageIndex = sectionIndex }
+        if totalPages != sectionCount { totalPages = max(1, sectionCount) }
+        if abs(webScrollFraction - scrollFraction) >= 0.001 { webScrollFraction = scrollFraction }
+        if webSectionTitle != sectionTitle { webSectionTitle = sectionTitle }
+    }
+
+    func applyRemoteSyncedWebAnchor(_ anchor: WebReadingAnchor) {
+        webScrollFraction = anchor.scrollFraction
+        if let st = anchor.sectionTitle { webSectionTitle = st }
+        if let si = anchor.sectionIndex { currentPageIndex = si }
+        webController?.scrollToAnchor(anchor)
+    }
+
+    func seekWebProgress(_ fraction: Double) {
+        let clamped = min(1.0, max(0.0, fraction))
+        webScrollFraction = clamped
+        webController?.seekToFraction(clamped)
+    }
+
+    func onWebSelectionChanged(_ payload: WebSelectionPayload?) {
+        guard let payload, !payload.text.isEmpty else {
+            hasSelection = false
+            selectionString = ""
+            if popup == .selection { closePopup() }
+            return
+        }
+        selectionString = payload.text
+        hasSelection = true
+        store.selectionText = payload.text
+        if readingMode { return }
+        if autoExcerpt {
+            makeCard(color: lastColor)
+            return
+        }
+        if let cr = payload.clientRect, cr.count == 4 {
+            anchor = CGRect(x: cr[0], y: cr[1], width: max(20, cr[2]), height: max(18, cr[3]))
+            popup = .selection
+        }
+    }
+
+    func toggleWebCleanMode() {
+        guard let wc = webController else { return }
+        webCleanMode = wc.toggleCleanMode()
+    }
+
     func applyRemoteSyncedPage(_ i: Int) {
+        if isWeb {
+            webController?.scrollToSection(i)
+            currentPageIndex = max(0, i)
+            return
+        }
         guard let d = view.document, d.pageCount > 0 else { return }
         let clamped = min(max(0, i), d.pageCount - 1)
         guard let p = d.safePage(clamped) else { return }
@@ -275,6 +381,10 @@ final class ReaderController: NSObject, ObservableObject {
         guard v != variant else { return }
         variant = v
         if let d = docId { UserDefaults.standard.set(v.rawValue, forKey: "variant-" + d.uuidString) }
+        if isWeb {
+            webController?.setVariant(v)
+            return
+        }
         if let d = docId, let s = store.session(d) {
             load(session: s, variant: v)
             if v == .bilingual { s.startBilingual(from: currentPageIndex) }
@@ -312,6 +422,9 @@ final class ReaderController: NSObject, ObservableObject {
 
     @discardableResult
     func syncCurrentPageFromView() -> Int {
+        if isWeb {
+            return webController?.currentSectionIndex ?? currentPageIndex
+        }
         guard let d = view.document, d.pageCount > 0 else { return currentPageIndex }
         if let fp = focusPage, Narrator.shared.state != .idle, userPageNavigatedAt <= lastNarrationScrollAt {
             if currentPageIndex != fp { currentPageIndex = fp }
@@ -583,6 +696,10 @@ final class ReaderController: NSObject, ObservableObject {
     }
 
     func scrollByScreen(_ dir: CGFloat) {
+        if isWeb {
+            webController?.stepScroll(direction: dir >= 0 ? 1 : -1)
+            return
+        }
         guard let dv = view.documentView, let sv = dv.enclosingScrollView else { return }
         userPageNavigatedAt = Date()
         var o = sv.contentView.bounds.origin
@@ -661,11 +778,24 @@ final class ReaderController: NSObject, ObservableObject {
         guard let c = store.card(id) else { return }
         store.selectedCardId = id
         if let node = store.currentNotebook?.root.nodeFor(card: id) { store.selectedNodeId = node.id }
+        if isWeb {
+            anchor = CGRect(x: 120, y: 120, width: 24, height: 24)
+            popup = .card(id)
+            return
+        }
         popupPage = c.page
         popupRect = c.rects.reduce(CGRect.null) { $0.union($1) }
         if popupRect.isNull { popupRect = .zero }
         popup = .card(id)
         updateAnchor()
+    }
+
+    func openWebCard(_ id: UUID, anchorRect: CGRect) {
+        guard store.card(id) != nil else { return }
+        store.selectedCardId = id
+        if let node = store.currentNotebook?.root.nodeFor(card: id) { store.selectedNodeId = node.id }
+        anchor = anchorRect
+        popup = .card(id)
     }
 
     func closePopup() {
@@ -693,6 +823,13 @@ final class ReaderController: NSObject, ObservableObject {
     }
 
     func copySelection() {
+        if isWeb {
+            guard !selectionString.isEmpty else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(selectionString, forType: .string)
+            closePopup()
+            return
+        }
         guard let s = view.currentSelection?.string else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(s, forType: .string)
@@ -701,6 +838,39 @@ final class ReaderController: NSObject, ObservableObject {
 
     // MARK: actions
     func makeCard(color: Int? = nil) {
+        if isWeb {
+            guard let docId = docId, let wc = webController else { return }
+            let text = (wc.currentSelection?.text ?? selectionString).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return }
+            let color = color ?? lastColor
+            lastColor = color
+            let selPayload = wc.currentSelection
+            let secIdx = selPayload?.sectionIndex ?? currentPageIndex
+            let webAnchor = WebCardAnchor(
+                sectionId: selPayload?.sectionId,
+                sectionTitle: selPayload?.sectionTitle ?? webSectionTitle,
+                blockId: selPayload?.blockId,
+                exact: selPayload?.exact ?? text,
+                prefix: selPayload?.prefix ?? "",
+                suffix: selPayload?.suffix ?? "",
+                relRect: nil,
+                progressPermille: selPayload?.progressPermille ?? Int((webScrollFraction * 1000.0).rounded())
+            )
+            let cardAnchor: CGRect = {
+                if let cr = selPayload?.clientRect, cr.count == 4 {
+                    return CGRect(x: cr[0], y: cr[1], width: max(20, cr[2]), height: max(18, cr[3]))
+                }
+                return CGRect(x: wc.webView.bounds.midX - 12, y: 120, width: 24, height: 24)
+            }()
+            let card = Card(docId: docId, page: secIdx, variant: variant, rects: [], text: text, color: color, webAnchor: webAnchor)
+            store.addCard(card)
+            wc.refreshAnnotations()
+            wc.clearSelection()
+            hasSelection = false
+            selectionString = ""
+            openWebCard(card.id, anchorRect: cardAnchor)
+            return
+        }
         guard let sel = view.currentSelection, let d = view.document, let docId = docId else { return }
         let text = (sel.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
@@ -724,8 +894,35 @@ final class ReaderController: NSObject, ObservableObject {
         openCard(card.id)
     }
 
-    /// rectangular "框选" excerpt: stores a picture of the region
+    /// rectangular "框选" excerpt: stores a picture of the region (works on both PDF pages and live interactive web charts)
     func makeAreaCard(viewRect r: NSRect) {
+        if isWeb {
+            guard let docId = docId, let wc = webController else { return }
+            areaMode = false
+            let color = lastColor
+            Task { @MainActor in
+                guard let captured = await wc.captureAreaExcerpt(viewRect: r, isFlippedAppKitRect: true) else { return }
+                let captionText = captured.anchor.exact
+                var card = Card(
+                    docId: docId,
+                    page: captured.sectionIndex,
+                    variant: variant,
+                    rects: captured.anchor.relRect.map { [$0] } ?? [],
+                    text: captionText,
+                    color: color,
+                    webAnchor: captured.anchor
+                )
+                card.isImage = true
+                if let png = captured.imageData {
+                    try? png.write(to: Paths.cardImage(card.id))
+                }
+                store.addCard(card)
+                wc.refreshAnnotations()
+                let topDownRect = CGRect(x: r.minX, y: wc.webView.bounds.height - r.maxY, width: r.width, height: r.height)
+                openWebCard(card.id, anchorRect: topDownRect)
+            }
+            return
+        }
         guard let d = view.document, let docId = docId,
               let page = view.page(for: NSPoint(x: r.midX, y: r.midY), nearest: true) else { return }
         let pr = view.convert(r, to: page).intersection(page.bounds(for: view.displayBox))
@@ -755,6 +952,12 @@ final class ReaderController: NSObject, ObservableObject {
     }
 
     func jump(to c: Card) {
+        if isWeb {
+            userPageNavigatedAt = Date()
+            currentPageIndex = c.page
+            webController?.jumpToCard(c)
+            return
+        }
         guard let d = view.document, let p = d.safePage(c.page) else { return }
         userPageNavigatedAt = Date()
         let r = c.rects.reduce(CGRect.null) { $0.union($1) }
@@ -784,6 +987,12 @@ final class ReaderController: NSObject, ObservableObject {
     }
 
     func clearNarrationHighlight() {
+        if isWeb {
+            focusPage = nil
+            focusQuote = nil
+            webController?.clearNarrationHighlight()
+            return
+        }
         scrollTimer?.invalidate(); scrollTimer = nil
         focusView?.removeFromSuperview(); focusView = nil; focusPage = nil; focusQuote = nil
     }
@@ -822,6 +1031,14 @@ final class ReaderController: NSObject, ObservableObject {
     }
 
     func highlightNarration(page i: Int, quote: String?) {
+        if isWeb {
+            focusPage = i
+            focusQuote = quote
+            lastNarrationScrollAt = Date()
+            if currentPageIndex != i { currentPageIndex = i }
+            webController?.highlightNarration(sectionIndex: i, quote: quote ?? "", mentionsFigure: segmentMentionsFigure)
+            return
+        }
         guard let d = view.document, let shown = d.safePage(i), let docId = docId, let ses = store.sessions[docId],
               let orig = ses.original.safePage(i) else { return }
         focusQuote = quote
@@ -1043,6 +1260,12 @@ final class ReaderController: NSObject, ObservableObject {
     private func clip0Sane(_ b: CGRect) -> Bool { b.origin.isSane && b.width.isSane && b.height.isSane && b.height > 0 }
 
     func goToPage(_ i: Int, userInitiated: Bool = true) {
+        if isWeb {
+            let clamped = max(0, min(i, max(0, totalPages - 1)))
+            currentPageIndex = clamped
+            webController?.scrollToSection(clamped)
+            return
+        }
         guard let d = view.document, d.pageCount > 0 else { return }
         let clamped = min(max(0, i), d.pageCount - 1)
         initialLoadedPage = nil
@@ -1063,6 +1286,14 @@ final class ReaderController: NSObject, ObservableObject {
     }
 
     func zoom(_ f: CGFloat) {
+        if isWeb {
+            let delta = Double(f - 1.0)
+            webController?.zoom(delta: delta)
+            if let wv = webController?.webView {
+                scalePercent = wv.pageZoom * 100
+            }
+            return
+        }
         let a = captureAnchor()
         view.autoScales = false
         view.scaleFactor = max(0.25, min(5, view.scaleFactor * f))
@@ -1070,12 +1301,21 @@ final class ReaderController: NSObject, ObservableObject {
         if let a { restore(a, replaced: -1) }
         viewMoved()
     }
-    func fitWidth() { view.autoScales = true; UserDefaults.standard.removeObject(forKey: "zoom"); DispatchQueue.main.async { self.viewMoved() } }
+    func fitWidth() {
+        if isWeb {
+            webController?.zoom(delta: 0)
+            scalePercent = 100
+            return
+        }
+        view.autoScales = true
+        UserDefaults.standard.removeObject(forKey: "zoom")
+        DispatchQueue.main.async { self.viewMoved() }
+    }
 
     // MARK: - PDF Editing Actions
 
     func truncateFromViewPoint(_ ptInView: NSPoint, below: Bool) {
-        guard let d = view.document, let docId = docId, let ses = store.session(docId),
+        guard !isWeb, let d = view.document, let docId = docId, let ses = store.session(docId),
               let page = view.page(for: ptInView, nearest: true) else { return }
         let pageIndex = d.index(for: page)
         let ptInPage = view.convert(ptInView, to: page)
@@ -1089,7 +1329,7 @@ final class ReaderController: NSObject, ObservableObject {
 
     func eraseRegionInView(viewRect r: NSRect) {
         defer { eraseMode = false }
-        guard let d = view.document, let docId = docId, let ses = store.session(docId),
+        guard !isWeb, let d = view.document, let docId = docId, let ses = store.session(docId),
               let page = view.page(for: NSPoint(x: r.midX, y: r.midY), nearest: true) else { return }
         let pageIndex = d.index(for: page)
         let pr = view.convert(r, to: page).intersection(page.bounds(for: view.displayBox))
@@ -1113,7 +1353,7 @@ final class ReaderController: NSObject, ObservableObject {
             m.insertItem(t, at: 0)
         }
         guard let docId = docId, let ses = store.sessions[docId] else { return }
-        if let pt = contextMenuPointInView, let d = view.document, let pg = view.page(for: pt, nearest: true) {
+        if !isWeb, let pt = contextMenuPointInView, let d = view.document, let pg = view.page(for: pt, nearest: true) {
             let idx = d.index(for: pg)
             if idx != NSNotFound && idx >= 0 && idx < d.pageCount {
                 userPageNavigatedAt = Date()
@@ -1121,11 +1361,15 @@ final class ReaderController: NSObject, ObservableObject {
             }
         }
         m.addItem(.separator())
-        let narrateHere = NSMenuItem(title: "🎧 " + LF("从当前页开始讲 (p.%d)", currentPageIndex + 1), action: #selector(menuNarrateFromCurrentPage), keyEquivalent: "")
+        let narrTitle = isWeb ? ("🎧 " + L("从当前小节开始讲")) : ("🎧 " + LF("从当前页开始讲 (p.%d)", currentPageIndex + 1))
+        let narrateHere = NSMenuItem(title: narrTitle, action: #selector(menuNarrateFromCurrentPage), keyEquivalent: "")
         narrateHere.target = self
         m.addItem(narrateHere)
         if let saved = Narrator.savedProgress(docId), (saved.page != currentPageIndex || saved.seg > 0) {
-            let narrateResume = NSMenuItem(title: "▶️ " + LF("继续上次讲解 (p.%d · 第 %d 段)", saved.page + 1, saved.seg + 1), action: #selector(menuNarrateResumeSaved), keyEquivalent: "")
+            let resumeTitle = isWeb
+                ? ("▶️ " + LF("继续上次讲解 (第 %d 节 · 第 %d 段)", saved.page + 1, saved.seg + 1))
+                : ("▶️ " + LF("继续上次讲解 (p.%d · 第 %d 段)", saved.page + 1, saved.seg + 1))
+            let narrateResume = NSMenuItem(title: resumeTitle, action: #selector(menuNarrateResumeSaved), keyEquivalent: "")
             narrateResume.target = self
             m.addItem(narrateResume)
         }
@@ -1134,6 +1378,7 @@ final class ReaderController: NSObject, ObservableObject {
             stopNarr.target = self
             m.addItem(stopNarr)
         }
+        guard !isWeb else { return }
         m.addItem(.separator())
         let truncBelow = NSMenuItem(title: "✂️ " + L("从此处开始截断后面"), action: #selector(menuTruncateBelow), keyEquivalent: "")
         truncBelow.target = self
@@ -1216,25 +1461,109 @@ final class ReaderController: NSObject, ObservableObject {
     }
 }
 
+/// Transparent rubber-band capture overlay placed over `WKWebView` only when `areaMode` is active.
+final class WebAreaCaptureOverlayView: NSView {
+    weak var rc: ReaderController?
+    private var bandStart: NSPoint?
+    private var band: BandView?
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard rc?.areaMode == true else { return nil }
+        return self
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        if rc?.areaMode == true {
+            addCursorRect(bounds, cursor: .crosshair)
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard rc?.areaMode == true else { super.mouseDown(with: event); return }
+        let pt = convert(event.locationInWindow, from: nil)
+        bandStart = pt
+        let b = BandView(frame: NSRect(origin: pt, size: .zero))
+        b.isErase = false
+        addSubview(b)
+        band = b
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let s = bandStart, let b = band else { super.mouseDragged(with: event); return }
+        let pt = convert(event.locationInWindow, from: nil)
+        b.frame = NSRect(x: min(s.x, pt.x), y: min(s.y, pt.y), width: abs(pt.x - s.x), height: abs(pt.y - s.y))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard let b = band else { super.mouseUp(with: event); return }
+        let r = b.frame
+        b.removeFromSuperview()
+        band = nil
+        bandStart = nil
+        if r.width > 8 && r.height > 8 {
+            rc?.makeAreaCard(viewRect: r)
+        }
+    }
+}
+
+final class ReaderHostBoxView: NSView {
+    override func layout() {
+        super.layout()
+        for sub in subviews where sub.frame != bounds {
+            sub.frame = bounds
+        }
+    }
+}
+
 struct PDFReaderView: NSViewRepresentable {
     @ObservedObject var store: Store
     @ObservedObject var rc: ReaderController
     func makeNSView(context: Context) -> NSView {
-        let box = NSView()
+        let box = ReaderHostBoxView(frame: NSRect(x: 0, y: 0, width: 960, height: 760))
         rc.view.frame = box.bounds
         rc.view.autoresizingMask = [.width, .height]
         box.addSubview(rc.view)
+        let overlay = WebAreaCaptureOverlayView(frame: box.bounds)
+        overlay.identifier = NSUserInterfaceItemIdentifier("webAreaOverlay")
+        overlay.autoresizingMask = [.width, .height]
+        overlay.rc = rc
+        box.addSubview(overlay)
         PageTint.apply(to: rc.view)
         return box
     }
     func updateNSView(_ v: NSView, context: Context) {
-        PageTint.apply(to: rc.view)
         if let id = rc.docId, let s = store.session(id) {
             rc.load(session: s, variant: rc.variant)
+            if s.isWeb, let wc = rc.webController {
+                rc.view.isHidden = true
+                if wc.webView.superview !== v {
+                    wc.webView.frame = v.bounds.width > 10 ? v.bounds : NSRect(x: 0, y: 0, width: 960, height: 760)
+                    wc.webView.autoresizingMask = [.width, .height]
+                    if let overlay = v.subviews.first(where: { $0.identifier?.rawValue == "webAreaOverlay" }) {
+                        v.addSubview(wc.webView, positioned: .below, relativeTo: overlay)
+                    } else {
+                        v.addSubview(wc.webView)
+                    }
+                } else if v.bounds.width > 10 && wc.webView.frame != v.bounds {
+                    wc.webView.frame = v.bounds
+                }
+                wc.webView.isHidden = false
+                if let overlay = v.subviews.first(where: { $0.identifier?.rawValue == "webAreaOverlay" }) {
+                    overlay.isHidden = !rc.areaMode
+                    v.window?.invalidateCursorRects(for: overlay)
+                }
+            } else {
+                PageTint.apply(to: rc.view)
+                rc.webController?.webView.isHidden = true
+                rc.view.isHidden = false
+            }
             if let j = store.pendingJump, j.docId == id {
                 DispatchQueue.main.async { rc.jump(to: j); store.pendingJump = nil }
             }
-        } else { rc.unload() }
+        } else {
+            rc.unload()
+        }
     }
 }
 #endif

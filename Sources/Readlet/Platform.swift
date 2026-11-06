@@ -180,6 +180,17 @@ final class ReaderController: NSObject, ObservableObject {
     static let shared = ReaderController()
 
     let view = PDFView()
+    @Published var webController: WebDocController?
+    @Published var isWeb: Bool = false
+    @Published var totalPages: Int = 1
+    @Published var webScrollFraction: Double = 0.0
+    @Published var webSectionTitle: String = ""
+    @Published var webCleanMode: Bool = true
+    @Published var eraseMode: Bool = false {
+        didSet {
+            if isWeb { webController?.setEraseMode(eraseMode) }
+        }
+    }
     @Published var docId: UUID?
     @Published var variant: Variant = .original
     @Published var currentPageIndex: Int = 0
@@ -239,8 +250,28 @@ final class ReaderController: NSObject, ObservableObject {
             let savedVar = Variant(rawValue: UserDefaults.standard.string(forKey: "variant-" + id.uuidString) ?? "") ?? Store.shared.variant
             variant = savedVar
         }
+        if ses.isWeb {
+            isWeb = true
+            pageCount = ses.pageCount
+            totalPages = ses.pageCount
+            if let d = Store.shared.doc(id) {
+                webCleanMode = d.webCleanMode
+                webScrollFraction = d.webAnchor?.scrollFraction ?? 0.0
+                webSectionTitle = d.webAnchor?.sectionTitle ?? ""
+                currentPageIndex = d.webAnchor?.sectionIndex ?? savedPage
+            }
+            if webController?.docId != id {
+                webController = WebDocController(docId: id, reader: self)
+            }
+            webController?.loadIfNeeded()
+            webController?.setVariant(variant)
+            loading = false
+            return
+        }
+        isWeb = false
         let targetDoc = ses.document(variant)
         pageCount = ses.pageCount
+        totalPages = ses.pageCount
         let clamped = min(max(0, savedPage), max(0, pageCount - 1))
         currentPageIndex = clamped
         pendingInitialPage = clamped
@@ -265,7 +296,42 @@ final class ReaderController: NSObject, ObservableObject {
         }
     }
 
+    func syncWebProgressFromDOM(sectionIndex: Int, sectionCount: Int, scrollFraction: Double, sectionTitle: String) {
+        if currentPageIndex != sectionIndex { currentPageIndex = sectionIndex }
+        if pageCount != sectionCount { pageCount = max(1, sectionCount); totalPages = max(1, sectionCount) }
+        if abs(webScrollFraction - scrollFraction) >= 0.001 { webScrollFraction = scrollFraction }
+        if webSectionTitle != sectionTitle { webSectionTitle = sectionTitle }
+    }
+
+    func applyRemoteSyncedWebAnchor(_ anchor: WebReadingAnchor) {
+        webScrollFraction = anchor.scrollFraction
+        if let st = anchor.sectionTitle { webSectionTitle = st }
+        if let si = anchor.sectionIndex { currentPageIndex = si }
+        webController?.scrollToAnchor(anchor)
+    }
+
+    func onWebSelectionChanged(_ payload: WebSelectionPayload?) {
+        guard let payload, !payload.text.isEmpty else {
+            selectionText = ""
+            selectionRects = []
+            return
+        }
+        selectionPage = payload.sectionIndex
+        selectionText = payload.text
+        selectionRects = [CGRect(x: 0, y: 0, width: 100, height: 20)]
+    }
+
+    func toggleWebCleanMode() {
+        guard let wc = webController else { return }
+        webCleanMode = wc.toggleCleanMode()
+    }
+
     func applyRemoteSyncedPage(_ i: Int) {
+        if isWeb {
+            webController?.scrollToSection(i)
+            currentPageIndex = max(0, i)
+            return
+        }
         guard let doc = view.document, doc.pageCount > 0 else { return }
         let clamped = min(max(0, i), doc.pageCount - 1)
         guard let pg = doc.safePage(clamped) else { return }
@@ -279,7 +345,7 @@ final class ReaderController: NSObject, ObservableObject {
     }
 
     func applyPendingInitialPageIfNeeded() {
-        guard let target = pendingInitialPage, let doc = view.document else { return }
+        guard !isWeb, let target = pendingInitialPage, let doc = view.document else { return }
         let clamped = min(max(0, target), max(0, doc.pageCount - 1))
         if let pg = doc.safePage(clamped) {
             let curIdx = view.currentPage.map { doc.index(for: $0) } ?? NSNotFound
@@ -301,6 +367,9 @@ final class ReaderController: NSObject, ObservableObject {
 
     @discardableResult
     func syncCurrentPageFromView() -> Int {
+        if isWeb {
+            return webController?.currentSectionIndex ?? currentPageIndex
+        }
         if !loading, pendingInitialPage == nil, let doc = view.document, let cur = view.currentPage {
             let idx = doc.index(for: cur)
             if idx != NSNotFound && idx >= 0 && idx < doc.pageCount {
@@ -314,7 +383,7 @@ final class ReaderController: NSObject, ObservableObject {
     }
 
     @objc private func pageChanged() {
-        guard !loading, pendingInitialPage == nil, let doc = view.document, let cur = view.currentPage else { return }
+        guard !isWeb, !loading, pendingInitialPage == nil, let doc = view.document, let cur = view.currentPage else { return }
         layoutFocus(animated: false)
         if Date() < programmaticScrollUntil, let fp = focusPage {
             if currentPageIndex != fp { currentPageIndex = fp }
@@ -344,6 +413,7 @@ final class ReaderController: NSObject, ObservableObject {
     }
 
     @objc private func selectionChanged() {
+        guard !isWeb else { return }
         guard let sel = view.currentSelection,
               let raw = sel.string?.trimmingCharacters(in: .whitespacesAndNewlines),
               !raw.isEmpty,
@@ -367,6 +437,12 @@ final class ReaderController: NSObject, ObservableObject {
     func setVariant(_ v: Variant) {
         guard let id = docId, let ses = Store.shared.session(id) else {
             variant = v
+            return
+        }
+        if ses.isWeb {
+            variant = v
+            UserDefaults.standard.set(v.rawValue, forKey: "variant-" + id.uuidString)
+            webController?.setVariant(v)
             return
         }
         let curPage = currentPageIndex
@@ -394,6 +470,12 @@ final class ReaderController: NSObject, ObservableObject {
     }
 
     func goToPage(_ i: Int) {
+        if isWeb {
+            let clamped = max(0, min(i, max(0, pageCount - 1)))
+            currentPageIndex = clamped
+            webController?.scrollToSection(clamped)
+            return
+        }
         guard let doc = view.document else { return }
         let clamped = min(max(0, i), max(0, doc.pageCount - 1))
         pendingInitialPage = nil
@@ -418,6 +500,11 @@ final class ReaderController: NSObject, ObservableObject {
         if variant != card.variant {
             setVariant(card.variant)
         }
+        if isWeb {
+            currentPageIndex = card.page
+            webController?.jumpToCard(card)
+            return
+        }
         goToPage(card.page)
         if let pg = view.document?.safePage(card.page), let r = card.rects.first {
             view.go(to: r, on: pg)
@@ -426,7 +513,28 @@ final class ReaderController: NSObject, ObservableObject {
 
     @discardableResult
     func excerptSelection(color: Int = 0) -> Card? {
-        guard let id = docId, !selectionText.isEmpty, !selectionRects.isEmpty else { return nil }
+        guard let id = docId, !selectionText.isEmpty else { return nil }
+        if isWeb, let wc = webController {
+            let selPayload = wc.currentSelection
+            let webAnchor = WebCardAnchor(
+                sectionId: selPayload?.sectionId,
+                sectionTitle: selPayload?.sectionTitle ?? webSectionTitle,
+                blockId: selPayload?.blockId,
+                exact: selPayload?.exact ?? selectionText,
+                prefix: selPayload?.prefix ?? "",
+                suffix: selPayload?.suffix ?? "",
+                relRect: nil,
+                progressPermille: selPayload?.progressPermille ?? Int((webScrollFraction * 1000.0).rounded())
+            )
+            let c = Card(docId: id, page: selectionPage, variant: variant, rects: [], text: selectionText, color: color, webAnchor: webAnchor)
+            Store.shared.addCard(c)
+            wc.refreshAnnotations()
+            wc.clearSelection()
+            selectionText = ""
+            selectionRects = []
+            return c
+        }
+        guard !selectionRects.isEmpty else { return nil }
         let c = Card(docId: id, page: selectionPage, variant: variant, rects: selectionRects, text: selectionText, color: color)
         Store.shared.addCard(c)
         Store.shared.session(id)?.refreshAnnotations(for: c)
@@ -441,7 +549,7 @@ final class ReaderController: NSObject, ObservableObject {
     }
 
     func documentReplaced(_ s: DocSession) {
-        guard docId == s.doc.id, variant == .bilingual else { return }
+        guard docId == s.doc.id, variant == .bilingual, !s.isWeb else { return }
         let curPage = currentPageIndex
         let activeFocusPage = focusPage
         let activeQuote = narrationQuote
@@ -462,7 +570,7 @@ final class ReaderController: NSObject, ObservableObject {
     }
 
     func reloadAfterPDFEdit(session: DocSession, targetPage: Int) {
-        guard docId == session.doc.id else { return }
+        guard docId == session.doc.id, !session.isWeb else { return }
         let d = session.document(variant)
         loading = true
         view.document = d
@@ -472,6 +580,13 @@ final class ReaderController: NSObject, ObservableObject {
     }
 
     func highlightNarration(page i: Int, quote: String?) {
+        if isWeb {
+            focusPage = i
+            narrationQuote = quote
+            if currentPageIndex != i { currentPageIndex = i }
+            webController?.highlightNarration(sectionIndex: i, quote: quote ?? "", mentionsFigure: segmentMentionsFigure)
+            return
+        }
         clearNarrationAnnotationsOnly()
         narrationQuote = quote
         guard let d = view.document,
@@ -710,6 +825,7 @@ final class ReaderController: NSObject, ObservableObject {
     }
 
     func clearNarrationHighlight() {
+        webController?.clearNarrationHighlight()
         narrationQuote = nil
         focusPage = nil
         focusRect = .zero

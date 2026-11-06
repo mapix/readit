@@ -16,6 +16,7 @@ extension Notification.Name {
 final class FindController: ObservableObject {
     @Published var query = ""
     @Published private(set) var results: [PDFSelection] = []
+    @Published private(set) var webResults: [WebFindMatch] = []
     @Published private(set) var index = -1
     @Published private(set) var searching = false
     weak var rc: ReaderController?
@@ -25,12 +26,41 @@ final class FindController: ObservableObject {
 
     init(rc: ReaderController) { self.rc = rc }
 
+    var matchCount: Int {
+        (rc?.isWeb == true) ? webResults.count : results.count
+    }
+
+    var hasMatches: Bool { matchCount > 0 }
+
     func search() {
         stop()
-        guard let rc, let d = rc.view.document else { return }
+        guard let rc else { return }
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        results = []; index = -1
-        guard !q.isEmpty else { rc.view.highlightedSelections = nil; return }
+        results = []; webResults = []; index = -1
+        if rc.isWeb {
+            guard !q.isEmpty, let wc = rc.webController else {
+                rc.webController?.clearFind()
+                return
+            }
+            searching = true
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let found = await wc.findText(q)
+                self.webResults = found
+                self.searching = false
+                if !found.isEmpty {
+                    self.index = 0
+                }
+            }
+            return
+        }
+        guard let d = rc.view.document else { return }
+        guard !q.isEmpty else {
+            #if os(macOS)
+            rc.view.highlightedSelections = nil
+            #endif
+            return
+        }
         doc = d
         searching = true; pendingJump = true
         let nc = NotificationCenter.default
@@ -47,7 +77,9 @@ final class FindController: ObservableObject {
     private func found(_ sel: PDFSelection) {
         sel.color = NSColor.systemYellow.withAlphaComponent(0.55)
         results.append(sel)
+        #if os(macOS)
         if results.count % 25 == 1 { rc?.view.highlightedSelections = results }
+        #endif
         // jump to the first match at or after the page being read
         if pendingJump, let rc, let p = sel.pages.first, let d = rc.view.document, d.index(for: p) >= rc.currentPageIndex {
             pendingJump = false
@@ -57,17 +89,23 @@ final class FindController: ObservableObject {
 
     private func finished() {
         searching = false
+        #if os(macOS)
         rc?.view.highlightedSelections = results
+        #endif
         if pendingJump, !results.isEmpty { pendingJump = false; select(0) }
         removeObservers()
     }
 
-    func next() { guard !results.isEmpty else { search(); return }; select((index + 1) % results.count) }
-    func previous() { guard !results.isEmpty else { return }; select((index - 1 + results.count) % results.count) }
+    func next() { guard hasMatches else { search(); return }; select((index + 1) % matchCount) }
+    func previous() { guard hasMatches else { return }; select((index - 1 + matchCount) % matchCount) }
 
     private func select(_ i: Int) {
-        guard let rc, i >= 0, i < results.count else { return }
+        guard let rc, i >= 0, i < matchCount else { return }
         index = i
+        if rc.isWeb {
+            rc.webController?.jumpToFindMatch(i)
+            return
+        }
         let sel = results[i]
         rc.view.setCurrentSelection(sel, animate: true)
         rc.view.go(to: sel)
@@ -81,9 +119,15 @@ final class FindController: ObservableObject {
 
     func close() {
         stop()
-        results = []; index = -1
-        rc?.view.highlightedSelections = nil
-        rc?.view.clearSelection()
+        results = []; webResults = []; index = -1
+        if rc?.isWeb == true {
+            rc?.webController?.clearFind()
+        } else {
+            #if os(macOS)
+            rc?.view.highlightedSelections = nil
+            #endif
+            rc?.view.clearSelection()
+        }
     }
 
     private func removeObservers() {
@@ -112,15 +156,15 @@ struct FindBar: View {
                 .focused($focused)
                 .onSubmit {
                     #if os(macOS)
-                    NSEvent.modifierFlags.contains(.shift) ? find.previous() : (find.results.isEmpty ? find.search() : find.next())
+                    NSEvent.modifierFlags.contains(.shift) ? find.previous() : (!find.hasMatches ? find.search() : find.next())
                     #else
-                    find.results.isEmpty ? find.search() : find.next()
+                    !find.hasMatches ? find.search() : find.next()
                     #endif
                 }
             if find.searching { ProgressView().controlSize(.small) }
-            Text(find.results.isEmpty ? (find.query.isEmpty || find.searching ? "" : L("无结果")) : "\(find.index + 1)/\(find.results.count)")
+            Text(!find.hasMatches ? (find.query.isEmpty || find.searching ? "" : L("无结果")) : "\(find.index + 1)/\(find.matchCount)")
                 .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
-            Button { find.previous() } label: { Image(systemName: "chevron.up") }.buttonStyle(.borderless).disabled(find.results.isEmpty)
+            Button { find.previous() } label: { Image(systemName: "chevron.up") }.buttonStyle(.borderless).disabled(!find.hasMatches)
                 .help(L("上一个（⇧⌘G）")).accessibilityLabel(L("上一个"))
             Button { find.next() } label: { Image(systemName: "chevron.down") }.buttonStyle(.borderless).disabled(find.query.isEmpty)
                 .help(L("下一个（⌘G）")).accessibilityLabel(L("下一个"))
@@ -140,9 +184,9 @@ struct FindBar: View {
     }
 }
 
-// MARK: - PDF table of contents
+// MARK: - PDF & Web table of contents
 
-struct TOCEntry: Identifiable { let id = UUID(); let title: String; let page: Int?; let depth: Int }
+struct TOCEntry: Identifiable { let id = UUID(); let title: String; let page: Int?; let depth: Int; var percentLabel: String? = nil }
 
 enum PDFOutlineReader {
     static func entries(_ d: PDFDocument?) -> [TOCEntry] {
@@ -167,17 +211,38 @@ struct TOCList: View {
     var query: String
     @State private var entries: [TOCEntry] = []
 
+    private var effectiveEntries: [TOCEntry] {
+        if rc.isWeb {
+            let secs = rc.webController?.sections ?? (rc.docId.flatMap { Store.shared.session($0)?.webSections } ?? [])
+            return secs.map { s in
+                TOCEntry(
+                    title: s.title,
+                    page: s.index,
+                    depth: max(0, s.depth - 1),
+                    percentLabel: "\(Int((s.scrollFraction * 100.0).rounded()))%"
+                )
+            }
+        }
+        return entries
+    }
+
     var body: some View {
+        let shown = effectiveEntries.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) }
         Group {
-            if entries.isEmpty {
-                Text(L("这份 PDF 没有内置目录")).font(.system(size: 12)).foregroundStyle(.secondary).padding(14)
+            if shown.isEmpty {
+                Text(rc.isWeb ? L("正在提取网页章节目录…") : L("这份 PDF 没有内置目录"))
+                    .font(.system(size: 12)).foregroundStyle(.secondary).padding(14)
             } else {
-                ForEach(entries.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) }) { e in
+                ForEach(shown) { e in
                     let current = e.page != nil && e.page == currentChapterPage
                     HStack(spacing: 6) {
                         Text(e.title).font(.system(size: e.depth == 0 ? 12.5 : 12, weight: e.depth == 0 ? .semibold : .regular)).lineLimit(2)
                         Spacer(minLength: 4)
-                        if let p = e.page { Text("\(p + 1)").font(.system(size: 10)).monospacedDigit().foregroundStyle(.secondary) }
+                        if let pct = e.percentLabel {
+                            Text(pct).font(.system(size: 10)).monospacedDigit().foregroundStyle(.secondary)
+                        } else if let p = e.page {
+                            Text("\(p + 1)").font(.system(size: 10)).monospacedDigit().foregroundStyle(.secondary)
+                        }
                     }
                     .padding(.leading, CGFloat(e.depth) * 14 + 10).padding(.vertical, 5).padding(.trailing, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -189,13 +254,15 @@ struct TOCList: View {
             }
         }
         .task(id: rc.docId) {
-            entries = PDFOutlineReader.entries(rc.docId.flatMap { Store.shared.session($0)?.original })
+            if !rc.isWeb {
+                entries = PDFOutlineReader.entries(rc.docId.flatMap { Store.shared.session($0)?.original })
+            }
         }
     }
 
-    /// page of the chapter containing the current page
+    /// page / section of the chapter containing the current position
     var currentChapterPage: Int? {
         let cur = rc.currentPageIndex
-        return entries.compactMap { $0.page }.filter { $0 <= cur }.max()
+        return effectiveEntries.compactMap { $0.page }.filter { $0 <= cur }.max()
     }
 }

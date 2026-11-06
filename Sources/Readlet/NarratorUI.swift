@@ -75,6 +75,21 @@ struct NarratorBar: View {
         Narrator.reader.topInset = d.isTop ? h + 30 : 0
     }
 
+    private var isWebDoc: Bool {
+        guard let id = n.docId else { return false }
+        return Store.shared.doc(id)?.isWeb ?? false
+    }
+
+    private var currentSectionLabel: String {
+        guard let id = n.docId, let ses = Store.shared.session(id), ses.isWeb else {
+            return "p.\(n.page + 1)"
+        }
+        if let st = ses.sectionTitle(n.page), !st.isEmpty {
+            return st
+        }
+        return LF("第 %d 节", n.page + 1)
+    }
+
     /// minimized: a compact pill with progress ring, play/pause and expand
     var pill: some View {
         HStack(spacing: 10) {
@@ -87,7 +102,8 @@ struct NarratorBar: View {
             if n.recording { RecDot(on: true).help(L("录制中")) }
             TimelineView(.periodic(from: .now, by: 1)) { _ in
                 let eta = n.remainingSeconds().map { " · " + Narrator.formatRemainingShort($0) } ?? ""
-                Text("p.\(n.page + 1) · \(n.segIndex + 1)/\(max(1, n.segments.count))" + eta).font(.system(size: 11.5, weight: .medium)).monospacedDigit()
+                let loc = isWebDoc ? "\(Int((n.progress * 100).rounded()))%" : "p.\(n.page + 1)"
+                Text("\(loc) · \(n.segIndex + 1)/\(max(1, n.segments.count))" + eta).font(.system(size: 11.5, weight: .medium)).monospacedDigit()
             }
             .help(n.remainingSeconds().map { Narrator.formatRemaining($0) } ?? "")
             FromHereButton(rc: Narrator.reader, compact: true)
@@ -162,10 +178,10 @@ struct NarratorBar: View {
                 }
                 .frame(width: 30, height: 30)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(LF("AI 解读 · 第 %d / %d 页", n.page + 1, n.pageCount)).font(.system(size: 12, weight: .semibold)).monospacedDigit().lineLimit(1)
+                    Text(isWebDoc ? (L("AI 解读 · ") + currentSectionLabel) : LF("AI 解读 · 第 %d / %d 页", n.page + 1, n.pageCount)).font(.system(size: 12, weight: .semibold)).monospacedDigit().lineLimit(1)
                     Group {
                         if let e = n.error { Text("⚠️ " + e).foregroundStyle(.red) }
-                        else if n.state == .preparing { Text(n.segments.isEmpty ? L("正在阅读本页并组织讲解…") : L("正在生成语音…")) }
+                        else if n.state == .preparing { Text(n.segments.isEmpty ? (isWebDoc ? L("正在阅读当前章节并组织讲解…") : L("正在阅读本页并组织讲解…")) : L("正在生成语音…")) }
                         else {
                             TimelineView(.periodic(from: .now, by: 1)) { _ in
                                 let eta = n.remainingSeconds().map { " · " + Narrator.formatRemaining($0) } ?? ""
@@ -386,6 +402,7 @@ struct FromHereButton: View {
     }
 
     @ViewBuilder func button(_ target: Int, isDifferentPage: Bool) -> some View {
+        let isWeb = rc.isWeb
         Button {
             _ = rc.syncCurrentPageFromView()
             if rc.currentPageIndex != n.page {
@@ -396,13 +413,13 @@ struct FromHereButton: View {
         } label: {
             if compact {
                 Label(
-                    isDifferentPage ? LF("从第 %d 页讲", target + 1) : L("从本页讲"),
+                    isWeb ? (isDifferentPage ? L("从当前节讲") : L("重讲本节")) : (isDifferentPage ? LF("从第 %d 页讲", target + 1) : L("从本页讲")),
                     systemImage: "text.line.first.and.arrowtriangle.forward"
                 )
                 .font(.system(size: 11, weight: .semibold))
             } else {
                 Label(
-                    isDifferentPage ? LF("从第 %d 页开始讲", target + 1) : L("从当前页开始讲"),
+                    isWeb ? (isDifferentPage ? L("从当前章节开始讲") : L("从本节开头重新讲")) : (isDifferentPage ? LF("从第 %d 页开始讲", target + 1) : L("从当前页开始讲")),
                     systemImage: "text.line.first.and.arrowtriangle.forward"
                 )
                 .font(.system(size: 11.5, weight: .semibold))
@@ -414,9 +431,11 @@ struct FromHereButton: View {
         .foregroundStyle(.purple)
         .lineLimit(1)
         .fixedSize()
-        .help(isDifferentPage
-              ? LF("你正在看第 %d 页，点击从这一页开头继续讲解", target + 1)
-              : LF("从当前页（第 %d 页）开头重新开始讲解", target + 1))
+        .help(isWeb
+              ? L("从当前阅读的网页章节开头开始讲解")
+              : (isDifferentPage
+                  ? LF("你正在看第 %d 页，点击从这一页开头继续讲解", target + 1)
+                  : LF("从当前页（第 %d 页）开头重新开始讲解", target + 1)))
         .transition(.opacity.combined(with: .scale(scale: 0.9)))
     }
 }

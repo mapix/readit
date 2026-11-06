@@ -8,6 +8,153 @@ import PDFKit
 
 enum Variant: String, Codable, Hashable { case original, bilingual }
 
+/// Document storage & rendering kind: `.pdf` (static PDF file) or `.web` (live interactive webpage stored by URL only).
+enum DocKind: String, Codable, Hashable {
+    case pdf
+    case web
+}
+
+/// Viewport-independent reading anchor for live interactive web documents.
+/// Coordinates cross-window resizes (full window vs split mind-map pane) and cross-device sync (Mac / iPad / iPhone).
+struct WebReadingAnchor: Codable, Hashable {
+    /// Semantic DOM element identifier (e.g. `s-2-1`, `s-1::p-3`, `viz:token-routing`)
+    var anchorId: String = ""
+    /// Fractional vertical offset (`0.0 ... 1.0`) within the anchor element at the reading line
+    var intraOffset: Double = 0.0
+    /// Continuous document scroll fraction (`0.0 ... 1.0`)
+    var scrollFraction: Double
+    /// Human-readable current section title (e.g. `"2.1 Routing Collapse"`)
+    var sectionTitle: String? = nil
+    /// 0-indexed logical section index for TOC & AI Narration alignment
+    var sectionIndex: Int? = nil
+
+    var progressPermille: Int {
+        min(1000, max(0, Int((scrollFraction * 1000.0).rounded())))
+    }
+
+    var progressPercent: Int {
+        min(100, max(0, Int((scrollFraction * 100.0).rounded())))
+    }
+}
+
+/// Viewport-independent DOM anchor for text highlights and area/chart excerpts on interactive webpages.
+struct WebCardAnchor: Codable, Hashable {
+    /// Section heading ID (`s-1`, `s-2-0`, etc.)
+    var sectionId: String? = nil
+    /// Section heading title (`"1. A visual guide to Mixture of Experts"`)
+    var sectionTitle: String? = nil
+    /// Semantic block ID within the article (`s-1::p-2`, `viz:moe-layer`, etc.)
+    var blockId: String? = nil
+    /// W3C TextQuoteSelector exact text
+    var exact: String = ""
+    /// W3C TextQuoteSelector preceding context (~32 chars)
+    var prefix: String = ""
+    /// W3C TextQuoteSelector following context (~32 chars)
+    var suffix: String = ""
+    /// Normalized bounding box (`0.0 ... 1.0` relative to `blockId` or interactive chart container) for area/chart excerpts
+    var relRect: CGRect? = nil
+    /// Continuous scroll permille (`0 ... 1000`) for sorting and progress display
+    var progressPermille: Int? = nil
+}
+
+/// Logical section extracted from a live interactive webpage (`h1` / `h2` / `h3`) for TOC, Copilot, Flashcards, MindMap & Narration.
+struct WebSection: Codable, Hashable, Identifiable {
+    var index: Int
+    var id: String
+    var title: String
+    var depth: Int
+    var text: String
+    var blockIds: [String] = []
+    /// Fractional scroll position (`0.0 ... 1.0`) where this section starts
+    var scrollFraction: Double = 0.0
+}
+
+/// Resolves and normalizes interactive web URLs, including deterministic unwrapping of outer container shells
+/// (such as Hugging Face Spaces `huggingface.co/spaces/<owner>/<space>#s-1` -> `https://<owner>-<space>.hf.space/#s-1`)
+/// when `cleanMode` is enabled.
+enum WebURLResolver {
+    /// Normalizes user input into a valid `http`/`https` URL string.
+    static func normalizedInputURL(_ raw: String) -> URL? {
+        let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !s.isEmpty else { return nil }
+        let withScheme = (s.hasPrefix("http://") || s.hasPrefix("https://")) ? s : "https://" + s
+        guard let u = URL(string: withScheme), let host = u.host, host.contains(".") else { return nil }
+        return u
+    }
+
+    /// Alias for `normalizedInputURL` used across macOS/iOS import flows.
+    static func normalize(_ raw: String) -> URL? {
+        normalizedInputURL(raw)
+    }
+
+    /// Canonical key used to deduplicate web documents in the library (ignores fragment `#...` and trailing slash).
+    static func canonicalIdentity(_ rawURL: String) -> String {
+        guard let u = normalizedInputURL(rawURL),
+              var comp = URLComponents(url: u, resolvingAgainstBaseURL: false) else {
+            return rawURL.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        }
+        comp.fragment = nil
+        comp.scheme = comp.scheme?.lowercased()
+        comp.host = comp.host?.lowercased()
+        if comp.path.count > 1 && comp.path.hasSuffix("/") {
+            comp.path.removeLast()
+        }
+        return comp.string ?? rawURL.lowercased()
+    }
+
+    /// Returns the effective URL to load in `WKWebView`.
+    /// When `cleanMode == true`, known outer wrapper shells (e.g. Hugging Face Spaces `/spaces/<org>/<repo>`)
+    /// are unwrapped directly to the embedded interactive app host while preserving path suffixes, query, and `#fragment`.
+    static func resolvedLoadURL(originalURL: String, cleanMode: Bool) -> URL? {
+        guard let u = normalizedInputURL(originalURL) else { return nil }
+        guard cleanMode else { return u }
+        if let unwrapped = unwrapHuggingFaceSpaceURL(u) {
+            return unwrapped
+        }
+        return u
+    }
+
+    /// Unwraps `https://huggingface.co/spaces/<owner>/<space>[/...][#hash]` -> `https://<owner>-<space>.hf.space[/...][#hash]`.
+    static func unwrapHuggingFaceSpaceURL(_ url: URL) -> URL? {
+        guard let host = url.host?.lowercased(),
+              (host == "huggingface.co" || host == "www.huggingface.co"),
+              let comp = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        let parts = comp.path.split(separator: "/").map(String.init)
+        guard parts.count >= 3, parts[0].lowercased() == "spaces" else { return nil }
+        let owner = parts[1].lowercased().replacingOccurrences(of: "_", with: "-").replacingOccurrences(of: ".", with: "-")
+        let space = parts[2].lowercased().replacingOccurrences(of: "_", with: "-").replacingOccurrences(of: ".", with: "-")
+        guard !owner.isEmpty, !space.isEmpty else { return nil }
+        // Do not unwrap repository tree/settings URLs like /spaces/org/repo/tree/main
+        let remainder = Array(parts.dropFirst(3))
+        if let firstSub = remainder.first?.lowercased(),
+           ["tree", "blob", "commits", "discussions", "settings", "raw"].contains(firstSub) {
+            return nil
+        }
+        var out = URLComponents()
+        out.scheme = "https"
+        out.host = "\(owner)-\(space).hf.space"
+        out.path = remainder.isEmpty ? "/" : ("/" + remainder.joined(separator: "/"))
+        out.query = comp.query
+        out.fragment = comp.fragment
+        return out.url
+    }
+
+    /// Human-friendly initial title derived from a URL before the live DOM finishes loading `<title>`.
+    static func fallbackTitle(for rawURL: String) -> String {
+        guard let u = normalizedInputURL(rawURL) else { return rawURL }
+        let parts = u.path.split(separator: "/").map(String.init)
+        if let host = u.host?.lowercased(), host.contains("huggingface.co"), parts.count >= 3, parts[0] == "spaces" {
+            return parts[2].replacingOccurrences(of: "-", with: " ").capitalized
+        }
+        if let last = parts.last, !last.isEmpty, last != "index.html" {
+            return last.replacingOccurrences(of: "-", with: " ").replacingOccurrences(of: "_", with: " ")
+        }
+        return u.host ?? rawURL
+    }
+}
+
 /// Built-in workflow status tags for documents (`TODO`, `DOING`, `DONE`).
 enum DocStatusTag: String, CaseIterable, Codable, Identifiable, Equatable {
     case todo = "TODO"
@@ -62,6 +209,7 @@ struct DeviceProgressSnapshot: Codable, Hashable, Identifiable {
     var readPage: Int
     var narrationPage: Int? = nil
     var narrationSeg: Int? = nil
+    var webAnchor: WebReadingAnchor? = nil
     var updatedAt: Date
 
     var id: String { deviceId.isEmpty ? deviceName : deviceId }
@@ -73,6 +221,7 @@ struct ProgressConflict: Codable, Hashable {
     var localPage: Int
     var localNarrationPage: Int? = nil
     var localNarrationSeg: Int? = nil
+    var localWebAnchor: WebReadingAnchor? = nil
     var localUpdatedAt: Date
 
     var remoteDeviceId: String
@@ -80,6 +229,7 @@ struct ProgressConflict: Codable, Hashable {
     var remotePage: Int
     var remoteNarrationPage: Int? = nil
     var remoteNarrationSeg: Int? = nil
+    var remoteWebAnchor: WebReadingAnchor? = nil
     var remoteUpdatedAt: Date
 
     var detectedAt: Date = Date()
@@ -89,38 +239,58 @@ struct Doc: Codable, Identifiable, Hashable {
     var id = UUID()
     var title: String
     var added = Date()
-    /// web page the PDF was imported from (Readlet's "从网页导入")
+    /// `.pdf` (default) or `.web` (live interactive webpage imported by URL)
+    var kind: DocKind = .pdf
+    /// web page the PDF was imported from, or the live URL for `.web` documents
     var source: String? = nil
+    /// Whether peripheral non-body DOM elements & outer wrapper shells are automatically removed for `.web` documents (per-article toggle, default `true`)
+    var webCleanMode: Bool = true
+    /// Additional user-selected CSS selectors hidden in clean mode for this article
+    var webHiddenSelectors: [String] = []
+    /// Viewport-independent reading anchor (`anchorId`, `intraOffset`, `scrollFraction`, `sectionTitle`) for `.web` documents
+    var webAnchor: WebReadingAnchor? = nil
     /// workflow status tags (`TODO`, `DOING`, `DONE`) + arbitrary user tags
     var tags: [String] = []
-    /// total page count cached for bookshelf progress display
+    /// total page count cached for bookshelf progress display (for `.web`, stores total section count when available)
     var pageCount: Int? = nil
-    /// 0-indexed current / furthest page read
+    /// 0-indexed current / furthest page read (for `.web`, stores current 0-indexed section index)
     var readPage: Int? = nil
-    /// when `readPage` was last updated by user page navigation
+    /// when `readPage` / `webAnchor` was last updated by user navigation
     var readUpdatedAt: Date? = nil
-    /// device name & id that recorded `readPage`
+    /// device name & id that recorded `readPage` / `webAnchor`
     var lastReadDevice: String? = nil
     var lastReadDeviceId: String? = nil
-    /// 0-indexed page and segment for AI Narration progress (synced across Mac & iOS)
+    /// 0-indexed page (or web section index) and segment for AI Narration progress (synced across Mac & iOS)
     var narrationPage: Int? = nil
     var narrationSeg: Int? = nil
     var narrationUpdatedAt: Date? = nil
     var lastNarrationDevice: String? = nil
     /// per-device progress snapshots (up to 6 devices) for cross-device tracking & recovery
     var deviceProgressHistory: [DeviceProgressSnapshot] = []
-    /// daily reading log: `"yyyy-MM-dd"` -> 0-indexed page reached that day
+    /// daily reading log: `"yyyy-MM-dd"` -> 0-indexed page reached that day (or permille `0..1000` for `.web`)
     var dailyReadingLog: [String: Int] = [:]
     /// non-nil when two devices reported conflicting reading/narration progress
     var pendingConflict: ProgressConflict? = nil
     /// last modified timestamp for conflict-free iCloud sync
     var updatedAt: Date? = nil
 
+    var isWeb: Bool { kind == .web }
+
+    /// Effective source URL string for `.web` documents (or imported web PDFs)
+    var webURL: String? {
+        guard let s = source?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty else { return nil }
+        return s
+    }
+
     init(
         id: UUID = UUID(),
         title: String,
         added: Date = Date(),
+        kind: DocKind = .pdf,
         source: String? = nil,
+        webCleanMode: Bool = true,
+        webHiddenSelectors: [String] = [],
+        webAnchor: WebReadingAnchor? = nil,
         tags: [String] = [],
         pageCount: Int? = nil,
         readPage: Int? = nil,
@@ -139,7 +309,11 @@ struct Doc: Codable, Identifiable, Hashable {
         self.id = id
         self.title = title
         self.added = added
+        self.kind = kind
         self.source = source
+        self.webCleanMode = webCleanMode
+        self.webHiddenSelectors = webHiddenSelectors
+        self.webAnchor = webAnchor
         self.tags = tags
         self.pageCount = pageCount
         self.readPage = readPage
@@ -157,7 +331,8 @@ struct Doc: Codable, Identifiable, Hashable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, title, added, source, tags, pageCount
+        case id, title, added, kind, source, webCleanMode, webHiddenSelectors, webAnchor
+        case tags, pageCount
         case readPage, readUpdatedAt, lastReadDevice, lastReadDeviceId
         case narrationPage, narrationSeg, narrationUpdatedAt, lastNarrationDevice
         case deviceProgressHistory, dailyReadingLog, pendingConflict, updatedAt
@@ -165,10 +340,23 @@ struct Doc: Codable, Identifiable, Hashable {
 
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
-        id = try c.decode(UUID.self, forKey: .id)
+        let decodedId = try c.decode(UUID.self, forKey: .id)
+        id = decodedId
         title = try c.decode(String.self, forKey: .title)
         added = try c.decodeIfPresent(Date.self, forKey: .added) ?? Date()
-        source = try c.decodeIfPresent(String.self, forKey: .source)
+        let decodedSource = try c.decodeIfPresent(String.self, forKey: .source)
+        source = decodedSource
+        webCleanMode = try c.decodeIfPresent(Bool.self, forKey: .webCleanMode) ?? true
+        webHiddenSelectors = try c.decodeIfPresent([String].self, forKey: .webHiddenSelectors) ?? []
+        let decodedAnchor = try c.decodeIfPresent(WebReadingAnchor.self, forKey: .webAnchor)
+        webAnchor = decodedAnchor
+        if let explicitKind = try c.decodeIfPresent(DocKind.self, forKey: .kind) {
+            kind = explicitKind
+        } else if decodedAnchor != nil || (decodedSource?.hasPrefix("http") == true && !FileManager.default.fileExists(atPath: Paths.pdf(decodedId).path)) {
+            kind = .web
+        } else {
+            kind = .pdf
+        }
         tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
         pageCount = try c.decodeIfPresent(Int.self, forKey: .pageCount)
         readPage = try c.decodeIfPresent(Int.self, forKey: .readPage)
@@ -208,6 +396,15 @@ struct Doc: Codable, Identifiable, Hashable {
     /// Reading progress in `0.0 ... 1.0`
     var progressFraction: Double {
         if statusTag == .done { return 1.0 }
+        if isWeb {
+            if let anchor = webAnchor {
+                return min(1.0, max(0.0, anchor.scrollFraction))
+            }
+            if let total = pageCount, total > 0, let rp = resolvedReadPage {
+                return min(1.0, max(0.0, Double(rp + 1) / Double(total)))
+            }
+            return 0.0
+        }
         let total = max(1, pageCount ?? 0)
         guard pageCount != nil, let rp = resolvedReadPage else { return 0.0 }
         return min(1.0, max(0.0, Double(rp + 1) / Double(total)))
@@ -217,20 +414,37 @@ struct Doc: Codable, Identifiable, Hashable {
         Int((progressFraction * 100.0).rounded())
     }
 
+    /// Human-readable progress location string (page-less for `.web` documents, page-based for `.pdf`).
+    var progressLocationLabel: String {
+        if isWeb {
+            let pct = "\(progressPercent)%"
+            if let sec = webAnchor?.sectionTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !sec.isEmpty {
+                return "\(pct) · \(sec)"
+            }
+            return pct
+        }
+        let curPage = (resolvedReadPage ?? 0) + 1
+        let total = pageCount ?? 0
+        return total > 0 ? "\(curPage)/\(total) \(L("页"))" : "P\(curPage)"
+    }
+
     mutating func recordDeviceSnapshot(
         deviceId: String = DeviceIdentity.currentDeviceId,
         deviceName: String = DeviceIdentity.currentDeviceName,
         page: Int,
         narrationPage: Int? = nil,
         narrationSeg: Int? = nil,
+        webAnchor: WebReadingAnchor? = nil,
         at date: Date = Date()
     ) {
+        let resolvedAnchor = webAnchor ?? self.webAnchor
         let snap = DeviceProgressSnapshot(
             deviceId: deviceId,
             deviceName: deviceName,
             readPage: max(0, page),
             narrationPage: narrationPage ?? self.narrationPage,
             narrationSeg: narrationSeg ?? self.narrationSeg,
+            webAnchor: resolvedAnchor,
             updatedAt: date
         )
         deviceProgressHistory.removeAll { $0.deviceId == deviceId || $0.deviceName == deviceName }
@@ -239,8 +453,9 @@ struct Doc: Codable, Identifiable, Hashable {
             deviceProgressHistory = Array(deviceProgressHistory.prefix(6))
         }
         let dayKey = DeviceIdentity.todayDateKey(date)
+        let metricValue = isWeb ? (resolvedAnchor?.progressPermille ?? max(0, page)) : max(0, page)
         let prevDayMax = dailyReadingLog[dayKey] ?? 0
-        dailyReadingLog[dayKey] = max(prevDayMax, max(0, page))
+        dailyReadingLog[dayKey] = max(prevDayMax, metricValue)
         if dailyReadingLog.count > 45 {
             let sortedKeys = dailyReadingLog.keys.sorted(by: >).prefix(45)
             let keep = Set(sortedKeys)
@@ -262,12 +477,14 @@ struct Card: Codable, Identifiable, Hashable {
     var translation: String? = nil
     var comments: [String] = []
     var isImage = false
+    /// Viewport-independent DOM anchor for cards created on interactive `.web` documents
+    var webAnchor: WebCardAnchor? = nil
     var updatedAt: Date? = nil
 
-    init(docId: UUID, page: Int, variant: Variant, rects: [CGRect], text: String, color: Int = 0) {
-        self.docId = docId; self.page = page; self.variant = variant; self.rects = rects; self.text = text; self.color = color; self.updatedAt = Date()
+    init(docId: UUID, page: Int, variant: Variant, rects: [CGRect], text: String, color: Int = 0, webAnchor: WebCardAnchor? = nil) {
+        self.docId = docId; self.page = page; self.variant = variant; self.rects = rects; self.text = text; self.color = color; self.webAnchor = webAnchor; self.updatedAt = Date()
     }
-    enum CodingKeys: String, CodingKey { case id, docId, page, variant, rects, text, note, color, created, translation, comments, isImage, updatedAt }
+    enum CodingKeys: String, CodingKey { case id, docId, page, variant, rects, text, note, color, created, translation, comments, isImage, webAnchor, updatedAt }
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -281,12 +498,31 @@ struct Card: Codable, Identifiable, Hashable {
         translation = try c.decodeIfPresent(String.self, forKey: .translation)
         comments = try c.decodeIfPresent([String].self, forKey: .comments) ?? []
         isImage = try c.decodeIfPresent(Bool.self, forKey: .isImage) ?? false
+        webAnchor = try c.decodeIfPresent(WebCardAnchor.self, forKey: .webAnchor)
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt)
         let legacy = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
         if !legacy.isEmpty && comments.isEmpty { comments = [legacy] }
     }
     /// all comments joined (for display in PDF annotations / exports)
     var commentText: String { comments.filter { !$0.isEmpty }.joined(separator: "\n") }
+
+    /// Page-less location label for `.web` cards (e.g. `"§2.1 · 34%"`), or `"P3"` for `.pdf` cards.
+    func locationLabel(isWebDoc: Bool = false) -> String {
+        if let wa = webAnchor {
+            if let st = wa.sectionTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !st.isEmpty {
+                let short = st.count > 18 ? String(st.prefix(18)) + "…" : st
+                return short
+            }
+            if let perm = wa.progressPermille {
+                return "\(Int((Double(perm) / 10.0).rounded()))%"
+            }
+            return L("网页摘录")
+        }
+        if isWebDoc {
+            return L("第 \(page + 1) 节")
+        }
+        return "P\(page + 1)"
+    }
 }
 
 struct MindNode: Codable, Identifiable, Hashable {
@@ -455,7 +691,7 @@ final class Store: ObservableObject {
         var changed = false
         for i in lib.docs.indices {
             let docId = lib.docs[i].id
-            if lib.docs[i].pageCount == nil, let pdf = PDFDocument(url: Paths.pdf(docId)) {
+            if !lib.docs[i].isWeb, lib.docs[i].pageCount == nil, let pdf = PDFDocument(url: Paths.pdf(docId)) {
                 lib.docs[i].pageCount = pdf.pageCount
                 changed = true
             }
@@ -476,7 +712,7 @@ final class Store: ObservableObject {
             }
             if lib.docs[i].deviceProgressHistory.isEmpty,
                let rp = lib.docs[i].readPage,
-               (rp > 0 || (lib.docs[i].narrationPage ?? 0) > 0 || (lib.docs[i].narrationSeg ?? 0) > 0) {
+               (rp > 0 || (lib.docs[i].narrationPage ?? 0) > 0 || (lib.docs[i].narrationSeg ?? 0) > 0 || (lib.docs[i].webAnchor?.scrollFraction ?? 0) > 0.01) {
                 let ts = lib.docs[i].readUpdatedAt ?? lib.docs[i].updatedAt ?? Date()
                 if lib.docs[i].readUpdatedAt == nil { lib.docs[i].readUpdatedAt = ts }
                 if lib.docs[i].lastReadDevice == nil { lib.docs[i].lastReadDevice = DeviceIdentity.currentDeviceName }
@@ -485,6 +721,7 @@ final class Store: ObservableObject {
                     page: rp,
                     narrationPage: lib.docs[i].narrationPage,
                     narrationSeg: lib.docs[i].narrationSeg,
+                    webAnchor: lib.docs[i].webAnchor,
                     at: ts
                 )
                 changed = true
@@ -518,22 +755,36 @@ final class Store: ObservableObject {
     /// Applies a merged library from `CloudSync` without triggering a redundant re-upload loop.
     func applyCloudMergedLibrary(_ merged: Library) {
         let oldPages = Dictionary(uniqueKeysWithValues: lib.docs.map { ($0.id, $0.readPage) })
+        let oldAnchors = Dictionary(uniqueKeysWithValues: lib.docs.map { ($0.id, $0.webAnchor) })
         let goneCards = Set(lib.cards.map(\.id)).subtracting(merged.cards.map(\.id))
         lib = merged
         for d in lib.docs {
             if let rp = d.readPage {
                 UserDefaults.standard.set(rp, forKey: "page-" + d.id.uuidString)
-                if oldPages[d.id] != rp, d.pendingConflict == nil {
+            }
+            guard d.pendingConflict == nil else { continue }
+            if d.isWeb {
+                if let anchor = d.webAnchor, oldAnchors[d.id] != anchor {
                     #if os(macOS)
-                    if let entry = DocWindows.shared.entries[d.id], entry.reader.currentPageIndex != rp {
-                        entry.reader.applyRemoteSyncedPage(rp)
+                    if let entry = DocWindows.shared.entries[d.id] {
+                        entry.reader.applyRemoteSyncedWebAnchor(anchor)
                     }
                     #elseif os(iOS)
-                    if ReaderController.shared.docId == d.id, ReaderController.shared.currentPageIndex != rp {
-                        ReaderController.shared.applyRemoteSyncedPage(rp)
+                    if ReaderController.shared.docId == d.id {
+                        ReaderController.shared.applyRemoteSyncedWebAnchor(anchor)
                     }
                     #endif
                 }
+            } else if let rp = d.readPage, oldPages[d.id] != rp {
+                #if os(macOS)
+                if let entry = DocWindows.shared.entries[d.id], entry.reader.currentPageIndex != rp {
+                    entry.reader.applyRemoteSyncedPage(rp)
+                }
+                #elseif os(iOS)
+                if ReaderController.shared.docId == d.id, ReaderController.shared.currentPageIndex != rp {
+                    ReaderController.shared.applyRemoteSyncedPage(rp)
+                }
+                #endif
             }
         }
         if currentNotebookId == nil || !lib.notebooks.contains(where: { $0.id == currentNotebookId }) {
@@ -557,7 +808,7 @@ final class Store: ObservableObject {
         if let s = sessions[id] { return s }
         guard let d = doc(id), let s = DocSession(doc: d) else { return nil }
         sessions[id] = s
-        if d.pageCount != s.pageCount, let idx = lib.docs.firstIndex(where: { $0.id == id }) {
+        if !d.isWeb, d.pageCount != s.pageCount, let idx = lib.docs.firstIndex(where: { $0.id == id }) {
             lib.docs[idx].pageCount = s.pageCount
             save()
         }
@@ -599,7 +850,7 @@ final class Store: ObservableObject {
         guard let pdf = PDFDocument(url: url) else { return nil }
         let title = url.deletingPathExtension().lastPathComponent
         // same file imported before? reuse
-        if let existing = lib.docs.first(where: { $0.title == title }),
+        if let existing = lib.docs.first(where: { !$0.isWeb && $0.title == title }),
            let a = try? Data(contentsOf: Paths.pdf(existing.id)), let b = try? Data(contentsOf: url), a == b {
             addDocToNotebook(existing.id)
             #if os(macOS)
@@ -609,8 +860,67 @@ final class Store: ObservableObject {
             #endif
             return existing.id
         }
-        let d = Doc(title: title, tags: [DocStatusTag.todo.rawValue], pageCount: pdf.pageCount, readPage: nil, updatedAt: Date())
+        let d = Doc(title: title, kind: .pdf, tags: [DocStatusTag.todo.rawValue], pageCount: pdf.pageCount, readPage: nil, updatedAt: Date())
         do { try FileManager.default.copyItem(at: url, to: Paths.pdf(d.id)) } catch { return nil }
+        lib.docs.append(d)
+        addDocToNotebook(d.id)
+        saveNow()
+        #if os(macOS)
+        if open { DocWindows.shared.open(d.id) }
+        #else
+        if open { openDoc(d.id) }
+        #endif
+        return d.id
+    }
+
+    /// Imports an interactive webpage by URL only (no PDF or HTML copy stored on disk; preserves live DOM interactivity).
+    @discardableResult
+    func importWebURL(_ rawURL: String, title: String? = nil, cleanMode: Bool = true, open: Bool = false) -> UUID? {
+        guard let normalized = WebURLResolver.normalizedInputURL(rawURL) else { return nil }
+        let urlString = normalized.absoluteString
+        let canonical = WebURLResolver.canonicalIdentity(urlString)
+        let fragment = normalized.fragment?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let existingIdx = lib.docs.firstIndex(where: {
+            $0.isWeb && WebURLResolver.canonicalIdentity($0.source ?? "") == canonical
+        }) {
+            let existingId = lib.docs[existingIdx].id
+            lib.docs[existingIdx].source = urlString
+            if let fragment, !fragment.isEmpty {
+                var anchor = lib.docs[existingIdx].webAnchor ?? WebReadingAnchor(anchorId: fragment, intraOffset: 0, scrollFraction: 0)
+                anchor.anchorId = fragment
+                lib.docs[existingIdx].webAnchor = anchor
+            }
+            lib.docs[existingIdx].updatedAt = Date()
+            addDocToNotebook(existingId)
+            saveNow()
+            #if os(macOS)
+            if open { DocWindows.shared.open(existingId) }
+            #else
+            if open { openDoc(existingId) }
+            #endif
+            return existingId
+        }
+
+        let initialTitle = (title?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+            ?? WebURLResolver.fallbackTitle(for: urlString)
+        let initialAnchor: WebReadingAnchor? = {
+            guard let fragment, !fragment.isEmpty else { return nil }
+            return WebReadingAnchor(anchorId: fragment, intraOffset: 0, scrollFraction: 0)
+        }()
+        let d = Doc(
+            title: initialTitle,
+            kind: .web,
+            source: urlString,
+            webCleanMode: cleanMode,
+            webHiddenSelectors: [],
+            webAnchor: initialAnchor,
+            tags: [DocStatusTag.todo.rawValue],
+            pageCount: nil,
+            readPage: 0,
+            updatedAt: Date()
+        )
+        _ = Paths.docDir(d.id)
         lib.docs.append(d)
         addDocToNotebook(d.id)
         saveNow()
@@ -627,6 +937,121 @@ final class Store: ObservableObject {
         lib.docs[i].source = url
         lib.docs[i].updatedAt = Date()
         saveNow()
+    }
+
+    /// Toggles automatic peripheral content removal (`webCleanMode`) per article.
+    func setWebCleanMode(_ docId: UUID, _ enabled: Bool) {
+        guard let i = lib.docs.firstIndex(where: { $0.id == docId }) else { return }
+        guard lib.docs[i].webCleanMode != enabled else { return }
+        lib.docs[i].webCleanMode = enabled
+        lib.docs[i].updatedAt = Date()
+        saveNow()
+    }
+
+    func toggleWebCleanMode(_ docId: UUID) -> Bool {
+        guard let i = lib.docs.firstIndex(where: { $0.id == docId }) else { return true }
+        lib.docs[i].webCleanMode.toggle()
+        let next = lib.docs[i].webCleanMode
+        lib.docs[i].updatedAt = Date()
+        saveNow()
+        return next
+    }
+
+    func addWebHiddenSelector(_ docId: UUID, _ selector: String) {
+        let s = selector.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !s.isEmpty, let i = lib.docs.firstIndex(where: { $0.id == docId }) else { return }
+        if !lib.docs[i].webHiddenSelectors.contains(s) {
+            lib.docs[i].webHiddenSelectors.append(s)
+            lib.docs[i].updatedAt = Date()
+            saveNow()
+        }
+    }
+
+    func clearWebHiddenSelectors(_ docId: UUID) {
+        guard let i = lib.docs.firstIndex(where: { $0.id == docId }) else { return }
+        guard !lib.docs[i].webHiddenSelectors.isEmpty else { return }
+        lib.docs[i].webHiddenSelectors.removeAll()
+        lib.docs[i].updatedAt = Date()
+        saveNow()
+    }
+
+    /// Updates continuous viewport-independent reading progress for `.web` documents.
+    func updateWebReadingProgress(
+        docId: UUID,
+        anchor: WebReadingAnchor,
+        sectionCount: Int? = nil,
+        discoveredTitle: String? = nil
+    ) {
+        guard let i = lib.docs.firstIndex(where: { $0.id == docId }) else { return }
+        let now = Date()
+        var changed = false
+
+        if let discoveredTitle = discoveredTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !discoveredTitle.isEmpty {
+            let fallback = WebURLResolver.fallbackTitle(for: lib.docs[i].source ?? "")
+            if lib.docs[i].title == fallback || lib.docs[i].title == lib.docs[i].source {
+                lib.docs[i].title = discoveredTitle
+                #if os(macOS)
+                DocWindows.shared.entries[docId]?.window.title = discoveredTitle
+                #endif
+                changed = true
+            }
+        }
+
+        if let sectionCount, sectionCount > 0, lib.docs[i].pageCount != sectionCount {
+            lib.docs[i].pageCount = sectionCount
+            changed = true
+        }
+
+        let clampedFraction = min(1.0, max(0.0, anchor.scrollFraction))
+        var normalizedAnchor = anchor
+        normalizedAnchor.scrollFraction = clampedFraction
+        let secIndex = max(0, anchor.sectionIndex ?? lib.docs[i].readPage ?? 0)
+
+        let prevPermille = lib.docs[i].webAnchor?.progressPermille ?? -1
+        let newPermille = normalizedAnchor.progressPermille
+        let anchorMovedMeaningfully = abs(newPermille - prevPermille) >= 5
+            || lib.docs[i].webAnchor?.anchorId != normalizedAnchor.anchorId
+            || lib.docs[i].readPage != secIndex
+
+        if anchorMovedMeaningfully {
+            lib.docs[i].webAnchor = normalizedAnchor
+            lib.docs[i].readPage = secIndex
+            lib.docs[i].readUpdatedAt = now
+            lib.docs[i].lastReadDevice = DeviceIdentity.currentDeviceName
+            lib.docs[i].lastReadDeviceId = DeviceIdentity.currentDeviceId
+            lib.docs[i].recordDeviceSnapshot(
+                page: secIndex,
+                webAnchor: normalizedAnchor,
+                at: now
+            )
+            UserDefaults.standard.set(secIndex, forKey: "page-" + docId.uuidString)
+            changed = true
+        } else {
+            let dayKey = DeviceIdentity.todayDateKey(now)
+            let newPct = normalizedAnchor.progressPercent
+            if (lib.docs[i].dailyReadingLog[dayKey] ?? -1) < newPct {
+                lib.docs[i].dailyReadingLog[dayKey] = newPct
+                changed = true
+            }
+        }
+
+        if lib.docs[i].statusTag == .todo && (clampedFraction >= 0.03 || secIndex > 0) {
+            var custom = lib.docs[i].customTags
+            custom.insert(DocStatusTag.doing.rawValue, at: 0)
+            lib.docs[i].tags = custom
+            changed = true
+        } else if lib.docs[i].statusTag == .doing && clampedFraction >= 0.96 {
+            var custom = lib.docs[i].customTags
+            custom.insert(DocStatusTag.done.rawValue, at: 0)
+            lib.docs[i].tags = custom
+            changed = true
+        }
+
+        if changed {
+            lib.docs[i].updatedAt = now
+            save()
+        }
     }
 
     // MARK: - Document Tags & Reading Progress
@@ -754,6 +1179,7 @@ final class Store: ObservableObject {
             page: lib.docs[i].readPage ?? clampedPage,
             narrationPage: clampedPage,
             narrationSeg: clampedSeg,
+            webAnchor: lib.docs[i].webAnchor,
             at: date
         )
         lib.docs[i].updatedAt = date
@@ -776,7 +1202,8 @@ final class Store: ObservableObject {
         let chosenPage = useRemote ? conflict.remotePage : conflict.localPage
         let chosenNarrPage = useRemote ? conflict.remoteNarrationPage : conflict.localNarrationPage
         let chosenNarrSeg = useRemote ? conflict.remoteNarrationSeg : conflict.localNarrationSeg
-        restoreProgressSnapshot(docId, page: chosenPage, narrationPage: chosenNarrPage, narrationSeg: chosenNarrSeg)
+        let chosenAnchor = useRemote ? conflict.remoteWebAnchor : conflict.localWebAnchor
+        restoreProgressSnapshot(docId, page: chosenPage, narrationPage: chosenNarrPage, narrationSeg: chosenNarrSeg, webAnchor: chosenAnchor)
     }
 
     func dismissProgressConflict(_ docId: UUID) {
@@ -787,12 +1214,15 @@ final class Store: ObservableObject {
         saveNow()
     }
 
-    func restoreProgressSnapshot(_ docId: UUID, page: Int, narrationPage: Int? = nil, narrationSeg: Int? = nil) {
+    func restoreProgressSnapshot(_ docId: UUID, page: Int, narrationPage: Int? = nil, narrationSeg: Int? = nil, webAnchor: WebReadingAnchor? = nil) {
         guard let i = lib.docs.firstIndex(where: { $0.id == docId }) else { return }
         let total = max(1, lib.docs[i].pageCount ?? 9999)
         let clampedPage = min(max(0, page), total - 1)
         let now = Date()
         lib.docs[i].readPage = clampedPage
+        if let webAnchor {
+            lib.docs[i].webAnchor = webAnchor
+        }
         lib.docs[i].readUpdatedAt = now
         lib.docs[i].lastReadDevice = DeviceIdentity.currentDeviceName
         lib.docs[i].lastReadDeviceId = DeviceIdentity.currentDeviceId
@@ -807,6 +1237,7 @@ final class Store: ObservableObject {
             page: clampedPage,
             narrationPage: lib.docs[i].narrationPage,
             narrationSeg: lib.docs[i].narrationSeg,
+            webAnchor: lib.docs[i].webAnchor,
             at: now
         )
         lib.docs[i].updatedAt = now
@@ -815,11 +1246,19 @@ final class Store: ObservableObject {
 
         #if os(macOS)
         if let entry = DocWindows.shared.entries[docId] {
-            entry.reader.goToPage(clampedPage)
+            if let webAnchor {
+                entry.reader.applyRemoteSyncedWebAnchor(webAnchor)
+            } else {
+                entry.reader.goToPage(clampedPage)
+            }
         }
         #elseif os(iOS)
         if ReaderController.shared.docId == docId {
-            ReaderController.shared.goToPage(clampedPage)
+            if let webAnchor {
+                ReaderController.shared.applyRemoteSyncedWebAnchor(webAnchor)
+            } else {
+                ReaderController.shared.goToPage(clampedPage)
+            }
         }
         #endif
     }

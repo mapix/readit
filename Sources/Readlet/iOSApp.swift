@@ -948,7 +948,7 @@ struct iOSDocCardView: View {
                             .foregroundStyle(.white)
                         }
                         .buttonStyle(.plain)
-                    } else if !Paths.hasLocalPDF(doc.id) {
+                    } else if !doc.isWeb && !Paths.hasLocalPDF(doc.id) {
                         HStack(spacing: 3) {
                             Image(systemName: "icloud.and.arrow.down")
                                 .font(.system(size: 9, weight: .bold))
@@ -1024,7 +1024,12 @@ struct iOSDocCardView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    if let total = doc.pageCount {
+                    if doc.isWeb {
+                        Text(doc.webAnchor?.sectionTitle ?? L("互动网页"))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    } else if let total = doc.pageCount {
                         let cur = min(total, (doc.resolvedReadPage ?? 0) + 1)
                         Text("p.\(cur)/\(total)")
                             .font(.caption2.monospacedDigit())
@@ -1052,6 +1057,17 @@ struct iOSDocCardView: View {
                 togglePodcastForDoc()
             } label: {
                 Label(isNarratingThisDoc ? (narrator.state == .playing ? L("暂停解读") : L("继续解读")) : L("AI 语音解读"), systemImage: isNarratingThisDoc ? "waveform" : "headphones")
+            }
+            if doc.isWeb {
+                Button {
+                    let next = store.toggleWebCleanMode(doc.id)
+                    if ReaderController.shared.docId == doc.id {
+                        ReaderController.shared.webCleanMode = next
+                        ReaderController.shared.webController?.setCleanMode(next)
+                    }
+                } label: {
+                    Label(doc.webCleanMode ? L("关闭自动移除周边非正文") : L("开启自动移除周边非正文"), systemImage: "wand.and.stars")
+                }
             }
             if let onOpenProgressHistory {
                 Button {
@@ -1128,12 +1144,30 @@ struct iOSDocThumb: View {
     @State private var image: UIImage?
 
     var body: some View {
+        let doc = Store.shared.doc(docId)
         ZStack {
             Color.white
             if let image {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
+            } else if doc?.isWeb == true {
+                ZStack {
+                    LinearGradient(
+                        colors: [Color(red: 0.11, green: 0.16, blue: 0.28), Color(red: 0.18, green: 0.29, blue: 0.48)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    VStack(spacing: 8) {
+                        Image(systemName: "globe.americas.fill")
+                            .font(.system(size: 32))
+                            .foregroundStyle(.white.opacity(0.88))
+                        Text(doc?.webURL.flatMap { URL(string: $0)?.host } ?? "Interactive Web")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.75))
+                            .lineLimit(1)
+                    }
+                }
             } else {
                 Image(systemName: "doc.richtext")
                     .font(.system(size: 32))
@@ -1146,6 +1180,7 @@ struct iOSDocThumb: View {
                 image = loaded
                 return
             }
+            guard Store.shared.doc(docId)?.isWeb != true else { return }
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             if image == nil, let retryLoaded = await Self.loadOrRender(docId: docId) {
                 image = retryLoaded
@@ -1158,6 +1193,7 @@ struct iOSDocThumb: View {
         if let d = try? Data(contentsOf: thumbFile), let ui = UIImage(data: d) {
             return ui
         }
+        if Store.shared.doc(docId)?.isWeb == true { return nil }
         let pdfURL = Paths.pdf(docId)
         return await Task.detached(priority: .utility) { () -> UIImage? in
             guard let doc = PDFDocument(url: pdfURL), let p0 = doc.safePage(0) else { return nil }
@@ -1446,37 +1482,7 @@ struct iOSDocumentStudyView: View {
                             }
                         }
                     }
-                    if let ses = session {
-                        Section(L("PDF 页面编辑")) {
-                            Button {
-                                let box = ses.original.safePage(rc.currentPageIndex)?.bounds(for: .cropBox) ?? CGRect(x: 0, y: 0, width: 600, height: 800)
-                                _ = PDFEditor.truncateFromHereToEnd(session: ses, pageIndex: rc.currentPageIndex, origY: box.midY)
-                            } label: {
-                                Label(L("从本页中部截断后续内容"), systemImage: "scissors")
-                            }
-                            if ses.pageCount > 1 {
-                                Button(role: .destructive) {
-                                    _ = PDFEditor.deletePage(session: ses, pageIndex: rc.currentPageIndex)
-                                } label: {
-                                    Label(L("删除当前页"), systemImage: "trash")
-                                }
-                                if rc.currentPageIndex + 1 < ses.pageCount {
-                                    Button(role: .destructive) {
-                                        _ = PDFEditor.deletePagesAfter(session: ses, pageIndex: rc.currentPageIndex)
-                                    } label: {
-                                        Label(L("删除本页之后的全部页面"), systemImage: "arrow.down.to.line")
-                                    }
-                                }
-                            }
-                            if PDFEditor.hasBackup(docId) {
-                                Button {
-                                    _ = PDFEditor.restoreOriginal(session: ses)
-                                } label: {
-                                    Label(L("恢复未裁剪的原版 PDF"), systemImage: "arrow.uturn.backward")
-                                }
-                            }
-                        }
-                    }
+                    webOrPDFEditMenuSection
                     Section(L("学习工具")) {
                         Button { showOutlineSheet = true } label: { Label(L("目录与摘录卡片"), systemImage: "list.bullet.indent") }
                         Button { showFlashcardsSheet = true } label: { Label(L("AI 学习闪卡"), systemImage: "rectangle.on.rectangle.angled") }
@@ -1612,6 +1618,74 @@ struct iOSDocumentStudyView: View {
         }
     }
 
+    @ViewBuilder
+    private var webOrPDFEditMenuSection: some View {
+        if let ses = session {
+            if rc.isWeb {
+                Section(L("互动网页与正文净化")) {
+                    Button {
+                        rc.toggleWebCleanMode()
+                    } label: {
+                        Label(
+                            rc.webCleanMode ? L("已开启：自动移除周边非正文") : L("开启自动移除周边非正文"),
+                            systemImage: rc.webCleanMode ? "checkmark.circle.fill" : "wand.and.stars"
+                        )
+                    }
+                    Button {
+                        rc.eraseMode.toggle()
+                    } label: {
+                        Label(
+                            rc.eraseMode ? L("退出点选隐藏模式") : L("点选隐藏页面干扰元素…"),
+                            systemImage: "hand.point.up.left"
+                        )
+                    }
+                    if let wc = rc.webController, !wc.hiddenSelectors.isEmpty {
+                        Button {
+                            wc.clearCustomHiddenSelectors()
+                        } label: {
+                            Label(LF("恢复手动隐藏的元素 (%d)", wc.hiddenSelectors.count), systemImage: "arrow.uturn.backward")
+                        }
+                    }
+                    Button {
+                        rc.webController?.reload()
+                    } label: {
+                        Label(L("刷新动态网页"), systemImage: "arrow.clockwise")
+                    }
+                }
+            } else {
+                Section(L("PDF 页面编辑")) {
+                    Button {
+                        let box = ses.original.safePage(rc.currentPageIndex)?.bounds(for: .cropBox) ?? CGRect(x: 0, y: 0, width: 600, height: 800)
+                        _ = PDFEditor.truncateFromHereToEnd(session: ses, pageIndex: rc.currentPageIndex, origY: box.midY)
+                    } label: {
+                        Label(L("从本页中部截断后续内容"), systemImage: "scissors")
+                    }
+                    if ses.pageCount > 1 {
+                        Button(role: .destructive) {
+                            _ = PDFEditor.deletePage(session: ses, pageIndex: rc.currentPageIndex)
+                        } label: {
+                            Label(L("删除当前页"), systemImage: "trash")
+                        }
+                        if rc.currentPageIndex + 1 < ses.pageCount {
+                            Button(role: .destructive) {
+                                _ = PDFEditor.deletePagesAfter(session: ses, pageIndex: rc.currentPageIndex)
+                            } label: {
+                                Label(L("删除本页之后的全部页面"), systemImage: "arrow.down.to.line")
+                            }
+                        }
+                    }
+                    if PDFEditor.hasBackup(docId) {
+                        Button {
+                            _ = PDFEditor.restoreOriginal(session: ses)
+                        } label: {
+                            Label(L("恢复未裁剪的原版 PDF"), systemImage: "arrow.uturn.backward")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private func toggleNarration() {
         guard let ses = session else { return }
         let curPage = rc.syncCurrentPageFromView()
@@ -1640,9 +1714,17 @@ struct iOSDocumentStudyView: View {
                 showProgressHistorySheet = true
             } label: {
                 HStack(spacing: 4) {
-                    Text("p.\(rc.currentPageIndex + 1) / \(max(1, rc.pageCount))")
-                        .font(.caption.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(MN.ink)
+                    if rc.isWeb {
+                        let pct = Int((rc.webScrollFraction * 100).rounded())
+                        Text(rc.webSectionTitle.isEmpty ? "\(pct)%" : "\(pct)% · \(rc.webSectionTitle)")
+                            .font(.caption.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(MN.ink)
+                            .lineLimit(1)
+                    } else {
+                        Text("p.\(rc.currentPageIndex + 1) / \(max(1, rc.pageCount))")
+                            .font(.caption.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(MN.ink)
+                    }
                     if doc?.pendingConflict != nil {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.caption2)
@@ -2008,15 +2090,19 @@ struct iOSThemedPDFView: View {
 
     var body: some View {
         ZStack {
-            iOSPDFContainerView(store: store, rc: rc, session: session, theme: theme)
-            if theme == .sepia {
-                Color(red: 0.97, green: 0.91, blue: 0.80)
-                    .blendMode(.multiply)
-                    .allowsHitTesting(false)
-            } else if theme == .dark {
-                Color(white: 0.92)
-                    .blendMode(.difference)
-                    .allowsHitTesting(false)
+            if rc.isWeb, let wc = rc.webController {
+                LiveWebReaderRepresentable(webController: wc)
+            } else {
+                iOSPDFContainerView(store: store, rc: rc, session: session, theme: theme)
+                if theme == .sepia {
+                    Color(red: 0.97, green: 0.91, blue: 0.80)
+                        .blendMode(.multiply)
+                        .allowsHitTesting(false)
+                } else if theme == .dark {
+                    Color(white: 0.92)
+                        .blendMode(.difference)
+                        .allowsHitTesting(false)
+                }
             }
         }
     }
@@ -4220,13 +4306,15 @@ struct iOSStorageManagementSection: View {
     }
 }
 
-// MARK: - iOS Web URL to PDF Importer Sheet
+// MARK: - iOS Web URL Importer Sheet (Interactive Live Web + Static PDF)
 
 struct iOSWebImportSheet: View {
     let onImported: (UUID?) -> Void
     @Environment(\.dismiss) private var dismiss
 
     @State private var urlString: String = PlatformClipboard.string()?.hasPrefix("http") == true ? (PlatformClipboard.string() ?? "") : "https://"
+    @State private var interactiveMode = true
+    @State private var autoClean = true
     @State private var isImporting = false
     @State private var errorMsg = ""
     @State private var webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 820, height: 1100))
@@ -4240,6 +4328,19 @@ struct iOSWebImportSheet: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                 }
+                Section(L("导入模式")) {
+                    Picker(L("模式"), selection: $interactiveMode) {
+                        Text(L("交互式网页（保留动态图表）")).tag(true)
+                        Text(L("转为静态 PDF")).tag(false)
+                    }
+                    .pickerStyle(.segmented)
+                    if interactiveMode {
+                        Toggle(L("默认自动移除周边非正文内容"), isOn: $autoClean)
+                        Text(L("只保存网页地址与批注、脑图、闪卡、朗读及无分页连续进度；完整保留网页内可交互图表，并自动隐藏周边导航栏与侧边栏（可按文章随时开关）。"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 if !errorMsg.isEmpty {
                     Section {
                         Text(errorMsg).foregroundStyle(.red).font(.caption)
@@ -4247,11 +4348,15 @@ struct iOSWebImportSheet: View {
                 }
                 Section {
                     Button {
-                        Task { await convertWebToPDF() }
+                        if interactiveMode {
+                            importInteractiveWeb()
+                        } else {
+                            Task { await convertWebToPDF() }
+                        }
                     } label: {
                         HStack {
                             if isImporting { ProgressView().controlSize(.small) }
-                            Text(isImporting ? L("正在加载网页并生成 PDF…") : L("导入为 PDF 文档"))
+                            Text(interactiveMode ? L("导入交互式网页") : (isImporting ? L("正在加载网页并生成 PDF…") : L("导入为静态 PDF 文档")))
                         }
                     }
                     .disabled(isImporting || urlString.trimmingCharacters(in: .whitespacesAndNewlines).count < 8)
@@ -4264,6 +4369,20 @@ struct iOSWebImportSheet: View {
                     Button(L("取消")) { dismiss() }
                 }
             }
+        }
+    }
+
+    private func importInteractiveWeb() {
+        let clean = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard WebURLResolver.normalize(clean) != nil else {
+            errorMsg = L("请输入有效的网址 URL")
+            return
+        }
+        if let docId = Store.shared.importWebURL(clean, cleanMode: autoClean, open: false) {
+            dismiss()
+            onImported(docId)
+        } else {
+            errorMsg = L("导入网页失败")
         }
     }
 

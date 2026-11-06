@@ -17,15 +17,20 @@ enum Exports {
             if let src = doc.source { out += "Source: <\(src)>\n\n" }
             for c in cards {
                 let tag = "#readlet/" + (highlightNames[c.color % highlightNames.count])
-                if c.isImage { out += "- " + L("［图片摘录］") + " (p.\(c.page + 1)) \(tag)\n" } else {
+                let loc = c.locationLabel(isWebDoc: doc.isWeb)
+                if c.isImage { out += "- " + L("［图片摘录］") + " (\(loc)) \(tag)\n" } else {
                     let quote = c.text.split(separator: "\n").map { "> " + $0 }.joined(separator: "\n")
                     out += quote + "\n"
                     if let t = c.translation, !t.isEmpty { out += ">\n" + t.split(separator: "\n").map { "> *" + $0 + "*" }.joined(separator: "\n") + "\n" }
-                    out += "\n— p.\(c.page + 1) \(tag)\n"
+                    out += "\n— \(loc) \(tag)\n"
                 }
                 for cm in c.comments where !cm.isEmpty { out += "- 💬 \(cm)\n" }
                 let links = s.linkedCards(c.id)
-                for l in links { out += "- 🔗 \(s.doc(l.docId)?.title ?? "") p.\(l.page + 1): \(l.text.prefix(60))\n" }
+                for l in links {
+                    let lDoc = s.doc(l.docId)
+                    let lLoc = l.locationLabel(isWebDoc: lDoc?.isWeb ?? false)
+                    out += "- 🔗 \(lDoc?.title ?? "") \(lLoc): \(l.text.prefix(60))\n"
+                }
                 out += "\n"
             }
         }
@@ -59,7 +64,8 @@ enum Exports {
                 for c in s.lib.cards where c.docId == docId && !c.isImage && !c.text.isEmpty {
                     var back = c.translation ?? ""
                     if !c.commentText.isEmpty { back += (back.isEmpty ? "" : "<br><br>") + "💬 " + c.commentText }
-                    back += "<br><small>— \(doc.title) p.\(c.page + 1)</small>"
+                    let loc = c.locationLabel(isWebDoc: doc.isWeb)
+                    back += "<br><small>— \(doc.title) \(loc)</small>"
                     rows.append([cell(c.text), cell(back), dtag + " excerpt"].joined(separator: "\t"))
                 }
             }

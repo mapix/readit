@@ -37,6 +37,7 @@ struct ReaderOverlay: View {
                 }
             }
         }
+        .allowsHitTesting(rc.popup != .none)
     }
 }
 
@@ -99,7 +100,9 @@ struct SelectionBar: View {
                 }
                 BarButton(icon: "character.book.closed", label: L("翻译")) {
                     showTr.toggle()
-                    if showTr, let s = rc.view.currentSelection?.string { rc.translateSelection(s.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                    let raw = rc.isWeb ? rc.selectionString : (rc.view.currentSelection?.string ?? rc.selectionString)
+                    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if showTr, !trimmed.isEmpty { rc.translateSelection(trimmed) }
                 }
             }
             .padding(.horizontal, 10).padding(.vertical, 7)

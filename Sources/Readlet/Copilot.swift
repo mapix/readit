@@ -49,8 +49,10 @@ final class CopilotStore: ObservableObject {
     }
 
     func record(docId: UUID, question: String, answer: String, page: Int) {
+        let isWeb = Store.shared.doc(docId)?.isWeb ?? false
+        let locLabel = isWeb ? (Store.shared.session(docId)?.sectionTitle(page) ?? LF("第 %d 节", page + 1)) : LF("第 %d 页", page + 1)
         update(docId) { t in
-            t.messages.append(ChatMessage(role: .user, text: question, badge: "语音提问 · 第 \(page + 1) 页", page: page))
+            t.messages.append(ChatMessage(role: .user, text: question, badge: "语音提问 · \(locLabel)", page: page))
             t.messages.append(ChatMessage(role: .assistant, text: answer, page: page))
         }
     }
@@ -68,14 +70,26 @@ final class CopilotStore: ObservableObject {
 
     // MARK: context building
 
-    private func pageText(_ doc: PDFDocument, _ i: Int) -> String {
-        (doc.safePage(i)?.string ?? "").replacingOccurrences(of: "\n", with: " ")
+    private func pageText(docId: UUID, _ doc: PDFDocument, _ i: Int) -> String {
+        if let ses = Store.shared.session(docId), ses.isWeb {
+            return ses.sectionText(i).replacingOccurrences(of: "\n", with: " ")
+        }
+        return (doc.safePage(i)?.string ?? "").replacingOccurrences(of: "\n", with: " ")
     }
 
-    private func documentText(_ doc: PDFDocument, limit: Int = 150_000) -> String {
+    private func documentText(docId: UUID, _ doc: PDFDocument, limit: Int = 150_000) -> String {
+        if let ses = Store.shared.session(docId), ses.isWeb {
+            var out = ""
+            for (idx, sec) in ses.webSections.enumerated() {
+                let t = sec.text.replacingOccurrences(of: "\n", with: " ")
+                if out.count + t.count > limit { out += "\n[…后续章节因长度省略…]"; break }
+                out += "\n\n=== 第 \(idx + 1) 节：\(sec.title) ===\n" + t
+            }
+            return out
+        }
         var out = ""
         for i in 0..<doc.pageCount {
-            let t = pageText(doc, i)
+            let t = pageText(docId: docId, doc, i)
             if out.count + t.count > limit { out += "\n[…后续页面因长度省略…]"; break }
             out += "\n\n=== 第 \(i + 1) 页 ===\n" + t
         }
@@ -87,36 +101,40 @@ final class CopilotStore: ObservableObject {
     // MARK: actions
 
     func summarizePage(docId: UUID, doc: PDFDocument, title: String, page: Int) {
-        let text = pageText(doc, page)
+        let isWeb = Store.shared.doc(docId)?.isWeb ?? false
+        let text = pageText(docId: docId, doc, page)
         guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        let secTitle = isWeb ? (Store.shared.session(docId)?.sectionTitle(page) ?? LF("第 %d 节", page + 1)) : LF("第 %d 页", page + 1)
         let sys = "你是一名学术阅读助手。用\(lang)回答，Markdown 格式，简洁、信息密度高。"
         let prompt = """
-        请总结《\(title)》第 \(page + 1) 页的内容：
-        - 先用一句话概括本页核心；
+        请总结《\(title)》\(secTitle)的内容：
+        - 先用一句话概括核心；
         - 再列出 3–6 个要点（关键概念、方法、数据、结论），术语保留英文原文并给出\(lang)解释；
-        - 如有公式或图表，说明其含义。
+        - 如有公式或可交互图表，说明其含义。
 
-        本页原文：
+        原文：
         \(text)
         """
-        ask(docId: docId, display: "总结第 \(page + 1) 页", badge: "本页摘要", quote: nil, page: page, system: sys, prompt: prompt, history: false) { [weak self] result in
+        ask(docId: docId, display: "总结\(secTitle)", badge: isWeb ? "本节摘要" : "本页摘要", quote: nil, page: page, system: sys, prompt: prompt, history: false) { [weak self] result in
             self?.update(docId) { $0.pageSummaries[page] = result }
         }
     }
 
     func summarizeDocument(docId: UUID, doc: PDFDocument, title: String) {
+        let isWeb = Store.shared.doc(docId)?.isWeb ?? false
+        let countDesc = isWeb ? "共 \(max(1, Store.shared.session(docId)?.pageCount ?? 1)) 节" : "共 \(doc.pageCount) 页"
         let sys = "你是一名学术阅读助手。用\(lang)回答，Markdown 格式，结构清晰。"
         let prompt = """
-        请为文档《\(title)》（共 \(doc.pageCount) 页）写一份导读：
+        请为文档《\(title)》（\(countDesc)）写一份导读：
         ## 一句话总结
         ## 研究问题与动机
         ## 核心方法 / 主要内容（分点）
         ## 关键结果与数据
         ## 贡献与局限
-        ## 建议重点阅读的章节（标注页码）
+        ## 建议重点阅读的章节
 
         全文：
-        \(documentText(doc))
+        \(documentText(docId: docId, doc))
         """
         busyDocSummary = true
         ask(docId: docId, display: "总结全文", badge: "全文导读", quote: nil, page: nil, system: sys, prompt: prompt, history: false) { [weak self] result in
@@ -126,28 +144,32 @@ final class CopilotStore: ObservableObject {
     }
 
     func askAboutSelection(docId: UUID, doc: PDFDocument, title: String, page: Int, selection: String, question: String) {
+        let isWeb = Store.shared.doc(docId)?.isWeb ?? false
+        let locLabel = isWeb ? (Store.shared.session(docId)?.sectionTitle(page) ?? LF("第 %d 节", page + 1)) : LF("第 %d 页", page + 1)
         let q = question.isEmpty ? "请解释这段内容：含义、背景、关键术语，以及它在上下文中的作用。" : question
         let sys = "你是一名学术阅读助手。用\(lang)回答，Markdown 格式。结合上下文准确回答，不确定时明确说明。"
         let prompt = """
-        文档《\(title)》第 \(page + 1) 页的上下文：
-        \(pageText(doc, page))
+        文档《\(title)》\(locLabel)的上下文：
+        \(pageText(docId: docId, doc, page))
 
         用户选中的内容：
         「\(selection)」
 
         问题：\(q)
         """
-        ask(docId: docId, display: question.isEmpty ? "解释选中内容" : question, badge: "选中提问 · 第 \(page + 1) 页", quote: selection, page: page, system: sys, prompt: prompt, history: true)
+        ask(docId: docId, display: question.isEmpty ? "解释选中内容" : question, badge: "选中提问 · \(locLabel)", quote: selection, page: page, system: sys, prompt: prompt, history: true)
     }
 
     func askFree(docId: UUID, doc: PDFDocument, title: String, page: Int, question: String) {
+        let isWeb = Store.shared.doc(docId)?.isWeb ?? false
+        let locLabel = isWeb ? (Store.shared.session(docId)?.sectionTitle(page) ?? LF("第 %d 节", page + 1)) : LF("第 %d 页", page + 1)
         let sys = """
         你是一名学术阅读助手，正在帮助用户阅读文档《\(title)》。用\(lang)回答，Markdown 格式。
-        回答时引用页码（如「见第 5 页」）。只依据文档内容回答；文档没有的信息要说明。
-        用户当前在第 \(page + 1) 页。
+        只依据文档内容回答；文档没有的信息要说明。
+        用户当前在：\(locLabel)。
 
         文档全文：
-        \(documentText(doc, limit: 120_000))
+        \(documentText(docId: docId, doc, limit: 120_000))
         """
         ask(docId: docId, display: question, badge: nil, quote: nil, page: page, system: sys, prompt: question, history: true)
     }
@@ -311,9 +333,14 @@ struct CopilotPanel: View {
     var quickActions: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                Chip(icon: "doc.text.magnifyingglass", text: LF("总结本页 (p.%d)", rc.currentPageIndex + 1)) { run { cp.summarizePage(docId: $0, doc: $1, title: $2, page: rc.currentPageIndex) } }
+                Chip(icon: "doc.text.magnifyingglass", text: rc.isWeb ? L("总结当前章节") : LF("总结本页 (p.%d)", rc.currentPageIndex + 1)) { run { cp.summarizePage(docId: $0, doc: $1, title: $2, page: rc.currentPageIndex) } }
                 Chip(icon: "books.vertical", text: cp.busyDocSummary ? L("全文导读生成中…") : L("总结全文")) { run { cp.summarizeDocument(docId: $0, doc: $1, title: $2) } }
-                Chip(icon: "lightbulb", text: L("本页关键概念")) { run { d, doc, t in cp.askFree(docId: d, doc: doc, title: t, page: rc.currentPageIndex, question: "列出第 \(rc.currentPageIndex + 1) 页出现的关键概念与术语，并逐一用通俗语言解释。") } }
+                Chip(icon: "lightbulb", text: rc.isWeb ? L("本节关键概念") : L("本页关键概念")) {
+                    run { d, doc, t in
+                        let loc = rc.isWeb ? (store.session(d)?.sectionTitle(rc.currentPageIndex) ?? "当前章节") : "第 \(rc.currentPageIndex + 1) 页"
+                        cp.askFree(docId: d, doc: doc, title: t, page: rc.currentPageIndex, question: "列出\(loc)出现的关键概念与术语，并逐一用通俗语言解释。")
+                    }
+                }
                 Chip(icon: "rectangle.on.rectangle.angled", text: L("学习闪卡")) { NotificationCenter.default.post(name: .openFlashcards, object: rc.docId) }
             }
             .padding(.horizontal, 12).padding(.vertical, 8)

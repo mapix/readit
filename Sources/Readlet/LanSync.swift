@@ -244,7 +244,7 @@ final class LanSync: @unchecked Sendable {
             }
             let docIdStr = comps[0]
             let subPath = comps.dropFirst().joined(separator: "/")
-            let allowedSingle = ["original.pdf", "thumb.png", "flashcards.json", "trans.json", "chat.json"]
+            let allowedSingle = ["original.pdf", "thumb.png", "flashcards.json", "trans.json", "chat.json", "copilot.json", "web-sections.json"]
             let isAllowedNarrationJSON = comps.count == 3 && comps[1] == "narration" && comps[2].lowercased().hasSuffix(".json")
             guard allowedSingle.contains(subPath) || isAllowedNarrationJSON else {
                 sendResponse(conn: conn, status: "403 Forbidden", body: Data())
@@ -304,7 +304,7 @@ final class LanSync: @unchecked Sendable {
                 let hasPDF = pdfSize > 100
                 let hasThumb = fm.fileExists(atPath: d.appendingPathComponent("thumb.png").path)
                 var jsonFiles: [String] = []
-                for jf in ["flashcards.json", "trans.json", "chat.json"] {
+                for jf in ["flashcards.json", "trans.json", "chat.json", "copilot.json", "web-sections.json"] {
                     if fm.fileExists(atPath: d.appendingPathComponent(jf).path) {
                         jsonFiles.append(jf)
                     }
@@ -530,24 +530,26 @@ final class LanSync: @unchecked Sendable {
                 let localHasPDF = (try? fm.attributesOfItem(atPath: localPDF.path)[.size] as? Int ?? 0) ?? 0 > 100
                 let peerDoc = manifest.docs[docIdStr]
 
-                // Pull missing PDF from peer
-                if !localHasPDF, peerDoc?.hasPDF == true {
-                    if let pdfData = await request(endpoint: ep, path: "/docs/\(docIdStr)/original.pdf", timeout: 45.0),
-                       pdfData.count > 100 {
-                        let tmp = localDocDir.appendingPathComponent(".lan-dl-\(UUID().uuidString).pdf")
-                        try? pdfData.write(to: tmp, options: .atomic)
-                        if PDFDocument(url: tmp) != nil {
-                            if fm.fileExists(atPath: localPDF.path) { try? fm.removeItem(at: localPDF) }
-                            try? fm.moveItem(at: tmp, to: localPDF)
-                            anyLocalChange = true
-                        } else {
-                            try? fm.removeItem(at: tmp)
+                // Pull missing PDF from peer (only for PDF docs)
+                if !doc.isWeb {
+                    if !localHasPDF, peerDoc?.hasPDF == true {
+                        if let pdfData = await request(endpoint: ep, path: "/docs/\(docIdStr)/original.pdf", timeout: 45.0),
+                           pdfData.count > 100 {
+                            let tmp = localDocDir.appendingPathComponent(".lan-dl-\(UUID().uuidString).pdf")
+                            try? pdfData.write(to: tmp, options: .atomic)
+                            if PDFDocument(url: tmp) != nil {
+                                if fm.fileExists(atPath: localPDF.path) { try? fm.removeItem(at: localPDF) }
+                                try? fm.moveItem(at: tmp, to: localPDF)
+                                anyLocalChange = true
+                            } else {
+                                try? fm.removeItem(at: tmp)
+                            }
                         }
-                    }
-                } else if localHasPDF, peerDoc?.hasPDF != true {
-                    // Push our local PDF to peer if peer is missing it
-                    if let pdfData = try? Data(contentsOf: localPDF), pdfData.count > 100 {
-                        _ = await request(endpoint: ep, method: "PUT", path: "/docs/\(docIdStr)/original.pdf", body: pdfData, timeout: 45.0)
+                    } else if localHasPDF, peerDoc?.hasPDF != true {
+                        // Push our local PDF to peer if peer is missing it
+                        if let pdfData = try? Data(contentsOf: localPDF), pdfData.count > 100 {
+                            _ = await request(endpoint: ep, method: "PUT", path: "/docs/\(docIdStr)/original.pdf", body: pdfData, timeout: 45.0)
+                        }
                     }
                 }
 

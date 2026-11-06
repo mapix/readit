@@ -16,10 +16,11 @@ final class CardAnnotation: PDFAnnotation {
     var signature = ""
 }
 
-/// Holds the original document and the progressively-built bilingual document for one Doc.
+/// Holds the original document and the progressively-built bilingual document for one Doc (or live web sections & translations for `.web` documents).
 @MainActor
 final class DocSession: ObservableObject {
     let doc: Doc
+    var isWeb: Bool { doc.isWeb }
     private(set) var original: PDFDocument
     private(set) var bilingual: PDFDocument
     private var bilingualPageData: [Int: Data] = [:]
@@ -30,6 +31,8 @@ final class DocSession: ObservableObject {
     @Published var progressText = ""
     @Published var doneCount = 0
     @Published var pageProgress: [Int: (Int, Int)] = [:]   // page -> (translated paragraphs, total)
+    @Published var webSections: [WebSection] = []
+    private var webTranslationMap: [String: String] = [:]
     var isComplete: Bool { translatedPages.count >= pageCount }
     private var paraCache: [Int: [Para]] = [:]
     /// per bilingual page: inserted translation blocks [(cut, height)] in top-down original coordinates
@@ -39,9 +42,41 @@ final class DocSession: ObservableObject {
     private let maxActive = 6
     private var started = false
 
-    var pageCount: Int { original.pageCount }
+    var pageCount: Int {
+        if isWeb {
+            if !webSections.isEmpty { return webSections.count }
+            return max(1, Store.shared.doc(doc.id)?.pageCount ?? doc.pageCount ?? 1)
+        }
+        return original.pageCount
+    }
+
+    private var webSectionsFileURL: URL {
+        Paths.docDir(doc.id).appendingPathComponent("web-sections.json")
+    }
+
+    private var webTranslationsFileURL: URL {
+        Paths.docDir(doc.id).appendingPathComponent("web-translations-\(Settings.targetLang.hashValueStable).json")
+    }
 
     init?(doc: Doc) {
+        if doc.isWeb {
+            self.doc = doc
+            let emptyPDF = TintedDocument()
+            self.original = emptyPDF
+            self.bilingual = emptyPDF
+            let secsFile = Paths.docDir(doc.id).appendingPathComponent("web-sections.json")
+            if let d = try? Data(contentsOf: secsFile),
+               let secs = try? JSONDecoder().decode([WebSection].self, from: d) {
+                self.webSections = secs
+            }
+            let transFile = Paths.docDir(doc.id).appendingPathComponent("web-translations-\(Settings.targetLang.hashValueStable).json")
+            if let d = try? Data(contentsOf: transFile),
+               let map = try? JSONDecoder().decode([String: String].self, from: d) {
+                self.webTranslationMap = map
+            }
+            updateProgress()
+            return
+        }
         let pdfFile = Paths.pdf(doc.id)
         guard let o = TintedDocument(url: pdfFile) else { return nil }
         self.doc = doc
@@ -84,6 +119,76 @@ final class DocSession: ObservableObject {
         }
         applyAnnotations()
         updateProgress()
+    }
+
+    // MARK: - Live Web Document Section & Translation Helpers
+
+    func updateWebSections(_ sections: [WebSection]) {
+        guard !sections.isEmpty else { return }
+        self.webSections = sections
+        if let d = try? JSONEncoder().encode(sections) {
+            try? d.write(to: webSectionsFileURL, options: .atomic)
+        }
+        updateProgress()
+    }
+
+    func sectionText(_ index: Int) -> String {
+        if isWeb {
+            guard !webSections.isEmpty else { return "" }
+            let clamped = max(0, min(index, webSections.count - 1))
+            return webSections[clamped].text
+        }
+        return original.safePage(index)?.string ?? ""
+    }
+
+    func sectionTitle(_ index: Int) -> String? {
+        guard isWeb, !webSections.isEmpty else { return nil }
+        let clamped = max(0, min(index, webSections.count - 1))
+        return webSections[clamped].title
+    }
+
+    func cachedTranslation(for text: String) -> String? {
+        let k = Translator.key(text)
+        if let v = webTranslationMap[k], !v.isEmpty { return v }
+        return nil
+    }
+
+    func invalidateCachedTranslations(for texts: [String]) {
+        for t in texts {
+            webTranslationMap.removeValue(forKey: Translator.key(t))
+        }
+        saveWebTranslationMap()
+    }
+
+    func translateWebTexts(_ texts: [String]) async -> [String] {
+        guard !texts.isEmpty else { return [] }
+        do {
+            let res = try await Translator.translate(texts)
+            for (i, src) in texts.enumerated() where i < res.count {
+                let tr = res[i].trimmingCharacters(in: .whitespacesAndNewlines)
+                if !tr.isEmpty {
+                    webTranslationMap[Translator.key(src)] = tr
+                }
+            }
+            saveWebTranslationMap()
+            return res
+        } catch {
+            return texts.map { cachedTranslation(for: $0) ?? "" }
+        }
+    }
+
+    private func saveWebTranslationMap() {
+        if let d = try? JSONEncoder().encode(webTranslationMap) {
+            try? d.write(to: webTranslationsFileURL, options: .atomic)
+        }
+    }
+
+    var activeWebController: WebDocController? {
+        #if os(macOS)
+        return DocWindows.shared.entries[doc.id]?.reader.webController
+        #elseif os(iOS)
+        return ReaderController.shared.docId == doc.id ? ReaderController.shared.webController : nil
+        #endif
     }
 
     /// One PDF: translated pages from their rendered data, the rest from the original — all drawn into a
@@ -131,11 +236,19 @@ final class DocSession: ObservableObject {
 
     func startBilingual(from page: Int) {
         started = true
+        if isWeb {
+            activeWebController?.translateVisibleAndNearbySections(centerSection: page)
+            return
+        }
         prioritize(page)
     }
 
     func prioritize(_ page: Int) {
         started = true
+        if isWeb {
+            activeWebController?.translateVisibleAndNearbySections(centerSection: page)
+            return
+        }
         var want: [Int] = []
         let window = [page] + (1...max(1, lookahead)).map { page + $0 }.prefix(lookahead) + [page - 1]
         for p in window where p >= 0 && p < pageCount && !translatedPages.contains(p) && !running.contains(p) { want.append(p) }
@@ -150,6 +263,10 @@ final class DocSession: ObservableObject {
 
     func translateWholeDocument(from page: Int) {
         fullDocument = true
+        if isWeb {
+            activeWebController?.translateAllSections()
+            return
+        }
         let order = Array(page..<pageCount) + Array(0..<page)
         queue = order.filter { !translatedPages.contains($0) && !running.contains($0) }
         started = true
@@ -157,6 +274,10 @@ final class DocSession: ObservableObject {
     }
 
     func retranslate(_ page: Int) async {
+        if isWeb {
+            activeWebController?.retranslateSection(page)
+            return
+        }
         let texts = paragraphs(page).filter { $0.translatable }.map { $0.text }
         for t in texts { await TranslationCache.shared.set(Translator.key(t), "") }
         translatedPages.remove(page)
@@ -178,6 +299,11 @@ final class DocSession: ObservableObject {
     }
 
     private func updateProgress() {
+        if isWeb {
+            doneCount = webSections.count
+            progressText = L("双语对照已开启")
+            return
+        }
         let done = translatedPages.count
         doneCount = done
         progressText = done >= pageCount ? L("全文已翻译") : LF("已翻译 %d/%d 页", done, pageCount)
@@ -287,6 +413,10 @@ final class DocSession: ObservableObject {
 
     // MARK: annotations (highlights for cards)
     func applyAnnotations(page: Int? = nil, variant: Variant? = nil) {
+        if isWeb {
+            activeWebController?.refreshAnnotations()
+            return
+        }
         let cards = Store.shared.lib.cards.filter { $0.docId == doc.id }
         for v in [Variant.original, .bilingual] where variant == nil || variant == v {
             let d = document(v)
@@ -354,9 +484,19 @@ final class DocSession: ObservableObject {
         return out
     }
 
-    func refreshAnnotations(for c: Card) { addAnnotations(c, to: document(c.variant)) }
+    func refreshAnnotations(for c: Card) {
+        if isWeb {
+            activeWebController?.refreshAnnotations()
+            return
+        }
+        addAnnotations(c, to: document(c.variant))
+    }
 
     func removeAnnotations(cardId: UUID) {
+        if isWeb {
+            activeWebController?.refreshAnnotations()
+            return
+        }
         for d in [original, bilingual] {
             for i in 0..<d.pageCount {
                 guard let p = d.safePage(i) else { continue }

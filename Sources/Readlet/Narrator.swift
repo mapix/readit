@@ -345,8 +345,9 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         fallbackToSystem = false
         if self.docId != docId { pageChars = [:]; pageCharsMissing = [] }
         self.docId = docId; self.doc = doc; self.title = title
-        sourceDoc = Store.shared.session(docId)?.original
-        pageCount = doc.pageCount
+        let ses = Store.shared.session(docId)
+        sourceDoc = ses?.original
+        pageCount = (ses?.isWeb == true) ? max(1, ses?.pageCount ?? 1) : doc.pageCount
         error = nil
         guard pageCount > 0 else { return }
         #if os(iOS)
@@ -381,8 +382,9 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         fallbackToSystem = false
         if self.docId != docId { pageChars = [:]; pageCharsMissing = [] }
         self.docId = docId; self.doc = doc; self.title = title
-        sourceDoc = Store.shared.session(docId)?.original
-        pageCount = doc.pageCount
+        let ses = Store.shared.session(docId)
+        sourceDoc = ses?.original
+        pageCount = (ses?.isWeb == true) ? max(1, ses?.pageCount ?? 1) : doc.pageCount
         self.page = max(0, min(max(0, pageCount - 1), page))
     }
 
@@ -560,15 +562,32 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     func debugAsk(_ q: String) { resumeAfterQA = state == .playing; if state == .playing { player?.pause(); state = .paused }; heard = q; answer(q) }
 
     private func answer(_ q: String) {
-        guard let doc = sourceDoc ?? doc, let pg = doc.safePage(page) else { return }
+        let ses = docId.flatMap { Store.shared.session($0) }
+        let isWeb = ses?.isWeb == true
+        let pg: PDFPage? = isWeb ? nil : (sourceDoc ?? doc)?.safePage(page)
+        if !isWeb && pg == nil { return }
         answering = true
         let seg = segIndex < segments.count ? segments[segIndex].text : ""
         let sys = "你是正在给用户语音讲解《\(title)》的讲解员，用户在听讲过程中打断你提问。用\(Settings.targetLang)口语回答，简洁清楚（3–6 句话，适合朗读，不要用列表和符号），回答完自然地说一句「我们继续」。"
-        let ctx = "当前第 \(page + 1) 页。你刚才讲到：\(seg)\n\n本页原文：\(pg.string ?? "")\n\n用户的问题：\(q)"
-        let img = Narrator.jpeg(of: pg)
+        let pageText = isWeb ? (ses?.sectionText(page) ?? "") : (pg?.string ?? "")
+        let locHeader: String = {
+            if isWeb {
+                let st = ses?.sectionTitle(page) ?? LF("第 %d 节", page + 1)
+                return "当前章节：\(st)。"
+            }
+            return "当前第 \(page + 1) 页。"
+        }()
+        let ctx = "\(locHeader)你刚才讲到：\(seg)\n\n当前正文：\(pageText)\n\n用户的问题：\(q)"
+        let pdfImg = pg.map { Narrator.jpeg(of: $0) }
         Task {
             do {
-                let a = try await LLMClient.complete(role: "chat", system: sys, input: LLMInput(text: ctx, images: [img]), maxTokens: 800, feature: "narration")
+                var images: [Data] = []
+                if let pdfImg {
+                    images.append(pdfImg)
+                } else if isWeb, let webImg = await Narrator.activeReader?.webController?.captureViewportJPEG() {
+                    images.append(webImg)
+                }
+                let a = try await LLMClient.complete(role: "chat", system: sys, input: LLMInput(text: ctx, images: images), maxTokens: 800, feature: "narration")
                 lastQA = (q, a)
                 if let id = docId { CopilotStore.shared.record(docId: id, question: q, answer: a, page: page) }
                 let wav = try await synth(a)
@@ -956,6 +975,44 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         let docPrefix = targetDocId?.uuidString ?? ""
         let taskKey = "\(docPrefix)-\(p)\(scriptSuffix)"
         if let t = scriptTasks[taskKey] { return try await t.value }
+
+        let ses = targetDocId.flatMap { Store.shared.session($0) }
+        if ses?.isWeb == true, let ses {
+            if ses.pageCount > pageCount { pageCount = ses.pageCount }
+            let text = ses.sectionText(p)
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
+            let secTitle = ses.sectionTitle(p) ?? LF("第 %d 节", p + 1)
+            let prevText = p > 0 ? String(ses.sectionText(p - 1).suffix(600)) : ""
+            let title = self.title, total = max(1, ses.pageCount), lang = Settings.targetLang
+            let style = Settings.narrationStyle, extra = Settings.narrationExtraPrompt
+            let isCurrentVisibleSection = (Narrator.activeReader?.currentPageIndex == p)
+            let task = Task<[Segment], Error> {
+                var images: [Data] = []
+                if isCurrentVisibleSection, let snap = await Narrator.activeReader?.webController?.captureViewportJPEG() {
+                    images.append(snap)
+                }
+                let sys = NarrationStyle.systemPrompt(style: style, extra: extra, title: title, lang: lang)
+                let zh = lang.contains("中文")
+                let input = LLMInput(
+                    text: zh ? "这是交互式网页的第 \(p + 1)/\(total) 章节（\(secTitle)）。\n上一节结尾：\(prevText)\n\n本节文字：\n\(text)"
+                             : "This is section \(p + 1) of \(total) (\(secTitle)) of an interactive web article.\nEnd of the previous section: \(prevText)\n\nText of this section:\n\(text)",
+                    images: images
+                )
+                var out = try await LLMClient.complete(role: "chat", system: sys, input: input, maxTokens: 4000, feature: "narration")
+                if let items = ScriptParser.parse(out), !items.isEmpty { return items.map { Segment(text: $0.text, focus: $0.focus) } }
+                if let again = try? await LLMClient.complete(role: "chat", system: sys + "\n上一次的输出不是合法 JSON，请严格按格式重新输出。", input: input, maxTokens: 4000, feature: "narration") { out = again }
+                return ScriptParser.salvage(out).map { Segment(text: $0.text, focus: $0.focus) }
+            }
+            scriptTasks[taskKey] = task
+            defer { scriptTasks[taskKey] = nil }
+            let segs = try await task.value
+            if let d = try? JSONEncoder().encode(segs) { try? d.write(to: url, options: .atomic) }
+            if self.docId == targetDocId {
+                pageChars[p] = segs.reduce(0) { $0 + $1.text.count }; pageCharsMissing.remove(p)
+            }
+            return segs
+        }
+
         guard let doc = sourceDoc ?? doc, let pg = doc.safePage(p) else { return [] }
         let text = pg.string ?? ""
         let image = Narrator.jpeg(of: pg)

@@ -50,15 +50,21 @@ final class FlashStore: ObservableObject {
 
     func generate(docId: UUID, doc: PDFDocument, title: String, pages: ClosedRange<Int>?, count: Int) {
         generating = true; genError = nil
-        guard doc.pageCount > 0 else { generating = false; return }
-        let range = pages ?? 0...(doc.pageCount - 1)
+        let ses = Store.shared.session(docId)
+        let isWeb = ses?.isWeb == true
+        let totalUnits = isWeb ? max(1, ses?.pageCount ?? 1) : doc.pageCount
+        guard totalUnits > 0 else { generating = false; return }
+        let range = pages ?? 0...(totalUnits - 1)
         var text = ""
         for i in range {
-            let t = (doc.safePage(i)?.string ?? "").replacingOccurrences(of: "\n", with: " ")
+            let t = isWeb ? (ses?.sectionText(i) ?? "").replacingOccurrences(of: "\n", with: " ")
+                          : (doc.safePage(i)?.string ?? "").replacingOccurrences(of: "\n", with: " ")
             if text.count + t.count > 110_000 { break }
-            text += "\n\n=== 第 \(i + 1) 页 ===\n" + t
+            let unitLabel = isWeb ? "第 \(i + 1) 节（\(ses?.sectionTitle(i) ?? "")）" : "第 \(i + 1) 页"
+            text += "\n\n=== \(unitLabel) ===\n" + t
         }
-        let scope = pages == nil ? "全文" : (range.count == 1 ? "第 \(range.lowerBound + 1) 页" : "第 \(range.lowerBound + 1)–\(range.upperBound + 1) 页")
+        let unitWord = isWeb ? "节" : "页"
+        let scope = pages == nil ? "全文" : (range.count == 1 ? "第 \(range.lowerBound + 1) \(unitWord)" : "第 \(range.lowerBound + 1)–\(range.upperBound + 1) \(unitWord)")
         let lang = Settings.targetLang
         Task {
             do {
@@ -331,10 +337,18 @@ final class MapGenerator: ObservableObject {
         running = docId; error = nil
         let doc = s.original, title = s.doc.title
         var text = ""
-        for i in 0..<doc.pageCount {
-            let t = (doc.safePage(i)?.string ?? "").replacingOccurrences(of: "\n", with: " ")
-            if text.count + t.count > 120_000 { text += "\n[…后续省略…]"; break }
-            text += "\n\n=== 第 \(i + 1) 页 ===\n" + t
+        if s.isWeb {
+            for (i, sec) in s.webSections.enumerated() {
+                let t = sec.text.replacingOccurrences(of: "\n", with: " ")
+                if text.count + t.count > 120_000 { text += "\n[…后续省略…]"; break }
+                text += "\n\n=== 第 \(i + 1) 页（\(sec.title)）===\n" + t
+            }
+        } else {
+            for i in 0..<doc.pageCount {
+                let t = (doc.safePage(i)?.string ?? "").replacingOccurrences(of: "\n", with: " ")
+                if text.count + t.count > 120_000 { text += "\n[…后续省略…]"; break }
+                text += "\n\n=== 第 \(i + 1) 页 ===\n" + t
+            }
         }
         let lang = Settings.targetLang
         Task {
@@ -414,7 +428,15 @@ final class MapGenerator: ObservableObject {
         if let nb = store.lib.notebooks.first(where: { $0.docIds.contains(docId) }) { store.currentNotebookId = nb.id }
         func build(_ n: GenNode) -> MindNode {
             var node = MindNode(title: n.title)
-            if let p = n.page, p >= 1, p <= s.pageCount, let q = n.quote?.trimmingCharacters(in: .whitespaces), q.count >= 4,
+            if s.isWeb, let p = n.page, p >= 1, p <= max(1, s.pageCount), let q = n.quote?.trimmingCharacters(in: .whitespaces), q.count >= 4 {
+                let secIdx = min(max(0, p - 1), max(0, s.webSections.count - 1))
+                let secId = s.webSections.indices.contains(secIdx) ? s.webSections[secIdx].id : nil
+                let anchor = WebCardAnchor(sectionId: secId, exact: q)
+                var c = Card(docId: docId, page: secIdx, variant: .original, rects: [], text: q, color: 2, webAnchor: anchor)
+                if let note = n.note { c.comments = [note] }
+                store.lib.cards.append(c)
+                node.cardId = c.id
+            } else if !s.isWeb, let p = n.page, p >= 1, p <= s.pageCount, let q = n.quote?.trimmingCharacters(in: .whitespaces), q.count >= 4,
                let page = s.original.safePage(p - 1),
                let sel = s.original.findString(q, withOptions: [.caseInsensitive]).first(where: { $0.pages.contains(page) }) ?? s.original.findString(String(q.prefix(12)), withOptions: [.caseInsensitive]).first(where: { $0.pages.contains(page) }) {
                 if (sel.string ?? "").count < q.count { sel.extendForLineBoundaries() }
@@ -434,6 +456,7 @@ final class MapGenerator: ObservableObject {
         var top = build(g)
         top.title = "🗺 " + (g.title.isEmpty ? (store.doc(docId)?.title ?? "文档") : g.title)
         store.updateNotebook { nb in nb.root.children.append(top) }
+        if s.isWeb { s.activeWebController?.refreshAnnotations() }
         store.selectedNodeId = top.id
         store.mapFocusRequest = top.id
         store.save()

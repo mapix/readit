@@ -84,6 +84,9 @@ final class CloudSync: ObservableObject {
 
     /// Ensures a document's `original.pdf` is downloaded and valid on local disk, triggering iCloud download if needed.
     func ensurePDFDownloaded(_ docId: UUID) async -> Bool {
+        if Store.shared.doc(docId)?.isWeb == true {
+            return Store.shared.session(docId) != nil
+        }
         let localPDF = Paths.pdf(docId)
         if Paths.hasLocalPDF(docId), PDFDocument(url: localPDF) != nil {
             Store.shared.sessions[docId] = nil
@@ -381,10 +384,19 @@ final class CloudSync: ObservableObject {
                 if rTime > lTime {
                     mergedDoc.title = r.title
                     mergedDoc.source = r.source ?? l.source
+                    mergedDoc.kind = (r.isWeb || l.isWeb) ? .web : .pdf
+                    mergedDoc.webCleanMode = r.webCleanMode
                     mergedDoc.updatedAt = r.updatedAt
                 } else {
                     mergedDoc.source = l.source ?? r.source
+                    mergedDoc.kind = (l.isWeb || r.isWeb) ? .web : .pdf
+                    mergedDoc.webCleanMode = l.webCleanMode
                 }
+                var mergedSelectors = l.webHiddenSelectors
+                for sel in r.webHiddenSelectors where !mergedSelectors.contains(sel) {
+                    mergedSelectors.append(sel)
+                }
+                mergedDoc.webHiddenSelectors = mergedSelectors
                 // Status tag comes from whichever side was modified more recently; custom tags are unioned across devices
                 let winningStatus = (rTime > lTime ? r.statusTag : l.statusTag) ?? l.statusTag ?? r.statusTag
                 var mergedTags: [String] = []
@@ -426,6 +438,7 @@ final class CloudSync: ObservableObject {
                         readPage: lp,
                         narrationPage: l.narrationPage,
                         narrationSeg: l.narrationSeg,
+                        webAnchor: l.webAnchor,
                         updatedAt: l.readUpdatedAt ?? lTime
                     )
                     if let existing = snapshotsByDevice[key] {
@@ -442,6 +455,7 @@ final class CloudSync: ObservableObject {
                         readPage: rp,
                         narrationPage: r.narrationPage,
                         narrationSeg: r.narrationSeg,
+                        webAnchor: r.webAnchor,
                         updatedAt: r.readUpdatedAt ?? rTime
                     )
                     if let existing = snapshotsByDevice[key] {
@@ -457,7 +471,68 @@ final class CloudSync: ObservableObject {
                 // Reading progress merge & conflict detection
                 let lReadTime = l.readUpdatedAt ?? lTime
                 let rReadTime = r.readUpdatedAt ?? rTime
-                if let lp = l.readPage, let rp = r.readPage {
+                if mergedDoc.isWeb, (l.webAnchor != nil || r.webAnchor != nil) {
+                    let la = l.webAnchor ?? WebReadingAnchor(scrollFraction: 0)
+                    let ra = r.webAnchor ?? WebReadingAnchor(scrollFraction: 0)
+                    let fracDelta = abs(la.scrollFraction - ra.scrollFraction)
+                    let lDevId = l.lastReadDeviceId ?? ""
+                    let rDevId = r.lastReadDeviceId ?? ""
+                    let lDevName = l.lastReadDevice ?? "Mac"
+                    let rDevName = r.lastReadDevice ?? "iPhone"
+                    let differentDevices: Bool = {
+                        if !lDevId.isEmpty && !rDevId.isEmpty { return lDevId != rDevId }
+                        if l.lastReadDevice != nil && r.lastReadDevice != nil { return lDevName != rDevName }
+                        return true
+                    }()
+                    let newerWentBackwards = (rReadTime > lReadTime && ra.scrollFraction + 0.15 < la.scrollFraction)
+                        || (lReadTime > rReadTime && la.scrollFraction + 0.15 < ra.scrollFraction)
+                    if differentDevices && fracDelta >= 0.25 && newerWentBackwards {
+                        mergedDoc.pendingConflict = ProgressConflict(
+                            localDeviceId: lDevId.isEmpty ? "local" : lDevId,
+                            localDeviceName: lDevName,
+                            localPage: l.readPage ?? 0,
+                            localNarrationPage: l.narrationPage,
+                            localNarrationSeg: l.narrationSeg,
+                            localWebAnchor: la,
+                            localUpdatedAt: lReadTime,
+                            remoteDeviceId: rDevId.isEmpty ? "remote" : rDevId,
+                            remoteDeviceName: rDevName,
+                            remotePage: r.readPage ?? 0,
+                            remoteNarrationPage: r.narrationPage,
+                            remoteNarrationSeg: r.narrationSeg,
+                            remoteWebAnchor: ra,
+                            remoteUpdatedAt: rReadTime,
+                            detectedAt: max(lReadTime, rReadTime)
+                        )
+                    } else {
+                        mergedDoc.pendingConflict = nil
+                    }
+                    if !newerWentBackwards && rReadTime > lReadTime && ra.scrollFraction > 0.01 {
+                        mergedDoc.webAnchor = ra
+                        mergedDoc.readPage = r.readPage ?? l.readPage
+                        mergedDoc.readUpdatedAt = r.readUpdatedAt ?? l.readUpdatedAt
+                        mergedDoc.lastReadDevice = r.lastReadDevice ?? l.lastReadDevice
+                        mergedDoc.lastReadDeviceId = r.lastReadDeviceId ?? l.lastReadDeviceId
+                    } else if !newerWentBackwards && lReadTime >= rReadTime && la.scrollFraction > 0.01 {
+                        mergedDoc.webAnchor = la
+                        mergedDoc.readPage = l.readPage ?? r.readPage
+                        mergedDoc.readUpdatedAt = l.readUpdatedAt ?? r.readUpdatedAt
+                        mergedDoc.lastReadDevice = l.lastReadDevice ?? r.lastReadDevice
+                        mergedDoc.lastReadDeviceId = l.lastReadDeviceId ?? r.lastReadDeviceId
+                    } else if ra.scrollFraction >= la.scrollFraction {
+                        mergedDoc.webAnchor = r.webAnchor ?? l.webAnchor
+                        mergedDoc.readPage = r.readPage ?? l.readPage
+                        mergedDoc.readUpdatedAt = r.readUpdatedAt ?? l.readUpdatedAt
+                        mergedDoc.lastReadDevice = r.lastReadDevice ?? l.lastReadDevice
+                        mergedDoc.lastReadDeviceId = r.lastReadDeviceId ?? l.lastReadDeviceId
+                    } else {
+                        mergedDoc.webAnchor = l.webAnchor ?? r.webAnchor
+                        mergedDoc.readPage = l.readPage ?? r.readPage
+                        mergedDoc.readUpdatedAt = l.readUpdatedAt ?? r.readUpdatedAt
+                        mergedDoc.lastReadDevice = l.lastReadDevice ?? r.lastReadDevice
+                        mergedDoc.lastReadDeviceId = l.lastReadDeviceId ?? r.lastReadDeviceId
+                    }
+                } else if let lp = l.readPage, let rp = r.readPage {
                     if lp == rp {
                         mergedDoc.readPage = lp
                         if rReadTime > lReadTime {
@@ -891,8 +966,11 @@ final class CloudSync: ObservableObject {
                         let cloudDocDir = dir.appendingPathComponent("docs/\(doc.id.uuidString)", isDirectory: true)
                         try? fm.createDirectory(at: cloudDocDir, withIntermediateDirectories: true)
 
-                        // Sync PDF + thumbnail + lightweight JSON files (never audio or video!)
-                        for fileName in ["original.pdf", "thumb.png", "flashcards.json", "trans.json", "chat.json"] {
+                        // Sync PDF (for non-web docs) + thumbnail + lightweight JSON files (never audio or video!)
+                        let syncFiles = doc.isWeb
+                            ? ["thumb.png", "flashcards.json", "trans.json", "chat.json", "copilot.json", "web-sections.json"]
+                            : ["original.pdf", "thumb.png", "flashcards.json", "trans.json", "chat.json", "copilot.json"]
+                        for fileName in syncFiles {
                             let lFile = localDocDir.appendingPathComponent(fileName)
                             let cFile = cloudDocDir.appendingPathComponent(fileName)
                             Self.syncFileBidirectional(local: lFile, cloud: cFile)
