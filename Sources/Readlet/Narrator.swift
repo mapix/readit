@@ -389,7 +389,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     /// ignore the saved position and start at the page currently shown in the reader (from segment 0)
     func restartFromCurrentPage() {
         guard let id = docId, let d = doc else { return }
-        let curPage = Narrator.activeReader?.currentPageIndex ?? page
+        let curPage = Narrator.activeReader?.syncCurrentPageFromView() ?? page
         Narrator.clearProgress(id)
         start(docId: id, doc: d, title: title, from: curPage, resume: false)
     }
@@ -521,7 +521,7 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
     func narrateFromReaderPage() {
         guard docId != nil, state != .idle else { return }
         resumedFrom = nil
-        jump(page: Narrator.reader.currentPageIndex)
+        jump(page: Narrator.reader.syncCurrentPageFromView())
     }
 
     // MARK: voice Q&A (interrupt narration)
@@ -655,7 +655,11 @@ final class Narrator: NSObject, ObservableObject, AVAudioPlayerDelegate {
         beginBackgroundTransitionTask()
         #endif
         if let r = Narrator.activeReader, r.currentPageIndex != p && r.focusedNarrationPage != p {
+            #if os(macOS)
+            r.goToPage(p, userInitiated: false)
+            #else
             r.goToPage(p)
+            #endif
         }
         if let cached = cachedScript(p), !ScriptParser.looksBroken(cached.map(\.text)), !cached.isEmpty {
             segments = cached

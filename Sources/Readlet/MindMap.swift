@@ -96,8 +96,12 @@ struct LaidNode: Identifiable {
 struct MindMapView: View {
     @ObservedObject var store: Store
     @State private var scale: CGFloat = 1
+    @State private var pinchStartScale: CGFloat?
     @State private var dropTarget: UUID?
     @FocusState private var focused: Bool
+
+    static let minScale: CGFloat = 0.3
+    static let maxScale: CGFloat = 3.0
 
     var body: some View {
         if let nb = store.currentNotebook {
@@ -141,6 +145,17 @@ struct MindMapView: View {
                     .contentShape(Rectangle())
                     .onTapGesture { store.selectedNodeId = nil; store.editingNodeId = nil; focused = true }
                 }
+                .simultaneousGesture(
+                    MagnificationGesture()
+                        .onChanged { value in
+                            let base = pinchStartScale ?? scale
+                            if pinchStartScale == nil { pinchStartScale = scale }
+                            scale = min(Self.maxScale, max(Self.minScale, base * value))
+                        }
+                        .onEnded { _ in
+                            pinchStartScale = nil
+                        }
+                )
                 .onAppear {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                         proxy.scrollTo(nb.root.id, anchor: .leading)
@@ -152,6 +167,9 @@ struct MindMapView: View {
                     store.mapFocusRequest = nil
                 }
             }
+            #if os(macOS)
+            .background(MindMapTrackpadZoomView(scale: $scale, minScale: Self.minScale, maxScale: Self.maxScale))
+            #endif
             .background(MN.mapBG)
             .overlay(alignment: .bottomTrailing) { controls(nb) }
             .focusable()
@@ -168,9 +186,9 @@ struct MindMapView: View {
             GenMapButton()
             Divider().frame(height: 12)
             Button { store.addChild(to: store.selectedNodeId ?? nb.root.id) } label: { Image(systemName: "plus.rectangle.on.rectangle") }.help(L("添加子主题 (Tab)")).accessibilityLabel(L("添加子主题 (Tab)"))
-            Button { scale = max(0.4, scale / 1.15) } label: { Image(systemName: "minus") }
-            Text("\(Int(scale * 100))%").monospacedDigit().font(.system(size: 11)).frame(width: 36).onTapGesture { scale = 1 }
-            Button { scale = min(2.5, scale * 1.15) } label: { Image(systemName: "plus") }
+            Button { scale = max(Self.minScale, scale / 1.15) } label: { Image(systemName: "minus") }
+            Text("\(Int((scale * 100).rounded()))%").monospacedDigit().font(.system(size: 11)).frame(width: 38).onTapGesture { scale = 1 }
+            Button { scale = min(Self.maxScale, scale * 1.15) } label: { Image(systemName: "plus") }
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
@@ -194,7 +212,23 @@ struct MindMapView: View {
     }
 
     func handleKey(_ press: KeyPress) -> KeyPress.Result {
-        guard store.editingNodeId == nil, let sel = store.selectedNodeId, let nb = store.currentNotebook else { return .ignored }
+        guard store.editingNodeId == nil else { return .ignored }
+        if press.modifiers.contains(.command) {
+            switch press.characters {
+            case "=", "+":
+                scale = min(Self.maxScale, scale * 1.15)
+                return .handled
+            case "-":
+                scale = max(Self.minScale, scale / 1.15)
+                return .handled
+            case "0":
+                scale = 1.0
+                return .handled
+            default:
+                break
+            }
+        }
+        guard let sel = store.selectedNodeId, let nb = store.currentNotebook else { return .ignored }
         switch press.key {
         case .tab: store.addChild(to: sel); return .handled
         case .return: if sel == nb.root.id { store.addChild(to: sel) } else { store.addSibling(of: sel) }; return .handled
@@ -363,3 +397,105 @@ struct GenMapButton: View {
         .help(g.error ?? L("让 AI 阅读全文，自动生成结构化脑图（要点可点击跳回原文）"))
     }
 }
+
+#if os(macOS)
+import AppKit
+
+/// Captures trackpad two-finger pinch (`.magnify`), two-finger double-tap (`.smartMagnify`),
+/// and `⌘`/`⌃` + scroll wheel events over the MindMapView before `NSScrollView` swallows them.
+struct MindMapTrackpadZoomView: NSViewRepresentable {
+    @Binding var scale: CGFloat
+    let minScale: CGFloat
+    let maxScale: CGFloat
+
+    final class ZoomHostView: NSView {
+        var onMagnify: ((CGFloat) -> Void)?
+        var onSmartMagnify: (() -> Void)?
+        private var monitor: Any?
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window != nil {
+                installMonitorIfNeeded()
+            } else {
+                removeMonitor()
+            }
+        }
+
+        private func installMonitorIfNeeded() {
+            guard monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.magnify, .smartMagnify, .scrollWheel]) { [weak self] event in
+                guard let self, let win = self.window, event.window === win, !self.isHiddenOrHasHiddenAncestor else {
+                    return event
+                }
+                let pt = self.convert(event.locationInWindow, from: nil)
+                guard self.bounds.contains(pt) else { return event }
+
+                switch event.type {
+                case .magnify:
+                    self.onMagnify?(event.magnification)
+                    return nil
+                case .smartMagnify:
+                    self.onSmartMagnify?()
+                    return nil
+                case .scrollWheel:
+                    let mods = event.modifierFlags.intersection([.command, .control])
+                    if !mods.isEmpty {
+                        let dy = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY * 0.008 : event.scrollingDeltaY * 0.05
+                        if abs(dy) > 0.0001 {
+                            self.onMagnify?(dy)
+                        }
+                        return nil
+                    }
+                    return event
+                default:
+                    return event
+                }
+            }
+        }
+
+        fileprivate func removeMonitor() {
+            if let m = monitor {
+                NSEvent.removeMonitor(m)
+                monitor = nil
+            }
+        }
+
+        deinit {
+            if let m = monitor {
+                NSEvent.removeMonitor(m)
+            }
+        }
+    }
+
+    func makeNSView(context: Context) -> ZoomHostView {
+        let v = ZoomHostView()
+        updateCallbacks(v)
+        return v
+    }
+
+    func updateNSView(_ nsView: ZoomHostView, context: Context) {
+        updateCallbacks(nsView)
+    }
+
+    static func dismantleNSView(_ nsView: ZoomHostView, coordinator: ()) {
+        nsView.removeMonitor()
+    }
+
+    private func updateCallbacks(_ v: ZoomHostView) {
+        v.onMagnify = { delta in
+            let next = min(maxScale, max(minScale, scale * (1.0 + delta)))
+            if abs(next - scale) > 0.0005 {
+                scale = next
+            }
+        }
+        v.onSmartMagnify = {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                scale = abs(scale - 1.0) < 0.1 ? 1.5 : 1.0
+            }
+        }
+    }
+}
+#endif

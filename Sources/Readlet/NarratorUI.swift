@@ -371,44 +371,53 @@ struct RecDot: View {
 }
 
 
-/// "从这页开始讲": appears when the reader shows a different page than the one being narrated
-/// (you scrolled or jumped elsewhere); one click continues the narration from the top of that page.
+/// "从当前页开始讲 / 从第 X 页开始讲": always available in the narration bar so the user can
+/// either jump narration to the page they scrolled to, or restart from the top of the current page.
 struct FromHereButton: View {
     @ObservedObject var n = Narrator.shared
     @ObservedObject var rc: ReaderController
     var compact: Bool
-    /// page the reader has settled on (debounced, so auto-scrolling during narration doesn't flash the button)
-    @State private var settled: Int?
 
     var body: some View {
-        ZStack {
-            if let target = settled, n.state != .idle, target != n.page, target >= 0, target < n.pageCount { button(target) }
-        }
-        .task(id: "\(rc.currentPageIndex)-\(n.page)") {
-            settled = nil
-            try? await Task.sleep(nanoseconds: 1_200_000_000)
-            if !Task.isCancelled { settled = rc.currentPageIndex }
+        let target = rc.currentPageIndex
+        if n.state != .idle, target >= 0, target < max(1, n.pageCount) {
+            button(target, isDifferentPage: target != n.page)
         }
     }
 
-    @ViewBuilder func button(_ target: Int) -> some View {
-            Button { n.narrateFromReaderPage() } label: {
-                if compact {
-                    Label(LF("从第 %d 页讲", target + 1), systemImage: "text.line.first.and.arrowtriangle.forward")
-                        .font(.system(size: 11, weight: .semibold))
-                } else {
-                    Label(LF("从第 %d 页开始讲", target + 1), systemImage: "text.line.first.and.arrowtriangle.forward")
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .padding(.horizontal, 8).padding(.vertical, 4)
-                        .background(Capsule().fill(Color.purple.opacity(0.12)))
-                }
+    @ViewBuilder func button(_ target: Int, isDifferentPage: Bool) -> some View {
+        Button {
+            _ = rc.syncCurrentPageFromView()
+            if rc.currentPageIndex != n.page {
+                n.narrateFromReaderPage()
+            } else {
+                n.restartFromCurrentPage()
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.purple)
-            .lineLimit(1)
-            .fixedSize()
-            .help(LF("你正在看第 %d 页，点击从这一页开头继续讲解", target + 1))
-            .transition(.opacity.combined(with: .scale(scale: 0.9)))
+        } label: {
+            if compact {
+                Label(
+                    isDifferentPage ? LF("从第 %d 页讲", target + 1) : L("从本页讲"),
+                    systemImage: "text.line.first.and.arrowtriangle.forward"
+                )
+                .font(.system(size: 11, weight: .semibold))
+            } else {
+                Label(
+                    isDifferentPage ? LF("从第 %d 页开始讲", target + 1) : L("从当前页开始讲"),
+                    systemImage: "text.line.first.and.arrowtriangle.forward"
+                )
+                .font(.system(size: 11.5, weight: .semibold))
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(Capsule().fill(Color.purple.opacity(isDifferentPage ? 0.14 : 0.09)))
+            }
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.purple)
+        .lineLimit(1)
+        .fixedSize()
+        .help(isDifferentPage
+              ? LF("你正在看第 %d 页，点击从这一页开头继续讲解", target + 1)
+              : LF("从当前页（第 %d 页）开头重新开始讲解", target + 1))
+        .transition(.opacity.combined(with: .scale(scale: 0.9)))
     }
 }
 #endif

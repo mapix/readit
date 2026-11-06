@@ -276,17 +276,52 @@ struct StudyToolbar: View {
             }
             Button {
                 let n = Narrator.shared
-                if n.state != .idle { n.stop(); rc.clearNarrationHighlight() }
-                else if let id = rc.docId, let s = store.session(id) { n.start(docId: id, doc: s.document(rc.variant), title: s.doc.title, from: rc.currentPageIndex) }
+                let curPage = rc.syncCurrentPageFromView()
+                if n.state != .idle && n.docId == rc.docId {
+                    if curPage != n.page {
+                        n.narrateFromReaderPage()
+                    } else {
+                        n.stop()
+                        rc.clearNarrationHighlight()
+                    }
+                } else if let id = rc.docId, let s = store.session(id) {
+                    n.start(docId: id, doc: s.document(rc.variant), title: s.doc.title, from: curPage)
+                }
             } label: {
                 HStack(spacing: 4) { Image(systemName: "headphones"); Text(L("AI 解读")).font(.system(size: 12, weight: .semibold)) }
                     .foregroundStyle(MN.barText)
                     .padding(.horizontal, 9).frame(height: 24)
                     .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.1)))
             }
-            .buttonStyle(.plain).help(L("AI 逐页语音解读（⌘⇧L）"))
+            .buttonStyle(.plain).help(L("AI 逐页语音解读（⌘⇧L · 右键可选择从当前页开始）"))
             .keyboardShortcut("l", modifiers: [.command, .shift])
             .fixedSize()
+            .contextMenu {
+                if let id = rc.docId, let s = store.session(id) {
+                    Button {
+                        let curPage = rc.syncCurrentPageFromView()
+                        Narrator.shared.start(docId: id, doc: s.document(rc.variant), title: s.doc.title, from: curPage, resume: false)
+                    } label: {
+                        Label(LF("从当前页开始讲 (p.%d)", rc.currentPageIndex + 1), systemImage: "text.line.first.and.arrowtriangle.forward")
+                    }
+                    if let saved = Narrator.savedProgress(id), (saved.page > 0 || saved.seg > 0) {
+                        Button {
+                            Narrator.shared.start(docId: id, doc: s.document(rc.variant), title: s.doc.title, from: saved.page, resume: true)
+                        } label: {
+                            Label(LF("继续上次讲解 (p.%d · 第 %d 段)", saved.page + 1, saved.seg + 1), systemImage: "play.circle")
+                        }
+                    }
+                    if Narrator.shared.state != .idle && Narrator.shared.docId == id {
+                        Divider()
+                        Button(role: .destructive) {
+                            Narrator.shared.stop()
+                            rc.clearNarrationHighlight()
+                        } label: {
+                            Label(L("退出 AI 解读"), systemImage: "stop.circle")
+                        }
+                    }
+                }
+            }
             TB(icon: "rectangle.on.rectangle.angled", tip: L("学习闪卡（⌘⇧K）")) { NotificationCenter.default.post(name: .openFlashcards, object: rc.docId) }
                 .keyboardShortcut("k", modifiers: [.command, .shift])
             Button { showCopilot.toggle() } label: {
@@ -304,6 +339,39 @@ struct StudyToolbar: View {
             TB(icon: "pip.enter", tip: L("收起为桌面小组件（⌘⇧M）")) { MiniWidget.shared.collapse() }
                 .keyboardShortcut("m", modifiers: [.command, .shift])
             Menu {
+                if let id = rc.docId, let s = store.session(id) {
+                    Section(L("AI 语音解读")) {
+                        Button {
+                            let curPage = rc.syncCurrentPageFromView()
+                            Narrator.shared.start(docId: id, doc: s.document(rc.variant), title: s.doc.title, from: curPage, resume: false)
+                        } label: {
+                            Label(LF("从当前页开始讲 (p.%d)", rc.currentPageIndex + 1), systemImage: "text.line.first.and.arrowtriangle.forward")
+                        }
+                        if let saved = Narrator.savedProgress(id), (saved.page > 0 || saved.seg > 0) {
+                            Button {
+                                Narrator.shared.start(docId: id, doc: s.document(rc.variant), title: s.doc.title, from: saved.page, resume: true)
+                            } label: {
+                                Label(LF("继续上次讲解 (p.%d · 第 %d 段)", saved.page + 1, saved.seg + 1), systemImage: "play.circle")
+                            }
+                        }
+                        Button {
+                            let curPage = rc.syncCurrentPageFromView()
+                            NarrationExporter.shared.start(prepareOnly: true, forDocId: id, fromPage: curPage)
+                        } label: {
+                            Label(L("准备全部讲解"), systemImage: "tray.and.arrow.down")
+                        }
+                        .disabled(NarrationExporter.shared.running)
+                        if Narrator.shared.state != .idle && Narrator.shared.docId == id {
+                            Button(role: .destructive) {
+                                Narrator.shared.stop()
+                                rc.clearNarrationHighlight()
+                            } label: {
+                                Label(L("退出 AI 解读"), systemImage: "stop.circle")
+                            }
+                        }
+                    }
+                    Divider()
+                }
                 if let id = rc.docId, let s = store.sessions[id], !s.isComplete {
                     Button(L("翻译全文（后台）")) { s.translateWholeDocument(from: rc.currentPageIndex); rc.setVariant(.bilingual) }
                     Divider()

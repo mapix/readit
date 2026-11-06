@@ -163,7 +163,20 @@ final class ReaderController: NSObject, ObservableObject {
         view.onKey = { [weak self] e in self?.key(e) ?? false }
         view.hitCard = { [weak self] pt in guard let self, !self.readingMode else { return false }; return self.cardAt(pt) != nil }
         NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .leftMouseDown]) { [weak self] e in
-            if let self, e.window === self.view.window { self.userScrolledAt = Date(); self.lastScroll = Date(); self.holdTarget = nil }
+            if let self, e.window === self.view.window {
+                self.userScrolledAt = Date()
+                self.lastScroll = Date()
+                self.holdTarget = nil
+                if e.type == .scrollWheel {
+                    self.userPageNavigatedAt = Date()
+                    if let st = self.scrollTimer {
+                        st.invalidate()
+                        self.scrollTimer = nil
+                        self.restoring = false
+                    }
+                    self.programmaticScrollUntil = .distantPast
+                }
+            }
             return e
         }
         NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] e in
@@ -294,9 +307,29 @@ final class ReaderController: NSObject, ObservableObject {
     private var loading = false
     private var initialLoadedPage: Int? = nil
     private var programmaticScrollUntil = Date.distantPast
+    private var userPageNavigatedAt = Date.distantPast
+    private var lastNarrationScrollAt = Date.distantPast
+
+    @discardableResult
+    func syncCurrentPageFromView() -> Int {
+        guard let d = view.document, d.pageCount > 0 else { return currentPageIndex }
+        if let fp = focusPage, Narrator.shared.state != .idle, userPageNavigatedAt <= lastNarrationScrollAt {
+            if currentPageIndex != fp { currentPageIndex = fp }
+            return currentPageIndex
+        }
+        if let p = view.currentPage {
+            let i = d.index(for: p)
+            if i != NSNotFound, i >= 0, i < d.pageCount {
+                if currentPageIndex != i { currentPageIndex = i }
+                return i
+            }
+        }
+        return currentPageIndex
+    }
+
     @objc func pageChanged() {
         guard !loading, !restoring, Date() >= programmaticScrollUntil, let d = view.document, let p = view.currentPage else { return }
-        if let fp = focusPage, Narrator.shared.state != .idle {
+        if let fp = focusPage, Narrator.shared.state != .idle, userPageNavigatedAt <= lastNarrationScrollAt {
             if currentPageIndex != fp { currentPageIndex = fp }
             return
         }
@@ -551,6 +584,7 @@ final class ReaderController: NSObject, ObservableObject {
 
     func scrollByScreen(_ dir: CGFloat) {
         guard let dv = view.documentView, let sv = dv.enclosingScrollView else { return }
+        userPageNavigatedAt = Date()
         var o = sv.contentView.bounds.origin
         let delta = sv.contentView.bounds.height * 0.9 * dir
         o.y += dv.isFlipped ? delta : -delta
@@ -596,7 +630,20 @@ final class ReaderController: NSObject, ObservableObject {
 
     @objc func viewMoved() {
         if focusView != nil, !restoring { layoutFocus() }
-        if !restoring && holdTarget == nil { lastScroll = Date() }
+        if !restoring && holdTarget == nil {
+            lastScroll = Date()
+            if !loading && Date() >= programmaticScrollUntil {
+                if NSEvent.pressedMouseButtons != 0 {
+                    userPageNavigatedAt = Date()
+                }
+                if userPageNavigatedAt > lastNarrationScrollAt, let d = view.document, let p = view.currentPage {
+                    let i = d.index(for: p)
+                    if i != NSNotFound, i >= 0, i != currentPageIndex {
+                        pageChanged()
+                    }
+                }
+            }
+        }
         if popup != .none { updateAnchor() }
         let sp = view.scaleFactor * 100
         if abs(sp - scalePercent) > 0.5 { scalePercent = sp }
@@ -709,8 +756,10 @@ final class ReaderController: NSObject, ObservableObject {
 
     func jump(to c: Card) {
         guard let d = view.document, let p = d.safePage(c.page) else { return }
+        userPageNavigatedAt = Date()
         let r = c.rects.reduce(CGRect.null) { $0.union($1) }
         view.go(to: CGRect(x: r.minX, y: r.maxY + 80, width: 1, height: 1), on: p)
+        if currentPageIndex != c.page { currentPageIndex = c.page }
         let flash = PDFAnnotation(bounds: r.insetBy(dx: -3, dy: -3), forType: .square, withProperties: nil)
         flash.color = NSColor.systemRed
         let b = PDFBorder(); b.lineWidth = 2; flash.border = b
@@ -808,6 +857,7 @@ final class ReaderController: NSObject, ObservableObject {
         guard let safe = r.sanitized(in: shown.bounds(for: .cropBox)) else { clearNarrationHighlight(); return }
         r = safe
         focusPage = i; focusRect = r
+        lastNarrationScrollAt = Date()
         if currentPageIndex != i { currentPageIndex = i }
         installFocusLayer()
         layoutFocus(animated: true)
@@ -959,12 +1009,14 @@ final class ReaderController: NSObject, ObservableObject {
                     t.invalidate()
                     self.scrollTimer = nil
                     self.restoring = false
+                    self.lastNarrationScrollAt = Date()
                     if let fp = self.focusPage, self.currentPageIndex != fp {
                         self.currentPageIndex = fp
                     }
                     // Re-assert once more in case PDFKit performed an async tile/page layout pass
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
-                        guard let self, self.scrollTimer == nil, let fp = self.focusPage,
+                        guard let self, self.scrollTimer == nil, self.userPageNavigatedAt <= self.lastNarrationScrollAt,
+                              let fp = self.focusPage,
                               let pg = self.view.document?.safePage(fp),
                               let dv = self.view.documentView, let sv = dv.enclosingScrollView else { return }
                         let clip = sv.contentView
@@ -975,6 +1027,7 @@ final class ReaderController: NSObject, ObservableObject {
                         let ty = dv.isFlipped ? idoc.minY - topPad : idoc.maxY + topPad - vh
                         let ey = min(max(dv.isFlipped ? 0 : -vh * 0.78, ty), max(0, dv.bounds.height - vh * 0.22))
                         if abs(ey - clip.bounds.origin.y) > 4 {
+                            self.lastNarrationScrollAt = Date()
                             clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: ey))
                             sv.reflectScrolledClipView(clip)
                             self.layoutFocus()
@@ -989,10 +1042,15 @@ final class ReaderController: NSObject, ObservableObject {
 
     private func clip0Sane(_ b: CGRect) -> Bool { b.origin.isSane && b.width.isSane && b.height.isSane && b.height > 0 }
 
-    func goToPage(_ i: Int) {
+    func goToPage(_ i: Int, userInitiated: Bool = true) {
         guard let d = view.document, d.pageCount > 0 else { return }
         let clamped = min(max(0, i), d.pageCount - 1)
         initialLoadedPage = nil
+        if userInitiated {
+            userPageNavigatedAt = Date()
+        } else {
+            lastNarrationScrollAt = Date()
+        }
         if let p = d.safePage(clamped) {
             view.go(to: p)
             currentPageIndex = clamped
@@ -1055,6 +1113,27 @@ final class ReaderController: NSObject, ObservableObject {
             m.insertItem(t, at: 0)
         }
         guard let docId = docId, let ses = store.sessions[docId] else { return }
+        if let pt = contextMenuPointInView, let d = view.document, let pg = view.page(for: pt, nearest: true) {
+            let idx = d.index(for: pg)
+            if idx != NSNotFound && idx >= 0 && idx < d.pageCount {
+                userPageNavigatedAt = Date()
+                currentPageIndex = idx
+            }
+        }
+        m.addItem(.separator())
+        let narrateHere = NSMenuItem(title: "🎧 " + LF("从当前页开始讲 (p.%d)", currentPageIndex + 1), action: #selector(menuNarrateFromCurrentPage), keyEquivalent: "")
+        narrateHere.target = self
+        m.addItem(narrateHere)
+        if let saved = Narrator.savedProgress(docId), (saved.page != currentPageIndex || saved.seg > 0) {
+            let narrateResume = NSMenuItem(title: "▶️ " + LF("继续上次讲解 (p.%d · 第 %d 段)", saved.page + 1, saved.seg + 1), action: #selector(menuNarrateResumeSaved), keyEquivalent: "")
+            narrateResume.target = self
+            m.addItem(narrateResume)
+        }
+        if Narrator.shared.state != .idle && Narrator.shared.docId == docId {
+            let stopNarr = NSMenuItem(title: "⏹ " + L("退出 AI 解读"), action: #selector(menuStopNarration), keyEquivalent: "")
+            stopNarr.target = self
+            m.addItem(stopNarr)
+        }
         m.addItem(.separator())
         let truncBelow = NSMenuItem(title: "✂️ " + L("从此处开始截断后面"), action: #selector(menuTruncateBelow), keyEquivalent: "")
         truncBelow.target = self
@@ -1121,6 +1200,19 @@ final class ReaderController: NSObject, ObservableObject {
     @objc func menuRestorePDF() {
         guard let docId = docId, let ses = store.session(docId) else { return }
         PDFEditor.restoreOriginal(session: ses)
+    }
+    @objc func menuNarrateFromCurrentPage() {
+        guard let docId = docId, let ses = store.session(docId) else { return }
+        let cur = syncCurrentPageFromView()
+        Narrator.shared.start(docId: docId, doc: ses.document(variant), title: ses.doc.title, from: cur, resume: false)
+    }
+    @objc func menuNarrateResumeSaved() {
+        guard let docId = docId, let ses = store.session(docId), let saved = Narrator.savedProgress(docId) else { return }
+        Narrator.shared.start(docId: docId, doc: ses.document(variant), title: ses.doc.title, from: saved.page, resume: true)
+    }
+    @objc func menuStopNarration() {
+        Narrator.shared.stop()
+        clearNarrationHighlight()
     }
 }
 

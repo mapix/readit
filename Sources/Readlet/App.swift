@@ -59,6 +59,7 @@ struct ReadletApp: App {
                 Button(L("缩小")) { ReaderController.shared.zoom(1 / 1.15) }.keyboardShortcut("-")
                 Button(L("适合宽度")) { ReaderController.shared.fitWidth() }.keyboardShortcut("0")
                 Divider()
+                Button(L("从当前页开始讲")) { ReaderController.shared.menuNarrateFromCurrentPage() }.keyboardShortcut("l", modifiers: [.command, .option])
                 Button(L("导出 AI 解读为 MP4")) { NarrationExporter.shared.start() }
             }
         }
