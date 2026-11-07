@@ -1111,10 +1111,15 @@ extension WebDocController {
                 'body > nav',
                 'body > footer',
                 'body > aside',
+                'article aside',
+                'main aside',
                 'header:not(.hero):not(:has(h1))',
                 'nav[role="navigation"]',
                 '[role="banner"]:not(.hero):not(:has(h1))',
                 '[role="contentinfo"]',
+                '[role="complementary"]',
+                '[class*="ConstellationPanel"]',
+                '[class*="TableOfContentsContainer"]',
                 '.cookie-banner, .cookie-consent, #cookie-banner, [class*="cookie-"]',
                 '.newsletter-signup, .share-bar, .social-share, .floating-share',
                 '.ad-container, .ads-wrapper, .advertisement, [id^="google_ads"]'
@@ -1124,7 +1129,8 @@ extension WebDocController {
                 try {
                     document.querySelectorAll(sel).forEach(el => {
                         if (protectedSet.has(el)) return;
-                        if (roots.some(r => el.contains(r) || r.contains(el))) return;
+                        if (roots.some(r => el.contains(r))) return;
+                        if (el.querySelector && el.querySelector('h1')) return;
                         if (hasInteractiveContent(el)) return;
                         el.setAttribute('data-readlet-clutter', '1');
                     });

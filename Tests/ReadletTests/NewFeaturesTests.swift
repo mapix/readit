@@ -781,6 +781,126 @@ final class NewFeaturesTests: XCTestCase {
         let vizCount = Int(vizCountStr) ?? 0
         XCTAssertGreaterThan(vizCount, 0, "Interactive .viz-box visualizations on MoE blogpost must remain intact in live DOM")
     }
+
+    func testWebExtractPreservesMediaColumnFiguresNextImageCoverAndTypography() async throws {
+        let readabilityURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Resources/web/Readability.js")
+        let extractURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Resources/web/readit-extract.js")
+        let readabilityJS = try String(contentsOf: readabilityURL, encoding: .utf8)
+        let extractJS = try String(contentsOf: extractURL, encoding: .utf8)
+
+        let html = """
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+        <meta charset="utf-8">
+        <title>The components of agent memory \\ Anthropic</title>
+        <meta property="og:site_name" content="Anthropic">
+        <meta name="twitter:creator" content="@AnthropicAI">
+        <style>
+        @font-face {
+            font-family: anthropicSerif;
+            src: url("/fonts/anthropic-serif.woff2") format("woff2");
+            font-weight: 300 800;
+            font-style: normal;
+        }
+        @font-face {
+            font-family: anthropicSans;
+            src: url("/fonts/anthropic-sans.woff2") format("woff2");
+            font-weight: 300 800;
+            font-style: normal;
+        }
+        @font-face {
+            font-family: jetBrainsMono;
+            src: url("/fonts/jetbrains-mono.woff2") format("woff2");
+            font-weight: 400;
+            font-style: normal;
+        }
+        body {
+            font-family: anthropicSerif, "anthropicSerif Fallback", Georgia, serif;
+            font-size: 17px;
+            line-height: 1.6;
+        }
+        h1, h2, h3, figcaption {
+            font-family: anthropicSans, "anthropicSans Fallback", sans-serif;
+        }
+        h1 { font-size: 36px; font-weight: 700; line-height: 1.15; }
+        h2 { font-size: 22px; font-weight: 700; line-height: 1.25; }
+        p { font-size: 17px; line-height: 27.2px; margin-bottom: 20px; }
+        code { font-family: jetBrainsMono, "jetBrainsMono Fallback", monospace; font-size: 14.5px; }
+        figcaption { font-size: 13px; line-height: 1.45; }
+        </style>
+        </head>
+        <body>
+        <main>
+        <article class="research-article">
+            <header class="VYxBBq_Header" style="visibility:hidden">
+                <h1 class="title">The components of agent memory</h1>
+                <div class="meta"><span>Apr 22, 2026</span></div>
+                <div class="VYxBBq_CoverImage">
+                    <img alt="Cover illustration" src="/_next/image?url=https%3A%2F%2Fwww-cdn.anthropic.com%2Fimages%2Fcover-hero.svg&amp;w=1920&amp;q=75" width="1000" height="1000">
+                </div>
+            </header>
+            <div class="PA4F1q_body">
+                <p>Modern language model agents operate over long horizons and require structured memory architectures to manage context effectively across multi-step reasoning tasks. Without explicit memory compression and retrieval mechanisms, long-running coding and research agents rapidly saturate their context window with raw tool outputs and intermediate search results.</p>
+                <p>In this post, we benchmark how different memory components interact across realistic software engineering and document synthesis tasks using <code>SubagentMemory</code> and <code>ContextCompactor</code>. We evaluate both episodic memory stores and semantic workspace summaries across hundreds of multi-hour sessions.</p>
+                <h2>Memory retrieval mechanisms</h2>
+                <p>When an agent queries past trajectories, it can rely on lexical search, vector embeddings, or hierarchical summaries maintained by background tasks across long sessions. Each retrieval mechanism offers distinct trade-offs in latency, precision, and token efficiency when scaling to large codebases.</p>
+                <div class="PA4F1q_media-column" data-type="image" data-width="full-width">
+                    <figure class="figure-wrap">
+                        <div class="img-wrap">
+                            <img alt="Architecture diagram" width="2650" height="1484" src="/_next/image?url=https%3A%2F%2Fwww-cdn.anthropic.com%2Fimages%2Ffig1.png&amp;w=640&amp;q=75" srcset="/_next/image?url=https%3A%2F%2Fwww-cdn.anthropic.com%2Fimages%2Ffig1.png&amp;w=640&amp;q=75 640w, /_next/image?url=https%3A%2F%2Fwww-cdn.anthropic.com%2Fimages%2Ffig1.png&amp;w=3840&amp;q=75 3840w">
+                        </div>
+                        <figcaption style="--figure-label:&quot;Figure 1&quot;">Overview of the memory hierarchy and context window management.</figcaption>
+                    </figure>
+                </div>
+                <p>Across our evaluations, structured file-backed memory consistently outperformed unindexed transcript replay while keeping token overhead bounded across extended agent runs.</p>
+            </div>
+            <section class="UxquqW_Section">
+                <div class="UxquqW_Content" style="visibility:hidden">
+                    <h3>Authors &amp; acknowledgements</h3>
+                    <p>Written by Lance Martin, with contributions from the Anthropic Research team.</p>
+                </div>
+            </section>
+        </article>
+        </main>
+        </body>
+        </html>
+        """
+
+        let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: 1280, height: 900))
+        wv.loadHTMLString(html, baseURL: URL(string: "https://www.anthropic.com/research/components-of-agent-memory"))
+        for _ in 0..<40 {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            let loaded = await evalString(wv, "document.querySelector('article.research-article') ? 'yes' : 'no'")
+            if loaded == "yes" { break }
+        }
+
+        let payloadJSON = try await wv.evaluateJavaScript(readabilityJS + "\n;\n" + extractJS + "\nwindow.__readitExtract();") as? String ?? "{}"
+        let extracted = try JSONDecoder().decode(WebImporter.Extracted.self, from: Data(payloadJSON.utf8))
+
+        XCTAssertTrue(extracted.ok)
+        // Must preserve both the cover image AND the in-body figure inside div.PA4F1q_media-column
+        XCTAssertEqual(extracted.imageURLs.count, 2)
+        // Must unwrap Next.js /_next/image?url=... proxy to the underlying CDN URLs
+        XCTAssertEqual(extracted.imageURLs.first, "https://www-cdn.anthropic.com/images/cover-hero.svg")
+        XCTAssertEqual(extracted.imageURLs.last, "https://www-cdn.anthropic.com/images/fig1.png")
+        // Must preserve Figure 1 label from --figure-label CSS custom property
+        XCTAssertTrue(extracted.html.contains("class=\"readit-fig-label\">Figure 1</span>"))
+        // Must preserve trailing Authors & acknowledgements section even when style="visibility:hidden"
+        XCTAssertTrue(extracted.html.contains("Authors &amp; acknowledgements") || extracted.html.contains("Authors & acknowledgements"))
+        XCTAssertTrue(extracted.html.contains("Written by Lance Martin"))
+        // Must not duplicate @AnthropicAI Twitter handle as author when site is Anthropic
+        XCTAssertFalse(extracted.html.contains("@AnthropicAI"))
+        // Must capture @font-face URLs and computed typography without Next.js "* Fallback" override
+        XCTAssertEqual(extracted.fontURLs.count, 3)
+        XCTAssertTrue(extracted.html.contains("anthropicSerif"))
+        XCTAssertFalse(extracted.html.contains("anthropicSerif Fallback"))
+        XCTAssertTrue(extracted.html.contains("jetBrainsMono"))
+    }
 }
 
 

@@ -188,15 +188,25 @@ final class WebImporter: NSObject, ObservableObject, WKNavigationDelegate {
             canOpenInteractive = browser == nil
             throw ImportError.message(blocked ? L("网站要求登录或人机验证") : L("没有识别到正文（可能需要登录，或页面不是文章）"))
         }
-        // images
+        // images & web fonts
         phase = .images
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("readlet-web-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let files = await downloadImages(info.imageURLs, referer: info.url, into: dir)
+        let imageURLs = info.imageURLs
+        let fontURLs = info.fontURLs
+        let refererURL = info.url
+        async let imageFilesTask = downloadImages(imageURLs, referer: refererURL, into: dir)
+        async let fontFilesTask = downloadFonts(fontURLs, referer: refererURL, into: dir)
+        let files = await imageFilesTask
+        let fontFiles = await fontFilesTask
         var html = info.html
         for (i, u) in info.imageURLs.enumerated() {
             let src = files[i] ?? WebImporter.attr(u)
             html = html.replacingOccurrences(of: "src=\"readit-img-\(i)\"", with: "src=\"\(src)\"")
+        }
+        for (i, u) in info.fontURLs.enumerated() {
+            let src = fontFiles[i] ?? WebImporter.attr(u)
+            html = html.replacingOccurrences(of: "url(\"readit-font-\(i)\")", with: "url(\"\(src)\")")
         }
         // a <base> would send relative image paths back to the site; the page URL is kept as metadata only
         html = html.replacingOccurrences(of: "<base href=", with: "<meta name=\"readit-source\" content=")
@@ -212,8 +222,8 @@ final class WebImporter: NSObject, ObservableObject, WKNavigationDelegate {
     /// render a prepared print document (index.html + assets) and print it to an A4 PDF next to it
     func printDocument(index: URL, readAccess: URL, name: String) async throws -> URL {
         phase = .rendering; status = L("正在生成 PDF…")
-        let pv = makeWebView(width: 760)
-        let pw = NSWindow(contentRect: NSRect(x: -30000, y: -30000, width: 760, height: 1100), styleMask: [.borderless], backing: .buffered, defer: false)
+        let pv = makeWebView(width: 680)
+        let pw = NSWindow(contentRect: NSRect(x: -30000, y: -30000, width: 680, height: 1100), styleMask: [.borderless], backing: .buffered, defer: false)
         pw.isReleasedWhenClosed = false
         pw.contentView = pv
         pw.orderFrontRegardless()
@@ -384,16 +394,17 @@ final class WebImporter: NSObject, ObservableObject, WKNavigationDelegate {
     }
 
     private func waitForImages(_ wv: WKWebView) async throws {
+        _ = try? await wv.callAsyncJavaScript("if (document.fonts && document.fonts.ready) { await document.fonts.ready; } return true;", arguments: [:], in: nil, contentWorld: .page)
         for _ in 0..<60 {
             try Task.checkCancellation()
-            let done = (try? await wv.evaluateJavaScript("Array.from(document.images).every(function(i){return i.complete})") as? Bool) ?? true
+            let done = (try? await wv.evaluateJavaScript("Array.from(document.images).every(function(i){return i.complete}) && (!document.fonts || document.fonts.status === 'loaded')") as? Bool) ?? true
             if done { break }
             try await Task.sleep(nanoseconds: 200_000_000)
         }
         try await Task.sleep(nanoseconds: 300_000_000)
     }
 
-    private func downloadImages(_ urls: [String], referer: String, into dir: URL) async -> [Int: String] {
+    func downloadImages(_ urls: [String], referer: String, into dir: URL) async -> [Int: String] {
         guard !urls.isEmpty else { return [:] }
         status = LF("正在下载图片 %d 张…", urls.count)
         let ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) " + WebImporter.userAgentSuffix
@@ -403,13 +414,42 @@ final class WebImporter: NSObject, ObservableObject, WKNavigationDelegate {
             var req = URLRequest(url: u, timeoutInterval: 25)
             req.setValue(ua, forHTTPHeaderField: "User-Agent")
             req.setValue(referer, forHTTPHeaderField: "Referer")
-            req.setValue("image/avif,image/webp,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5", forHTTPHeaderField: "Accept")
+            req.setValue("image/png,image/jpeg,image/webp,image/svg+xml,image/*;q=0.8,*/*;q=0.5", forHTTPHeaderField: "Accept")
             guard let r = try? await URLSession.shared.data(for: req),
                   let http = r.1 as? HTTPURLResponse, (200..<300).contains(http.statusCode),
                   r.0.count > 64, r.0.count < 30_000_000 else { return (i, nil) }
             let data = r.0
             let name = "img-\(i).\(WebImporter.imageExtension(mime: http.mimeType, url: u, data: data))"
             do { try data.write(to: dir.appendingPathComponent(name)) } catch { return (i, nil) }
+            return (i, name)
+        }
+        await withTaskGroup(of: (Int, String?).self) { g in
+            var next = 0
+            while next < min(6, urls.count) { let i = next; g.addTask { await fetch(i, urls[i]) }; next += 1 }
+            while let r = await g.next() {
+                if let name = r.1 { out[r.0] = name }
+                if next < urls.count { let i = next; g.addTask { await fetch(i, urls[i]) }; next += 1 }
+            }
+        }
+        return out
+    }
+
+    func downloadFonts(_ urls: [String], referer: String, into dir: URL) async -> [Int: String] {
+        guard !urls.isEmpty else { return [:] }
+        let ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) " + WebImporter.userAgentSuffix
+        var out: [Int: String] = [:]
+        @Sendable func fetch(_ i: Int, _ s: String) async -> (Int, String?) {
+            guard let u = URL(string: s) else { return (i, nil) }
+            var req = URLRequest(url: u, timeoutInterval: 18)
+            req.setValue(ua, forHTTPHeaderField: "User-Agent")
+            req.setValue(referer, forHTTPHeaderField: "Referer")
+            req.setValue("font/woff2,font/woff,font/ttf,application/font-woff2,*/*;q=0.8", forHTTPHeaderField: "Accept")
+            guard let r = try? await URLSession.shared.data(for: req),
+                  let http = r.1 as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+                  r.0.count > 128, r.0.count < 15_000_000 else { return (i, nil) }
+            let ext = ["woff2", "woff", "ttf", "otf"].contains(u.pathExtension.lowercased()) ? u.pathExtension.lowercased() : "woff2"
+            let name = "font-\(i).\(ext)"
+            do { try r.0.write(to: dir.appendingPathComponent(name)) } catch { return (i, nil) }
             return (i, name)
         }
         await withTaskGroup(of: (Int, String?).self) { g in
@@ -432,7 +472,7 @@ final class WebImporter: NSObject, ObservableObject, WKNavigationDelegate {
             NSPrintInfo.AttributeKey.jobSavingURL: url,
         ])
         pi.paperSize = WebImporter.pageSize
-        pi.topMargin = 46; pi.bottomMargin = 50; pi.leftMargin = 46; pi.rightMargin = 46
+        pi.topMargin = 44; pi.bottomMargin = 48; pi.leftMargin = 42; pi.rightMargin = 42
         pi.horizontalPagination = .fit
         pi.verticalPagination = .automatic
         pi.isHorizontallyCentered = true
@@ -483,6 +523,7 @@ final class WebImporter: NSObject, ObservableObject, WKNavigationDelegate {
         var url: String
         var textLength: Int?
         var imageURLs: [String]
+        var fontURLs: [String]
         var html: String
 
         /// lenient: JSONSerialization accepts what strict decoders reject; missing fields get defaults
@@ -498,10 +539,11 @@ final class WebImporter: NSObject, ObservableObject, WKNavigationDelegate {
             url = o["url"] as? String ?? ""
             textLength = (o["textLength"] as? NSNumber)?.intValue
             imageURLs = o["imageURLs"] as? [String] ?? []
+            fontURLs = o["fontURLs"] as? [String] ?? []
             html = o["html"] as? String ?? ""
         }
 
-        enum CodingKeys: String, CodingKey { case ok, reason, title, byline, site, date, url, textLength, imageURLs, html }
+        enum CodingKeys: String, CodingKey { case ok, reason, title, byline, site, date, url, textLength, imageURLs, fontURLs, html }
         init(from d: Decoder) throws {
             let c = try d.container(keyedBy: CodingKeys.self)
             ok = (try? c.decode(Bool.self, forKey: .ok)) ?? false
@@ -513,6 +555,7 @@ final class WebImporter: NSObject, ObservableObject, WKNavigationDelegate {
             url = (try? c.decode(String.self, forKey: .url)) ?? ""
             textLength = try? c.decode(Int.self, forKey: .textLength)
             imageURLs = (try? c.decode([String].self, forKey: .imageURLs)) ?? []
+            fontURLs = (try? c.decode([String].self, forKey: .fontURLs)) ?? []
             html = (try? c.decode(String.self, forKey: .html)) ?? ""
         }
     }

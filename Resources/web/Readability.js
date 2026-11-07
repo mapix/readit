@@ -2480,6 +2480,22 @@ Readability.prototype = {
         return false;
       }
 
+      // keep figure / picture / code / math / article-image wrappers (e.g. class="PA4F1q_media-column")
+      // that would otherwise get a negative class weight from "media" or "scroll"
+      var matchStr = (node.className || "") + " " + (node.id || "");
+      var isJunkChrome =
+        /(-ad-|advert|sponsor|outbrain|taboola|disqus|comment|related|recommend|share|social|cookie|consent|popup|modal|newsletter|subscribe|sidebar)/i.test(
+          matchStr
+        );
+      if (
+        !isJunkChrome &&
+        node.querySelector &&
+        (node.querySelector("figure, picture, pre, math") ||
+          (node.querySelector("img") && this._getLinkDensity(node) < 0.2))
+      ) {
+        return false;
+      }
+
       var weight = this._getClassWeight(node);
 
       this.log("Cleaning Conditionally", node);
