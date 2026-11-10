@@ -538,6 +538,15 @@ struct Notebook: Codable, Identifiable, Hashable {
     var name: String
     var docIds: [UUID] = []
     var root: MindNode
+    var updatedAt: Date? = nil
+
+    init(id: UUID = UUID(), name: String, docIds: [UUID] = [], root: MindNode, updatedAt: Date? = Date()) {
+        self.id = id
+        self.name = name
+        self.docIds = docIds
+        self.root = root
+        self.updatedAt = updatedAt
+    }
 }
 
 struct CardLink: Codable, Hashable {
@@ -545,7 +554,7 @@ struct CardLink: Codable, Hashable {
     var b: UUID
 }
 
-struct Library: Codable {
+struct Library: Codable, Equatable {
     var docs: [Doc] = []
     var notebooks: [Notebook] = []
     var cards: [Card] = []
@@ -672,6 +681,7 @@ final class Store: ObservableObject {
 
     var sessions: [UUID: DocSession] = [:]
     private var saveWork: DispatchWorkItem?
+    private(set) var localMutationVersion: UInt64 = 0
 
     init() {
         if let d = try? Data(contentsOf: Paths.libraryFile), let l = try? JSONDecoder().decode(Library.self, from: d) { lib = l }
@@ -730,18 +740,35 @@ final class Store: ObservableObject {
         if changed { save() }
     }
 
-    /// write immediately (imports, deletes — never lose these to a quit within the debounce window)
-    func saveNow() {
+    /// Flushes any pending debounced disk write immediately so disk and memory stay consistent before sync.
+    func flushPendingSave() {
+        guard saveWork != nil else { return }
         saveWork?.cancel()
+        saveWork = nil
         if let d = try? JSONEncoder().encode(lib) { try? d.write(to: Paths.libraryFile, options: .atomic) }
         UserDefaults.standard.set(currentNotebookId?.uuidString, forKey: "lastNotebook")
+        UserDefaults.standard.set(currentDocId?.uuidString, forKey: "lastDoc")
+        UserDefaults.standard.set(variant.rawValue, forKey: "lastVariant")
+    }
+
+    /// write immediately (imports, deletes, notebooks — never lose these to a quit or in-flight sync within the debounce window)
+    func saveNow() {
+        localMutationVersion &+= 1
+        saveWork?.cancel()
+        saveWork = nil
+        if let d = try? JSONEncoder().encode(lib) { try? d.write(to: Paths.libraryFile, options: .atomic) }
+        UserDefaults.standard.set(currentNotebookId?.uuidString, forKey: "lastNotebook")
+        UserDefaults.standard.set(currentDocId?.uuidString, forKey: "lastDoc")
+        UserDefaults.standard.set(variant.rawValue, forKey: "lastVariant")
         CloudSync.shared.notifyLocalChange()
     }
 
     func save() {
+        localMutationVersion &+= 1
         saveWork?.cancel()
         let w = DispatchWorkItem { [weak self] in
             guard let self else { return }
+            self.saveWork = nil
             if let d = try? JSONEncoder().encode(self.lib) { try? d.write(to: Paths.libraryFile, options: .atomic) }
             UserDefaults.standard.set(self.currentNotebookId?.uuidString, forKey: "lastNotebook")
             UserDefaults.standard.set(self.currentDocId?.uuidString, forKey: "lastDoc")
@@ -758,11 +785,24 @@ final class Store: ObservableObject {
         let oldAnchors = Dictionary(uniqueKeysWithValues: lib.docs.map { ($0.id, $0.webAnchor) })
         let goneCards = Set(lib.cards.map(\.id)).subtracting(merged.cards.map(\.id))
         lib = merged
+        let myDeviceId = DeviceIdentity.currentDeviceId
+        let myDeviceName = DeviceIdentity.currentDeviceName
         for d in lib.docs {
             if let rp = d.readPage {
                 UserDefaults.standard.set(rp, forKey: "page-" + d.id.uuidString)
             }
             guard d.pendingConflict == nil else { continue }
+            // Only jump an open reader window if the winning reading progress actually came from another device
+            let cameFromOtherDevice: Bool = {
+                if let devId = d.lastReadDeviceId, !devId.isEmpty {
+                    return devId != myDeviceId
+                }
+                if let devName = d.lastReadDevice, !devName.isEmpty {
+                    return devName != myDeviceName
+                }
+                return false
+            }()
+            guard cameFromOtherDevice else { continue }
             if d.isWeb {
                 if let anchor = d.webAnchor, oldAnchors[d.id] != anchor {
                     #if os(macOS)
@@ -818,31 +858,34 @@ final class Store: ObservableObject {
     // MARK: notebooks & docs
     func updateNotebook(_ f: (inout Notebook) -> Void) {
         guard let i = lib.notebooks.firstIndex(where: { $0.id == currentNotebookId }) else { return }
-        f(&lib.notebooks[i]); save()
+        f(&lib.notebooks[i])
+        lib.notebooks[i].updatedAt = Date()
+        saveNow()
     }
 
     func newNotebook(name: String = L("新笔记本")) {
-        let nb = Notebook(name: name, root: MindNode(title: name))
+        let nb = Notebook(name: name, root: MindNode(title: name), updatedAt: Date())
         lib.notebooks.append(nb)
         currentNotebookId = nb.id
         currentDocId = nil
-        save()
+        saveNow()
     }
 
     func renameNotebook(_ id: UUID, _ name: String) {
         guard let i = lib.notebooks.firstIndex(where: { $0.id == id }) else { return }
         lib.notebooks[i].name = name
         lib.notebooks[i].root.title = name
-        save()
+        lib.notebooks[i].updatedAt = Date()
+        saveNow()
     }
 
     func deleteNotebook(_ id: UUID) {
         registerUndo(L("删除笔记本"))
         CloudSync.shared.recordDeletion(id)
         lib.notebooks.removeAll { $0.id == id }
-        if lib.notebooks.isEmpty { lib.notebooks.append(Notebook(name: L("我的笔记本"), root: MindNode(title: L("我的笔记本")))) }
+        if lib.notebooks.isEmpty { lib.notebooks.append(Notebook(name: L("我的笔记本"), root: MindNode(title: L("我的笔记本")), updatedAt: Date())) }
         if currentNotebookId == id { currentNotebookId = lib.notebooks.first?.id; currentDocId = currentNotebook?.docIds.first }
-        save()
+        saveNow()
     }
 
     @discardableResult
@@ -1020,6 +1063,7 @@ final class Store: ObservableObject {
             lib.docs[i].readUpdatedAt = now
             lib.docs[i].lastReadDevice = DeviceIdentity.currentDeviceName
             lib.docs[i].lastReadDeviceId = DeviceIdentity.currentDeviceId
+            lib.docs[i].pendingConflict = nil
             lib.docs[i].recordDeviceSnapshot(
                 page: secIndex,
                 webAnchor: normalizedAnchor,
@@ -1143,6 +1187,7 @@ final class Store: ObservableObject {
             lib.docs[i].readUpdatedAt = now
             lib.docs[i].lastReadDevice = DeviceIdentity.currentDeviceName
             lib.docs[i].lastReadDeviceId = DeviceIdentity.currentDeviceId
+            lib.docs[i].pendingConflict = nil
             lib.docs[i].recordDeviceSnapshot(page: clampedPage, at: now)
             UserDefaults.standard.set(clampedPage, forKey: "page-" + docId.uuidString)
             changed = true
@@ -1265,8 +1310,11 @@ final class Store: ObservableObject {
 
     func addDocToNotebook(_ docId: UUID, notebook: UUID? = nil) {
         guard let i = lib.notebooks.firstIndex(where: { $0.id == (notebook ?? currentNotebookId) }) else { return }
-        if !lib.notebooks[i].docIds.contains(docId) { lib.notebooks[i].docIds.append(docId) }
-        save()
+        if !lib.notebooks[i].docIds.contains(docId) {
+            lib.notebooks[i].docIds.append(docId)
+            lib.notebooks[i].updatedAt = Date()
+        }
+        saveNow()
     }
 
     func renameDoc(_ id: UUID, _ title: String) {

@@ -901,6 +901,62 @@ final class NewFeaturesTests: XCTestCase {
         XCTAssertFalse(extracted.html.contains("anthropicSerif Fallback"))
         XCTAssertTrue(extracted.html.contains("jetBrainsMono"))
     }
+
+    func testCloudSyncBackwardsPageTurnToPageOneAndNewNotebookPreserved() {
+        let docId = UUID()
+        let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+        let t1 = t0.addingTimeInterval(30) // User turned back from Page 10 (index 9) to Page 1 (index 0)
+
+        var remoteDoc = Doc(id: docId, title: "Sync Regression Test", pageCount: 20, updatedAt: t0)
+        remoteDoc.readPage = 9
+        remoteDoc.readUpdatedAt = t0
+        remoteDoc.lastReadDevice = "Mac"
+        remoteDoc.lastReadDeviceId = "mac-1"
+
+        var localDoc = remoteDoc
+        localDoc.readPage = 0
+        localDoc.readUpdatedAt = t1
+        localDoc.lastReadDevice = "Mac"
+        localDoc.lastReadDeviceId = "mac-1"
+
+        let defaultNb = Notebook(name: "我的笔记本", docIds: [docId], root: MindNode(title: "我的笔记本"), updatedAt: t0)
+        let newlyCreatedNb = Notebook(name: "新建笔记本", docIds: [], root: MindNode(title: "新建笔记本"), updatedAt: t1)
+
+        let remoteLib = Library(
+            docs: [remoteDoc],
+            notebooks: [defaultNb],
+            cards: [],
+            links: []
+        )
+        let localLib = Library(
+            docs: [localDoc],
+            notebooks: [defaultNb, newlyCreatedNb],
+            cards: [],
+            links: []
+        )
+
+        // 1. Local has turned back to Page 1 (index 0) at t1 > t0 and created a new notebook
+        let (merged1, _, remoteChanged1) = CloudSync.mergeLibraries(
+            local: localLib,
+            remote: remoteLib,
+            deleted: []
+        )
+        XCTAssertEqual(merged1.docs.first?.readPage, 0, "Turning back from Page 10 to Page 1 must NOT snap back to Page 10")
+        XCTAssertEqual(merged1.docs.first?.readUpdatedAt, t1)
+        XCTAssertNil(merged1.docs.first?.pendingConflict, "Same-device backwards page turn must not create a conflict")
+        XCTAssertEqual(merged1.notebooks.count, 2, "Newly created notebook must be preserved during sync merge")
+        XCTAssertTrue(merged1.notebooks.contains(where: { $0.id == newlyCreatedNb.id && $0.name == "新建笔记本" }))
+        XCTAssertTrue(remoteChanged1)
+
+        // 2. Even if localLib is passed as `remote` (e.g. re-merging live Store.shared.lib with background sync result)
+        let (merged2, _, _) = CloudSync.mergeLibraries(
+            local: remoteLib,
+            remote: localLib,
+            deleted: []
+        )
+        XCTAssertEqual(merged2.docs.first?.readPage, 0, "Newer Page 1 timestamp must win regardless of merge direction")
+        XCTAssertEqual(merged2.notebooks.count, 2, "Newly created notebook must be preserved regardless of merge direction")
+    }
 }
 
 

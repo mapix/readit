@@ -78,6 +78,7 @@ final class CloudSync: ObservableObject {
     private var timer: Timer?
     private var isApplyingRemoteChanges = false
     private var isRunningSync = false
+    private var needsFollowUpSync = false
     private var started = false
 
     private init() {}
@@ -471,22 +472,29 @@ final class CloudSync: ObservableObject {
                 // Reading progress merge & conflict detection
                 let lReadTime = l.readUpdatedAt ?? lTime
                 let rReadTime = r.readUpdatedAt ?? rTime
+                let lDevId = l.lastReadDeviceId ?? ""
+                let rDevId = r.lastReadDeviceId ?? ""
+                let lDevName = l.lastReadDevice ?? "Mac"
+                let rDevName = r.lastReadDevice ?? "iPhone"
+                let differentDevices: Bool = {
+                    if !lDevId.isEmpty && !rDevId.isEmpty {
+                        if lDevId == rDevId { return false }
+                        if let ln = l.lastReadDevice, let rn = r.lastReadDevice, !ln.isEmpty, ln == rn {
+                            return false
+                        }
+                        return true
+                    }
+                    if let ln = l.lastReadDevice, let rn = r.lastReadDevice, !ln.isEmpty, !rn.isEmpty {
+                        return ln != rn
+                    }
+                    return false
+                }()
                 if mergedDoc.isWeb, (l.webAnchor != nil || r.webAnchor != nil) {
                     let la = l.webAnchor ?? WebReadingAnchor(scrollFraction: 0)
                     let ra = r.webAnchor ?? WebReadingAnchor(scrollFraction: 0)
                     let fracDelta = abs(la.scrollFraction - ra.scrollFraction)
-                    let lDevId = l.lastReadDeviceId ?? ""
-                    let rDevId = r.lastReadDeviceId ?? ""
-                    let lDevName = l.lastReadDevice ?? "Mac"
-                    let rDevName = r.lastReadDevice ?? "iPhone"
-                    let differentDevices: Bool = {
-                        if !lDevId.isEmpty && !rDevId.isEmpty { return lDevId != rDevId }
-                        if l.lastReadDevice != nil && r.lastReadDevice != nil { return lDevName != rDevName }
-                        return true
-                    }()
-                    let newerWentBackwards = (rReadTime > lReadTime && ra.scrollFraction + 0.15 < la.scrollFraction)
-                        || (lReadTime > rReadTime && la.scrollFraction + 0.15 < ra.scrollFraction)
-                    if differentDevices && fracDelta >= 0.25 && newerWentBackwards {
+                    let remoteWentBackwards = rReadTime > lReadTime && ra.scrollFraction + 0.15 < la.scrollFraction
+                    if differentDevices && fracDelta >= 0.25 && remoteWentBackwards {
                         mergedDoc.pendingConflict = ProgressConflict(
                             localDeviceId: lDevId.isEmpty ? "local" : lDevId,
                             localDeviceName: lDevName,
@@ -507,18 +515,46 @@ final class CloudSync: ObservableObject {
                     } else {
                         mergedDoc.pendingConflict = nil
                     }
-                    if !newerWentBackwards && rReadTime > lReadTime && ra.scrollFraction > 0.01 {
-                        mergedDoc.webAnchor = ra
-                        mergedDoc.readPage = r.readPage ?? l.readPage
-                        mergedDoc.readUpdatedAt = r.readUpdatedAt ?? l.readUpdatedAt
-                        mergedDoc.lastReadDevice = r.lastReadDevice ?? l.lastReadDevice
-                        mergedDoc.lastReadDeviceId = r.lastReadDeviceId ?? l.lastReadDeviceId
-                    } else if !newerWentBackwards && lReadTime >= rReadTime && la.scrollFraction > 0.01 {
-                        mergedDoc.webAnchor = la
+                    if mergedDoc.pendingConflict != nil {
+                        if ra.scrollFraction >= la.scrollFraction {
+                            mergedDoc.webAnchor = r.webAnchor ?? l.webAnchor
+                            mergedDoc.readPage = r.readPage ?? l.readPage
+                            mergedDoc.readUpdatedAt = r.readUpdatedAt ?? l.readUpdatedAt
+                            mergedDoc.lastReadDevice = r.lastReadDevice ?? l.lastReadDevice
+                            mergedDoc.lastReadDeviceId = r.lastReadDeviceId ?? l.lastReadDeviceId
+                        } else {
+                            mergedDoc.webAnchor = l.webAnchor ?? r.webAnchor
+                            mergedDoc.readPage = l.readPage ?? r.readPage
+                            mergedDoc.readUpdatedAt = l.readUpdatedAt ?? r.readUpdatedAt
+                            mergedDoc.lastReadDevice = l.lastReadDevice ?? r.lastReadDevice
+                            mergedDoc.lastReadDeviceId = l.lastReadDeviceId ?? r.lastReadDeviceId
+                        }
+                    } else if l.readUpdatedAt != nil && r.readUpdatedAt == nil {
+                        mergedDoc.webAnchor = l.webAnchor ?? r.webAnchor
                         mergedDoc.readPage = l.readPage ?? r.readPage
-                        mergedDoc.readUpdatedAt = l.readUpdatedAt ?? r.readUpdatedAt
+                        mergedDoc.readUpdatedAt = l.readUpdatedAt
                         mergedDoc.lastReadDevice = l.lastReadDevice ?? r.lastReadDevice
                         mergedDoc.lastReadDeviceId = l.lastReadDeviceId ?? r.lastReadDeviceId
+                    } else if r.readUpdatedAt != nil && l.readUpdatedAt == nil {
+                        mergedDoc.webAnchor = r.webAnchor ?? l.webAnchor
+                        mergedDoc.readPage = r.readPage ?? l.readPage
+                        mergedDoc.readUpdatedAt = r.readUpdatedAt
+                        mergedDoc.lastReadDevice = r.lastReadDevice ?? l.lastReadDevice
+                        mergedDoc.lastReadDeviceId = r.lastReadDeviceId ?? l.lastReadDeviceId
+                    } else if l.readUpdatedAt != nil && r.readUpdatedAt != nil {
+                        if lReadTime >= rReadTime {
+                            mergedDoc.webAnchor = l.webAnchor ?? r.webAnchor
+                            mergedDoc.readPage = l.readPage ?? r.readPage
+                            mergedDoc.readUpdatedAt = l.readUpdatedAt
+                            mergedDoc.lastReadDevice = l.lastReadDevice ?? r.lastReadDevice
+                            mergedDoc.lastReadDeviceId = l.lastReadDeviceId ?? r.lastReadDeviceId
+                        } else {
+                            mergedDoc.webAnchor = r.webAnchor ?? l.webAnchor
+                            mergedDoc.readPage = r.readPage ?? l.readPage
+                            mergedDoc.readUpdatedAt = r.readUpdatedAt
+                            mergedDoc.lastReadDevice = r.lastReadDevice ?? l.lastReadDevice
+                            mergedDoc.lastReadDeviceId = r.lastReadDeviceId ?? l.lastReadDeviceId
+                        }
                     } else if ra.scrollFraction >= la.scrollFraction {
                         mergedDoc.webAnchor = r.webAnchor ?? l.webAnchor
                         mergedDoc.readPage = r.readPage ?? l.readPage
@@ -546,25 +582,16 @@ final class CloudSync: ObservableObject {
                         }
                         mergedDoc.pendingConflict = nil
                     } else {
-                        let lDevId = l.lastReadDeviceId ?? ""
-                        let rDevId = r.lastReadDeviceId ?? ""
-                        let lDevName = l.lastReadDevice ?? "Mac"
-                        let rDevName = r.lastReadDevice ?? "iPhone"
-                        let differentDevices: Bool = {
-                            if !lDevId.isEmpty && !rDevId.isEmpty { return lDevId != rDevId }
-                            if l.lastReadDevice != nil && r.lastReadDevice != nil { return lDevName != rDevName }
-                            return true
-                        }()
                         let pageDelta = abs(lp - rp)
-                        let newerWentBackwards = (rReadTime > lReadTime && rp < lp) || (lReadTime > rReadTime && lp < rp)
                         let bothHaveExplicitReadDates = l.readUpdatedAt != nil && r.readUpdatedAt != nil
+                        let remoteWentBackwards = rReadTime > lReadTime && rp < lp
                         let concurrentDivergence = bothHaveExplicitReadDates
-                            && abs(rReadTime.timeIntervalSince(lReadTime)) < 6 * 3600
+                            && abs(rReadTime.timeIntervalSince(lReadTime)) < 600
                             && pageDelta >= 3
+                            && remoteWentBackwards
 
-                        // Detect conflict if two devices diverge and either the newer timestamp is on an earlier page
-                        // or both devices explicitly updated reading positions recently to different pages
-                        if differentDevices && pageDelta >= 2 && (newerWentBackwards || concurrentDivergence) {
+                        // Detect conflict only when two different devices diverge and the remote device is on a much earlier page despite a newer timestamp
+                        if differentDevices && pageDelta >= 2 && (remoteWentBackwards || concurrentDivergence) {
                             mergedDoc.pendingConflict = ProgressConflict(
                                 localDeviceId: lDevId.isEmpty ? "local" : lDevId,
                                 localDeviceName: lDevName,
@@ -581,35 +608,10 @@ final class CloudSync: ObservableObject {
                                 detectedAt: max(lReadTime, rReadTime)
                             )
                         } else {
-                            mergedDoc.pendingConflict = l.pendingConflict ?? r.pendingConflict
+                            mergedDoc.pendingConflict = nil
                         }
 
-                        // Tentative winning page:
-                        // If one side is at page 0 (just opened) and the other is > 0, never let page 0 clobber non-zero progress;
-                        // otherwise if explicit readUpdatedAt timestamps exist, prefer the newer one; otherwise prefer max(lp, rp).
-                        if lp == 0 && rp > 0 {
-                            mergedDoc.readPage = rp
-                            mergedDoc.readUpdatedAt = r.readUpdatedAt ?? l.readUpdatedAt
-                            mergedDoc.lastReadDevice = r.lastReadDevice ?? l.lastReadDevice
-                            mergedDoc.lastReadDeviceId = r.lastReadDeviceId ?? l.lastReadDeviceId
-                        } else if rp == 0 && lp > 0 {
-                            mergedDoc.readPage = lp
-                            mergedDoc.readUpdatedAt = l.readUpdatedAt ?? r.readUpdatedAt
-                            mergedDoc.lastReadDevice = l.lastReadDevice ?? r.lastReadDevice
-                            mergedDoc.lastReadDeviceId = l.lastReadDeviceId ?? r.lastReadDeviceId
-                        } else if bothHaveExplicitReadDates && !newerWentBackwards {
-                            if rReadTime >= lReadTime {
-                                mergedDoc.readPage = rp
-                                mergedDoc.readUpdatedAt = r.readUpdatedAt
-                                mergedDoc.lastReadDevice = r.lastReadDevice ?? l.lastReadDevice
-                                mergedDoc.lastReadDeviceId = r.lastReadDeviceId ?? l.lastReadDeviceId
-                            } else {
-                                mergedDoc.readPage = lp
-                                mergedDoc.readUpdatedAt = l.readUpdatedAt
-                                mergedDoc.lastReadDevice = l.lastReadDevice ?? r.lastReadDevice
-                                mergedDoc.lastReadDeviceId = l.lastReadDeviceId ?? r.lastReadDeviceId
-                            }
-                        } else {
+                        if mergedDoc.pendingConflict != nil {
                             if rp >= lp {
                                 mergedDoc.readPage = rp
                                 mergedDoc.readUpdatedAt = r.readUpdatedAt ?? l.readUpdatedAt
@@ -621,6 +623,59 @@ final class CloudSync: ObservableObject {
                                 mergedDoc.lastReadDevice = l.lastReadDevice ?? r.lastReadDevice
                                 mergedDoc.lastReadDeviceId = l.lastReadDeviceId ?? r.lastReadDeviceId
                             }
+                        } else if l.readUpdatedAt != nil && r.readUpdatedAt == nil {
+                            mergedDoc.readPage = lp
+                            mergedDoc.readUpdatedAt = l.readUpdatedAt
+                            mergedDoc.lastReadDevice = l.lastReadDevice ?? r.lastReadDevice
+                            mergedDoc.lastReadDeviceId = l.lastReadDeviceId ?? r.lastReadDeviceId
+                        } else if r.readUpdatedAt != nil && l.readUpdatedAt == nil {
+                            mergedDoc.readPage = rp
+                            mergedDoc.readUpdatedAt = r.readUpdatedAt
+                            mergedDoc.lastReadDevice = r.lastReadDevice ?? l.lastReadDevice
+                            mergedDoc.lastReadDeviceId = r.lastReadDeviceId ?? l.lastReadDeviceId
+                        } else if bothHaveExplicitReadDates {
+                            // Strictly respect the newer explicit user navigation timestamp (even when turning backwards to page 1!)
+                            if lReadTime >= rReadTime {
+                                mergedDoc.readPage = lp
+                                mergedDoc.readUpdatedAt = l.readUpdatedAt
+                                mergedDoc.lastReadDevice = l.lastReadDevice ?? r.lastReadDevice
+                                mergedDoc.lastReadDeviceId = l.lastReadDeviceId ?? r.lastReadDeviceId
+                            } else {
+                                mergedDoc.readPage = rp
+                                mergedDoc.readUpdatedAt = r.readUpdatedAt
+                                mergedDoc.lastReadDevice = r.lastReadDevice ?? l.lastReadDevice
+                                mergedDoc.lastReadDeviceId = r.lastReadDeviceId ?? l.lastReadDeviceId
+                            }
+                        } else if lp == 0 && rp > 0 {
+                            mergedDoc.readPage = rp
+                            mergedDoc.readUpdatedAt = r.readUpdatedAt ?? l.readUpdatedAt
+                            mergedDoc.lastReadDevice = r.lastReadDevice ?? l.lastReadDevice
+                            mergedDoc.lastReadDeviceId = r.lastReadDeviceId ?? l.lastReadDeviceId
+                        } else if rp == 0 && lp > 0 {
+                            mergedDoc.readPage = lp
+                            mergedDoc.readUpdatedAt = l.readUpdatedAt ?? r.readUpdatedAt
+                            mergedDoc.lastReadDevice = l.lastReadDevice ?? r.lastReadDevice
+                            mergedDoc.lastReadDeviceId = l.lastReadDeviceId ?? r.lastReadDeviceId
+                        } else if rTime > lTime {
+                            mergedDoc.readPage = rp
+                            mergedDoc.readUpdatedAt = r.readUpdatedAt ?? l.readUpdatedAt
+                            mergedDoc.lastReadDevice = r.lastReadDevice ?? l.lastReadDevice
+                            mergedDoc.lastReadDeviceId = r.lastReadDeviceId ?? l.lastReadDeviceId
+                        } else if lTime > rTime {
+                            mergedDoc.readPage = lp
+                            mergedDoc.readUpdatedAt = l.readUpdatedAt ?? r.readUpdatedAt
+                            mergedDoc.lastReadDevice = l.lastReadDevice ?? r.lastReadDevice
+                            mergedDoc.lastReadDeviceId = l.lastReadDeviceId ?? r.lastReadDeviceId
+                        } else if rp >= lp {
+                            mergedDoc.readPage = rp
+                            mergedDoc.readUpdatedAt = r.readUpdatedAt ?? l.readUpdatedAt
+                            mergedDoc.lastReadDevice = r.lastReadDevice ?? l.lastReadDevice
+                            mergedDoc.lastReadDeviceId = r.lastReadDeviceId ?? l.lastReadDeviceId
+                        } else {
+                            mergedDoc.readPage = lp
+                            mergedDoc.readUpdatedAt = l.readUpdatedAt ?? r.readUpdatedAt
+                            mergedDoc.lastReadDevice = l.lastReadDevice ?? r.lastReadDevice
+                            mergedDoc.lastReadDeviceId = l.lastReadDeviceId ?? r.lastReadDeviceId
                         }
                     }
                 } else if let rp = r.readPage {
@@ -708,24 +763,33 @@ final class CloudSync: ObservableObject {
         }
         for r in remote.notebooks where !deleted.contains(r.id) {
             if let l = notebooksById[r.id] {
-                var mnb = l
+                let lTime = l.updatedAt ?? .distantPast
+                let rTime = r.updatedAt ?? .distantPast
+                let rIsNewer = rTime > lTime
+                var mnb = rIsNewer ? r : l
+                if l.updatedAt != nil || r.updatedAt != nil {
+                    mnb.updatedAt = max(lTime, rTime)
+                }
                 // Union docIds preserving order
-                var combinedDocs = l.docIds.filter { validDocIds.contains($0) }
-                for id in r.docIds where validDocIds.contains(id) && !combinedDocs.contains(id) {
+                var combinedDocs = (rIsNewer ? r.docIds : l.docIds).filter { validDocIds.contains($0) }
+                for id in (rIsNewer ? l.docIds : r.docIds) where validDocIds.contains(id) && !combinedDocs.contains(id) {
                     combinedDocs.append(id)
                 }
                 mnb.docIds = combinedDocs
-                mnb.root = mergeMindNodes(local: l.root, remote: r.root, deleted: deleted, validCards: validCardIds)
-                if mnb.root.title != mnb.name && !r.name.isEmpty {
+                mnb.root = rIsNewer
+                    ? mergeMindNodes(local: r.root, remote: l.root, deleted: deleted, validCards: validCardIds)
+                    : mergeMindNodes(local: l.root, remote: r.root, deleted: deleted, validCards: validCardIds)
+                if mnb.root.title != mnb.name && !mnb.root.title.isEmpty {
                     mnb.name = mnb.root.title
                 }
                 notebooksById[r.id] = mnb
             } else {
                 // If local only has an untouched empty default notebook and remote has a populated default notebook, merge into one
-                if let emptyLocalIdx = nbOrder.firstIndex(where: {
-                    guard let existing = notebooksById[$0] else { return false }
-                    return existing.docIds.isEmpty && existing.root.children.isEmpty && (existing.name == "我的笔记本" || existing.name == "My Notebook")
-                }), (r.name == "我的笔记本" || r.name == "My Notebook") {
+                if nbOrder.count == 1,
+                   let emptyLocalIdx = nbOrder.firstIndex(where: {
+                       guard let existing = notebooksById[$0] else { return false }
+                       return existing.docIds.isEmpty && existing.root.children.isEmpty && existing.updatedAt == nil && (existing.name == "我的笔记本" || existing.name == "My Notebook")
+                   }), (r.name == "我的笔记本" || r.name == "My Notebook") {
                     let oldId = nbOrder[emptyLocalIdx]
                     notebooksById.removeValue(forKey: oldId)
                     var cleanR = r
@@ -766,11 +830,8 @@ final class CloudSync: ObservableObject {
         }
         out.links = links
 
-        let localData = try? JSONEncoder().encode(local)
-        let remoteData = try? JSONEncoder().encode(remote)
-        let mergedData = try? JSONEncoder().encode(out)
-        let localChanged = localData != mergedData
-        let remoteChanged = remoteData != mergedData
+        let localChanged = local != out
+        let remoteChanged = remote != out
         return (out, localChanged, remoteChanged)
     }
 
@@ -810,7 +871,10 @@ final class CloudSync: ObservableObject {
 
     func syncNow(silent: Bool = false) {
         guard isEnabled else { return }
-        if isRunningSync { return }
+        if isRunningSync {
+            needsFollowUpSync = true
+            return
+        }
 
         let cloudDirs = Self.resolveCloudDirectories()
         let hasKVS = Bundle.main.bundleIdentifier != nil && ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
@@ -825,10 +889,12 @@ final class CloudSync: ObservableObject {
             return
         }
         isRunningSync = true
+        needsFollowUpSync = false
         if !silent || lastSyncedAt == nil {
             state = .syncing
         }
 
+        Store.shared.flushPendingSave()
         let currentLib = Store.shared.lib
         let localBase = Paths.base
         let localSettings = captureCurrentSettings()
@@ -841,7 +907,13 @@ final class CloudSync: ObservableObject {
 
         syncTask?.cancel()
         syncTask = Task {
-            defer { self.isRunningSync = false }
+            defer {
+                self.isRunningSync = false
+                if self.needsFollowUpSync {
+                    self.needsFollowUpSync = false
+                    self.scheduleSync(delay: 0.3, silent: true)
+                }
+            }
             let result = await Task.detached(priority: .utility) { () -> (Library, Bool, CloudSettingsPayload?, Data?, Data?, Data?, String?) in
                 let fm = FileManager.default
 
@@ -932,10 +1004,9 @@ final class CloudSync: ObservableObject {
                     anyLocalChange = true
                 }
 
-                // 4. Write merged `library.json` back to all cloud directories and local only if changed
+                // 4. Write merged `library.json` to cloud directories
                 let encodedLib = try? JSONEncoder().encode(workingLib)
                 if let encodedLib {
-                    Self.writeDataIfChanged(encodedLib, to: localBase.appendingPathComponent("library.json"))
                     for dir in cloudDirs {
                         Self.writeDataIfChanged(encodedLib, to: dir.appendingPathComponent("library.json"))
                     }
@@ -1082,11 +1153,35 @@ final class CloudSync: ObservableObject {
                 return (workingLib, anyLocalChange, newerRemoteSettings, finalEncodedLib, outTombData, encodedSet, nil)
             }.value
 
-            let (mergedLib, localChanged, remoteSettings, outLibData, outTombData, outSetData, err) = result
+            let (bgMergedLib, _, remoteSettings, _, outTombData, outSetData, err) = result
+            if let err {
+                self.state = .error(err)
+                return
+            }
+
+            // Re-merge against the live in-memory `Store.shared.lib` on @MainActor so any user mutations
+            // (new notebooks, page turns, deletions, edits) made while the background sync task was running
+            // are never clobbered by an older snapshot.
+            Store.shared.flushPendingSave()
+            let latestTombstones = Self.loadTombstones(from: localBase.appendingPathComponent("deleted-items.json"))
+            let latestDeletedSet = Set(latestTombstones.deletedIds.keys)
+            let (finalLib, liveLocalChanged, _) = Self.mergeLibraries(
+                local: Store.shared.lib,
+                remote: bgMergedLib,
+                deleted: latestDeletedSet
+            )
+            let finalLibData = try? JSONEncoder().encode(finalLib)
+            if let finalLibData {
+                Self.writeDataIfChanged(finalLibData, to: localBase.appendingPathComponent("library.json"))
+                for dir in cloudDirs {
+                    Self.writeDataIfChanged(finalLibData, to: dir.appendingPathComponent("library.json"))
+                }
+            }
+
             if hasKVS {
                 var kvsModified = false
-                if let outLibData, outLibData.count < 500_000, outLibData != kvsLibData {
-                    NSUbiquitousKeyValueStore.default.set(outLibData, forKey: "readlet.kvs.library")
+                if let finalLibData, finalLibData.count < 500_000, finalLibData != kvsLibData {
+                    NSUbiquitousKeyValueStore.default.set(finalLibData, forKey: "readlet.kvs.library")
                     kvsModified = true
                 }
                 if let outTombData, outTombData.count < 100_000, outTombData != kvsTombData {
@@ -1101,10 +1196,6 @@ final class CloudSync: ObservableObject {
                     NSUbiquitousKeyValueStore.default.synchronize()
                 }
             }
-            if let err {
-                self.state = .error(err)
-                return
-            }
 
             self.isApplyingRemoteChanges = true
             defer { self.isApplyingRemoteChanges = false }
@@ -1113,12 +1204,12 @@ final class CloudSync: ObservableObject {
                 self.applyRemoteSettings(remoteSettings)
             }
 
-            if localChanged {
-                Store.shared.applyCloudMergedLibrary(mergedLib)
+            if liveLocalChanged || finalLib != Store.shared.lib {
+                Store.shared.applyCloudMergedLibrary(finalLib)
             }
 
             let now = Date()
-            if !silent || localChanged || remoteSettings != nil || self.lastSyncedAt == nil {
+            if !silent || liveLocalChanged || remoteSettings != nil || self.lastSyncedAt == nil {
                 self.lastSyncedAt = now
                 self.syncedDocsCount = Store.shared.lib.docs.count
                 self.syncedCardsCount = Store.shared.lib.cards.count
@@ -1412,9 +1503,12 @@ final class CloudSync: ObservableObject {
         guard status == 0, !out.isEmpty else { return }
 
         var deviceIds: [String] = []
-        for line in out.split(separator: "\n")
-        where (line.contains("connected") || line.contains("available")) && (line.contains("iPhone") || line.contains("iPad")) {
+        for line in out.split(separator: "\n") where line.contains("iPhone") || line.contains("iPad") {
             let parts = line.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+            let lowerParts = Set(parts.map { $0.lowercased() })
+            guard !lowerParts.contains("unavailable"),
+                  !lowerParts.contains("disconnected"),
+                  lowerParts.contains("connected") || lowerParts.contains("available") else { continue }
             for p in parts where p.count == 36 && p.filter({ $0 == "-" }).count == 4 {
                 deviceIds.append(p)
             }
@@ -1423,7 +1517,7 @@ final class CloudSync: ObservableObject {
 
         let tmpPull = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("readlet-ios-pull-\(devId).json")
         try? fm.removeItem(at: tmpPull)
-        _ = runDeviceCtl([
+        let (pullStatus, _) = runDeviceCtl([
             "device", "copy", "from",
             "--device", devId,
             "--domain-type", "appDataContainer",
@@ -1433,8 +1527,9 @@ final class CloudSync: ObservableObject {
         ])
 
         var deviceHadLib = false
-        var remoteNeedsUpdate = true
-        if let d = try? Data(contentsOf: tmpPull),
+        var remoteNeedsUpdate = false
+        if pullStatus == 0,
+           let d = try? Data(contentsOf: tmpPull),
            let iosLib = try? JSONDecoder().decode(Library.self, from: d) {
             deviceHadLib = true
             let (merged, localChanged, remoteChanged) = mergeLibraries(local: workingLib, remote: iosLib, deleted: deletedSet)
@@ -1443,17 +1538,20 @@ final class CloudSync: ObservableObject {
             remoteNeedsUpdate = remoteChanged
         }
         try? fm.removeItem(at: tmpPull)
+        guard deviceHadLib else { return }
 
+        let tmpPushLib = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("readlet-ios-push-\(devId).json")
+        defer { try? fm.removeItem(at: tmpPushLib) }
         if let encoded = try? JSONEncoder().encode(workingLib) {
-            writeDataIfChanged(encoded, to: localBase.appendingPathComponent("library.json"))
+            try? encoded.write(to: tmpPushLib, options: .atomic)
             for dir in cloudDirs {
                 writeDataIfChanged(encoded, to: dir.appendingPathComponent("library.json"))
             }
         }
 
-        if !deviceHadLib || remoteNeedsUpdate {
+        if remoteNeedsUpdate {
             for fn in ["library.json", "cloud-settings.json", "deleted-items.json"] {
-                let src = localBase.appendingPathComponent(fn)
+                let src = fn == "library.json" ? tmpPushLib : localBase.appendingPathComponent(fn)
                 guard fm.fileExists(atPath: src.path) else { continue }
                 _ = runDeviceCtl([
                     "device", "copy", "to",
